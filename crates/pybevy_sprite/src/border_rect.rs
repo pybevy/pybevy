@@ -4,7 +4,7 @@ use pybevy_macros::pyvalue;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pyvalue]
+#[pyvalue(domains = [min_inset => [finite], max_inset => [finite]])]
 #[pyclass(name = "BorderRect", module = "pybevy.sprite", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBorderRect {
@@ -26,44 +26,58 @@ impl PyBorderRect {
     #[pyo3(signature = (*, min_inset = PyVec2::ZERO, max_inset = PyVec2::ZERO))]
     pub fn new(min_inset: PyVec2, max_inset: PyVec2) -> PyResult<Self> {
         Ok(Self::from_owned(BorderRect {
-            min_inset: min_inset.try_into()?,
-            max_inset: max_inset.try_into()?,
+            min_inset: Self::check_min_inset(Vec2::try_from(min_inset)?)?,
+            max_inset: Self::check_max_inset(Vec2::try_from(max_inset)?)?,
         }))
     }
 
     #[staticmethod]
-    pub fn all(inset: f32) -> Self {
-        Self::from_owned(BorderRect::all(inset))
+    pub fn all(inset: f32) -> PyResult<Self> {
+        let rect = BorderRect::all(inset);
+        Self::validate_domains(&rect)?;
+        Ok(Self::from_owned(rect))
     }
 
     #[staticmethod]
-    pub fn axes(horizontal: f32, vertical: f32) -> Self {
+    pub fn axes(horizontal: f32, vertical: f32) -> PyResult<Self> {
         let inset = Vec2::new(horizontal, vertical);
-        Self::from_owned(BorderRect {
+        let rect = BorderRect {
             min_inset: inset,
             max_inset: inset,
-        })
+        };
+        Self::validate_domains(&rect)?;
+        Ok(Self::from_owned(rect))
     }
 
     #[getter]
     pub fn min_inset(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|r| &r.min_inset)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |r| &r.min_inset,
+            |r| &mut r.min_inset,
+            Self::validate_min_inset,
+        )?)
     }
 
     #[setter]
     pub fn set_min_inset(&mut self, value: PyVec2) -> PyResult<()> {
-        self.storage.as_mut()?.min_inset = value.try_into()?;
+        let value = Self::check_min_inset(Vec2::try_from(value)?)?;
+        self.storage.as_mut()?.min_inset = value;
         Ok(())
     }
 
     #[getter]
     pub fn max_inset(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|r| &r.max_inset)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |r| &r.max_inset,
+            |r| &mut r.max_inset,
+            Self::validate_max_inset,
+        )?)
     }
 
     #[setter]
     pub fn set_max_inset(&mut self, value: PyVec2) -> PyResult<()> {
-        self.storage.as_mut()?.max_inset = value.try_into()?;
+        let value = Self::check_max_inset(Vec2::try_from(value)?)?;
+        self.storage.as_mut()?.max_inset = value;
         Ok(())
     }
 

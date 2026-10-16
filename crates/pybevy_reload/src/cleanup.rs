@@ -9,6 +9,7 @@ use bevy::{
 };
 #[cfg(test)]
 use pybevy_core::PluginIdentity;
+use pybevy_ecs::shared::observer_registry::PythonObserver;
 
 use crate::{BaseEntitySet, Retained, runtime::ReloadRuntime};
 
@@ -27,8 +28,9 @@ pub struct NativeResourceSnapshot {
 ///
 /// Resource entities must never be despawned. winit creates `Window` and
 /// `Monitor` entities after the baseline, and despawning the primary window
-/// exits the app. Observers are plugin state; Bevy despawns entity-scoped
-/// observers with their watched entities.
+/// exits the app. Observers, Bevy and Python alike, are plugin state and are
+/// despawned with their watched entities when scoped to one; the Python
+/// observer registry resets its own entities on a full reload.
 pub fn scene_entities_to_despawn(world: &mut World) -> Vec<Entity> {
     let base = world
         .get_resource::<BaseEntitySet>()
@@ -44,6 +46,7 @@ pub fn scene_entities_to_despawn(world: &mut World) -> Vec<Entity> {
             Without<Window>,
             Without<Monitor>,
             Without<Observer>,
+            Without<PythonObserver>,
         )>()
         .iter(world)
         .filter(|e| !base.contains(e) && !retained.contains(e))
@@ -535,6 +538,7 @@ mod tests {
         let base = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![base]);
         let observer = world.add_observer(|_: On<Add, Marker>| {}).id();
+        let python_observer = world.spawn(PythonObserver).id();
         let window = world.spawn(Window::default()).id();
         let monitor = world
             .spawn(Monitor {
@@ -554,7 +558,7 @@ mod tests {
         assert_eq!(scene_entities_to_despawn(&mut world), vec![user]);
         clear_world_state(&mut world, &mut NoopRuntime, false);
 
-        for kept in [base, observer, window, monitor, retained] {
+        for kept in [base, observer, python_observer, window, monitor, retained] {
             assert!(world.get_entity(kept).is_ok(), "{kept} survives");
         }
         assert!(world.get_entity(user).is_err());

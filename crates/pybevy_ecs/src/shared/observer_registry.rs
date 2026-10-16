@@ -7,7 +7,11 @@
 
 use std::{collections::HashMap, error::Error, fmt, sync::Arc};
 
-use bevy::ecs::{component::ComponentId, entity::Entity, prelude::Resource};
+use bevy::ecs::{
+    component::{Component, ComponentId},
+    entity::Entity,
+    prelude::Resource,
+};
 
 /// Stable identity of an interpreter type object for one interpreter lifetime.
 ///
@@ -30,6 +34,14 @@ impl ObserverTypeKey {
         self.0
     }
 }
+
+/// Marks the identity entity a Python observer registration owns.
+///
+/// Python observers dispatch through [`ObserverRegistryCore`] rather than
+/// Bevy's `Observer` component, so scene enumeration and scene resets use this
+/// marker to tell their entities apart from scene content.
+#[derive(Clone, Copy, Debug, Default, Component)]
+pub struct PythonObserver;
 
 /// The component lifecycle transition observed by an entry.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

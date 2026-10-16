@@ -215,7 +215,8 @@ class MotionBlur(Component):
 
     Add to a ``Camera3d`` entity. Spawning it inserts ``MotionVectorPrepass``.
     ``shutter_angle`` must be finite; values at or below ``0.0`` and
-    ``samples=0`` disable the effect.
+    ``samples=0`` disable the effect. ``samples`` is at most 1024: each pixel
+    takes ``2 * samples + 1`` taps.
     """
 
     def __init__(self, *, shutter_angle: float = 0.5, samples: int = 1) -> None: ...

@@ -2,13 +2,13 @@
 //! comparison helpers.
 
 use pybevy_bytecodevm::bytecode::Op;
-use pyo3::{prelude::*, types::PyModule};
+use pyo3::{exceptions::PyValueError, prelude::*, types::PyModule};
 
 use super::{
     array::PyArray,
     convert::{array_from_object, parse_shape},
     dlpack,
-    dtype::parse_dtype,
+    dtype::{check_integer_range, parse_dtype},
     kernels::{self, Reduce, extract_operand, extract_scalar, map_array_err},
 };
 use crate::{ArrayDType, ArrayStorage, DenseArrayCore, Scalar};
@@ -120,6 +120,9 @@ fn full(
             Scalar::Bool(_) => ArrayDType::Bool,
         },
     };
+    if let Scalar::I64(value) = fill {
+        check_integer_range(value, dt)?;
+    }
     Ok(wrap(
         DenseArrayCore::full(dt, &parse_shape(shape)?, fill).map_err(map_array_err)?,
     ))
@@ -167,12 +170,10 @@ fn arange(
 
 #[pyfunction]
 #[pyo3(signature = (start, stop, num=50, dtype=None))]
-fn linspace(
-    start: f64,
-    stop: f64,
-    num: usize,
-    dtype: Option<Bound<'_, PyAny>>,
-) -> PyResult<PyArray> {
+fn linspace(start: f64, stop: f64, num: i64, dtype: Option<Bound<'_, PyAny>>) -> PyResult<PyArray> {
+    let num = usize::try_from(num).map_err(|_| {
+        PyValueError::new_err(format!("Number of samples, {num}, must be non-negative."))
+    })?;
     let dt = parse_dtype(dtype.as_ref())?.unwrap_or(ArrayDType::Float64);
     // The storage layer reserves fallibly, so an impossible `num` raises.
     let mut storage = ArrayStorage::zeros(dt, num).map_err(map_array_err)?;

@@ -88,7 +88,7 @@ fn try_expand(
         };
         if let Some(field) = fields
             .iter()
-            .find(|field| field.materialize || field.borrowed)
+            .find(|field| field.materialize || field.borrowed || field.domain.is_some())
         {
             return Err(syn::Error::new_spanned(
                 field.rust_type,

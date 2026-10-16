@@ -640,11 +640,16 @@ fn finalize_schedule(schedule: ActiveSchedule) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use serde_json::{Value, json};
+
     use super::*;
     #[cfg(feature = "pyo3-runtime")]
     use crate::pyo3::runtime::Pyo3ControlRuntime;
     use crate::{
         capture::{queue::PendingScreenshots, readiness::RenderFrameReadiness},
+        engine::runtime::fake::FakeRuntime,
         schedule::request::ScheduleMode,
     };
 
@@ -1168,5 +1173,172 @@ mod tests {
         assert!(!schedule.stop_on_error);
         assert!(schedule.sync_response_tx.is_none());
         assert!(schedule.async_shared.is_some());
+    }
+
+    fn at_action(tool: &str, args: Value, at: f64) -> ScheduleAction {
+        ScheduleAction {
+            tool: tool.to_string(),
+            args,
+            at: Some(at),
+            at_frame: None,
+            label: None,
+            skip_if_error: None,
+        }
+    }
+
+    fn world_at_virtual_time(elapsed: f64, delta: f64) -> World {
+        let mut time = Time::<Virtual>::default();
+        time.advance_by(Duration::from_secs_f64(elapsed - delta));
+        time.advance_by(Duration::from_secs_f64(delta));
+        let mut world = World::new();
+        world.insert_resource(time);
+        world
+    }
+
+    fn statuses(results: &[ActionResult]) -> Vec<ActionStatus> {
+        results.iter().map(|result| result.status).collect()
+    }
+
+    #[test]
+    fn skip_if_error_skips_only_actions_behind_a_failed_label() {
+        let mut world = world_at_virtual_time(0.0, 0.0);
+        let mut failing = at_action("despawn_entity", json!({"entity": "Missing"}), 0.0);
+        failing.label = Some("spawn".into());
+        let mut dependent = at_action("get_time_status", json!({}), 0.0);
+        dependent.skip_if_error = Some("spawn".into());
+        let independent = at_action("get_time_status", json!({}), 0.0);
+        let mut schedule = test_schedule(vec![failing, dependent, independent], false);
+
+        process_single_schedule(&mut world, &mut schedule, &mut FakeRuntime);
+
+        assert_eq!(schedule.state, ScheduleState::Done);
+        assert_eq!(
+            statuses(&schedule.results),
+            [ActionStatus::Error, ActionStatus::Skipped, ActionStatus::Ok]
+        );
+        assert_eq!(
+            schedule.results[1].error.as_deref(),
+            Some("Skipped due to error in 'spawn'")
+        );
+    }
+
+    #[test]
+    fn cancelling_an_async_schedule_cancels_its_remaining_actions() {
+        let mut world = world_at_virtual_time(0.0, 0.0);
+        world.insert_non_send(Box::new(FakeRuntime) as Box<dyn ControlRuntime>);
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new("s-cancel", 2)));
+        let request = ScheduleRequest {
+            actions: vec![
+                at_action("get_time_status", json!({}), 0.0),
+                at_action("get_time_status", json!({}), 5.0),
+            ],
+            mode: ScheduleMode::Async,
+            stop_on_error: false,
+        };
+        world.insert_resource(ActiveSchedules {
+            schedules: vec![ActiveSchedule::new_async(
+                "s-cancel".into(),
+                request,
+                0.0,
+                shared.clone(),
+            )],
+            next_id: 1,
+        });
+
+        process_active_schedules(&mut world);
+        assert_eq!(world.resource::<ActiveSchedules>().schedules.len(), 1);
+
+        shared.lock().unwrap().cancelled = true;
+        process_active_schedules(&mut world);
+
+        assert!(world.resource::<ActiveSchedules>().schedules.is_empty());
+        let state = shared.lock().unwrap();
+        assert_eq!(state.status, ScheduleStatus::Completed);
+        assert_eq!(
+            statuses(&state.results),
+            [ActionStatus::Ok, ActionStatus::Cancelled]
+        );
+        assert_eq!((state.executed_actions, state.cancelled_actions), (1, 1));
+    }
+
+    #[test]
+    fn seek_time_moves_the_schedule_clock_with_virtual_time() {
+        let mut world = world_at_virtual_time(0.0, 0.0);
+        let mut schedule = test_schedule(
+            vec![
+                at_action("seek_time", json!({"seconds": 10.0, "pause": false}), 0.0),
+                at_action("get_time_status", json!({}), 0.5),
+            ],
+            false,
+        );
+
+        process_single_schedule(&mut world, &mut schedule, &mut FakeRuntime);
+        assert_eq!(statuses(&schedule.results), [ActionStatus::Ok]);
+        assert_eq!(schedule.timing_origin_game_time, 10.0);
+
+        world
+            .resource_mut::<Time<Virtual>>()
+            .advance_by(Duration::from_millis(500));
+        process_single_schedule(&mut world, &mut schedule, &mut FakeRuntime);
+        assert_eq!(
+            statuses(&schedule.results),
+            [ActionStatus::Ok, ActionStatus::Ok]
+        );
+        assert_eq!(schedule.state, ScheduleState::Done);
+    }
+
+    #[test]
+    fn closed_deferred_channel_fails_the_held_action() {
+        for stop_on_error in [false, true] {
+            let mut world = world_at_virtual_time(0.0, 0.0);
+            let mut schedule = test_schedule(
+                vec![
+                    at_action("capture_screenshot", json!({}), 0.0),
+                    at_action("get_time_status", json!({}), 0.0),
+                ],
+                stop_on_error,
+            );
+            let (response_tx, response_rx) = oneshot::channel();
+            drop(response_tx);
+            schedule.deferred_rx = Some(response_rx);
+            schedule.deferred_firing = Some(Firing::default());
+            schedule.state = ScheduleState::WaitingForDeferred;
+
+            process_single_schedule(&mut world, &mut schedule, &mut FakeRuntime);
+            assert_eq!(
+                schedule.results[0].error.as_deref(),
+                Some("Deferred channel closed unexpectedly")
+            );
+
+            process_single_schedule(&mut world, &mut schedule, &mut FakeRuntime);
+            let expected = if stop_on_error {
+                [ActionStatus::Error, ActionStatus::Aborted]
+            } else {
+                [ActionStatus::Error, ActionStatus::Ok]
+            };
+            assert_eq!(statuses(&schedule.results), expected);
+            assert_eq!(schedule.state, ScheduleState::Done);
+        }
+    }
+
+    #[test]
+    fn firing_is_late_only_when_the_action_was_due_in_an_earlier_frame() {
+        let world = world_at_virtual_time(2.0, 0.5);
+        let mut schedule = test_schedule(vec![], false);
+        schedule.frame_counter = 5;
+
+        let fire_at =
+            |at: f64| Firing::dispatch(&schedule, &at_action("x", Value::Null, at), &world);
+        assert_eq!(fire_at(1.0).late_by_seconds, Some(1.0));
+        assert_eq!(fire_at(1.75).late_by_seconds, None);
+
+        let fire_at_frame = |at_frame: i64| {
+            let mut action = at_action("x", Value::Null, 0.0);
+            action.at = None;
+            action.at_frame = Some(at_frame);
+            Firing::dispatch(&schedule, &action, &world).late_by_frames
+        };
+        assert_eq!(fire_at_frame(2), Some(3));
+        assert_eq!(fire_at_frame(5), None);
     }
 }

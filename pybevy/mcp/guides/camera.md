@@ -213,7 +213,9 @@ either component's `intensity` to `0.0` to disable its effect.
 `center` coordinates. Invalid constructor, setter, batch, and View writes
 raise `ValueError` before changing the component. Bevy clamps several finite
 settings while rendering, so these checks do not impose additional numeric
-ranges.
+ranges. `LensDistortion` needs a positive `scale`, since the shader divides by
+it, and a `center` in UV space (`[0, 1]` per axis); its other values must be
+finite.
 
 ### Screen-Space Effects
 
@@ -301,8 +303,8 @@ commands.spawn(
 matches film's 180 degrees; values above `1.0` stretch blur further than the
 object moved. Each pixel takes `samples * 2 + 1` taps. `samples=0` or a
 `shutter_angle` at or below `0.0` disables the effect. `shutter_angle` must be
-finite (`ValueError` otherwise); `samples` is an unsigned integer, so negative
-values raise `OverflowError`. Transparent meshes write no motion vectors and
+finite and `samples` in `0..=1024` (`ValueError` otherwise), since larger counts
+stall the GPU. Transparent meshes write no motion vectors and
 are not blurred.
 
 ### Depth of Field

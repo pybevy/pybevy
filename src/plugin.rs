@@ -259,7 +259,11 @@ impl PySystemBuilder {
 const NATIVE_LOADER_PY: &str = r#"
 def _make_native_loader(module_name, systems, plugins=()):
     import importlib, importlib.util, os, sys
-    from pybevy._internal.reload_modules import is_external_module_path, record_module_flush
+    from pybevy._internal.reload_modules import (
+        evict_modules,
+        is_external_module_path,
+        record_module_flush,
+    )
 
     def _flush_user_modules(project_dir):
         """Remove all user project modules from sys.modules."""
@@ -278,8 +282,7 @@ def _make_native_loader(module_name, systems, plugins=()):
                 continue
             to_remove.append(name)
         record_module_flush(project_dir, to_remove)
-        for name in to_remove:
-            del sys.modules[name]
+        evict_modules(to_remove)
         importlib.invalidate_caches()
 
     def loader():

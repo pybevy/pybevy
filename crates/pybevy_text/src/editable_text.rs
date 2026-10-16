@@ -12,7 +12,12 @@ use crate::text_edit::PyTextEdit;
     bridge,
     no_reflect,
     view_fields = [cursor_width, allow_newlines],
-    domains = [cursor_blink_period => [finite, non_negative]]
+    domains = [
+        cursor_width => [finite, non_negative],
+        cursor_blink_period => [finite, non_negative],
+        visible_lines => [finite, non_negative],
+        visible_width => [finite, non_negative],
+    ]
 )]
 #[pyclass(name = "EditableText", module = "pybevy.text", extends = PyComponent)]
 pub struct PyEditableText {
@@ -42,12 +47,12 @@ impl PyEditableText {
         allow_newlines: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut editable = EditableText::new(text);
-        editable.cursor_width = cursor_width;
+        editable.cursor_width = Self::check_cursor_width(cursor_width)?;
         editable.cursor_blink_period =
             Self::check_cursor_blink_period(cursor_blink_period)?.stored();
         editable.max_characters = max_characters;
-        editable.visible_lines = visible_lines;
-        editable.visible_width = visible_width;
+        editable.visible_lines = Self::check_visible_lines(visible_lines)?;
+        editable.visible_width = Self::check_visible_width(visible_width)?;
         editable.allow_newlines = allow_newlines;
         Ok(Self::from_owned(editable).into())
     }
@@ -105,6 +110,7 @@ impl PyEditableText {
 
     #[setter]
     pub fn set_cursor_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_cursor_width(value)?;
         self.as_mut()?.cursor_width = value;
         Ok(())
     }
@@ -129,6 +135,7 @@ impl PyEditableText {
 
     #[setter]
     pub fn set_visible_lines(&mut self, value: Option<f32>) -> PyResult<()> {
+        let value = Self::check_visible_lines(value)?;
         self.as_mut()?.visible_lines = value;
         Ok(())
     }
@@ -140,6 +147,7 @@ impl PyEditableText {
 
     #[setter]
     pub fn set_visible_width(&mut self, value: Option<f32>) -> PyResult<()> {
+        let value = Self::check_visible_width(value)?;
         self.as_mut()?.visible_width = value;
         Ok(())
     }

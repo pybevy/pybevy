@@ -1,10 +1,10 @@
-use bevy::sprite::Anchor;
+use bevy::{math::Vec2, sprite::Anchor};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-#[pycomponent(Anchor, bridge)]
+#[pycomponent(Anchor, bridge, domains = [0 as value => [finite]])]
 #[pyclass(name = "Anchor", module = "pybevy.sprite", extends = PyComponent, eq)]
 #[derive(Debug, PartialEq)]
 pub struct PyAnchor {
@@ -16,7 +16,8 @@ impl PyAnchor {
     #[new]
     #[pyo3(signature = (value = PyVec2::ZERO))]
     pub fn new(value: PyVec2) -> PyResult<PyClassInitializer<Self>> {
-        Ok(Self::from_owned(Anchor(value.try_into()?)).into())
+        let value = Self::check_value(Vec2::try_from(value)?)?;
+        Ok(Self::from_owned(Anchor(value)).into())
     }
 
     #[staticmethod]
@@ -75,12 +76,15 @@ impl PyAnchor {
 
     #[getter]
     pub fn value(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|a| &a.0)?)
+        Ok(self
+            .storage
+            .borrow_validated_field_as(|a| &a.0, |a| &mut a.0, Self::validate_value)?)
     }
 
     #[setter]
     pub fn set_value(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.0 = value.try_into()?;
+        let value = Self::check_value(Vec2::try_from(value)?)?;
+        self.as_mut()?.0 = value;
         Ok(())
     }
 

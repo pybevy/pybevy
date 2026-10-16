@@ -2448,6 +2448,19 @@ fn normalize_pybevy_type(ty: &str) -> String {
     };
     let ty = ty.as_str();
 
+    // Checked domain inputs compare as the type they store.
+    match ty {
+        "DurationInput" | "TimedeltaInput" => return normalize_pybevy_type("Duration"),
+        "F32Input" => return normalize_pybevy_type("f32"),
+        _ => {}
+    }
+    if (ty.starts_with("IntegerInput<") || ty.starts_with("IntegerInput <"))
+        && ty.ends_with('>')
+        && let Some(inner) = extract_generic_arg(ty)
+    {
+        return normalize_pybevy_type(&inner);
+    }
+
     // Handle union types: "X | None" -> keep as is for Option comparison
     if ty.contains(" | ") {
         return ty.to_string();

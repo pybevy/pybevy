@@ -1319,7 +1319,7 @@ class ImageSamplerDescriptor:
             lod_min_clamp: Minimum level-of-detail
             lod_max_clamp: Maximum level-of-detail
             compare: Comparison function for depth testing
-            anisotropy_clamp: Maximum anisotropic filtering level
+            anisotropy_clamp: Maximum anisotropic filtering level, at least 1
             border_color: Border color for ClampToBorder mode
             label: Debug label
         """

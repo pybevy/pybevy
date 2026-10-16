@@ -4,20 +4,23 @@ use bevy::{
     math::{Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3, bounding::Aabb3d},
 };
 use pybevy_color::color::PyColor;
-use pybevy_core::{FieldStorage, ValidityFlag};
+use pybevy_core::{
+    FieldStorage, ValidityFlag,
+    domain::{FieldDomain, check_for},
+};
 use pybevy_math::{
     affine3a::PyAffine3A, bounding::PyAabb3d, isometry2d::PyIsometry2d, isometry3d::PyIsometry3d,
     mat4::PyMat4, vec2::PyVec2, vec3::PyVec3,
 };
 use pybevy_transform::{global_transform::PyGlobalTransform, transform::PyTransform};
-use pyo3::{
-    exceptions::{PyTypeError, PyValueError},
-    prelude::*,
-};
+use pyo3::{exceptions::PyTypeError, prelude::*};
 
 use crate::config::PyGizmoConfig;
 
-const MAX_CURVE_RESOLUTION: u32 = 1 << 20;
+const RESOLUTION_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: 0.0,
+    hi: (1u32 << 20) as f64,
+}];
 
 #[pyclass(name = "Gizmos", module = "pybevy.gizmos", frozen, skip_from_py_object)]
 #[derive(Debug, Clone)]
@@ -49,11 +52,7 @@ fn native_color(value: PyColor) -> PyResult<Color> {
 }
 
 fn check_curve_resolution(resolution: u32) -> PyResult<()> {
-    if resolution > MAX_CURVE_RESOLUTION {
-        return Err(PyValueError::new_err(format!(
-            "gizmo resolution {resolution} exceeds maximum {MAX_CURVE_RESOLUTION}"
-        )));
-    }
+    check_for::<PyGizmos, _>("resolution", resolution, RESOLUTION_DOMAIN)?;
     Ok(())
 }
 

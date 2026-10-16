@@ -1,4 +1,7 @@
-use bevy::post_process::bloom::{Bloom, BloomPrefilter};
+use bevy::{
+    math::Vec2,
+    post_process::bloom::{Bloom, BloomPrefilter},
+};
 use pybevy_core::{ComponentStorage, PyComponent, domain::IntegerInput};
 use pybevy_macros::pycomponent;
 use pybevy_math::vec2::{IntoVec2, PyVec2};
@@ -6,10 +9,18 @@ use pyo3::prelude::*;
 
 use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloomPrefilter};
 
+// Bevy documents a valid range of [0, 1] for the curvature and high-pass frequency.
 #[pycomponent(
     Bloom,
     bridge,
-    domains = [max_mip_dimension => [positive]],
+    domains = [
+        intensity => [finite, non_negative],
+        low_frequency_boost => [finite, non_negative],
+        low_frequency_boost_curvature => [range_inclusive(0.0, 1.0)],
+        high_pass_frequency => [range_inclusive(0.0, 1.0)],
+        max_mip_dimension => [positive],
+        scale => [finite],
+    ],
     view_fields = [
         intensity,
         low_frequency_boost,
@@ -60,6 +71,7 @@ impl PyBloom {
             max_mip_dimension,
             scale: scale.0,
         };
+        Self::validate_domains(&bloom)?;
 
         Ok(Self::from_owned(bloom).into())
     }
@@ -95,6 +107,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_intensity(&mut self, intensity: f32) -> PyResult<()> {
+        let intensity = Self::check_intensity(intensity)?;
         self.as_mut()?.intensity = intensity;
         Ok(())
     }
@@ -106,6 +119,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_low_frequency_boost(&mut self, boost: f32) -> PyResult<()> {
+        let boost = Self::check_low_frequency_boost(boost)?;
         self.as_mut()?.low_frequency_boost = boost;
         Ok(())
     }
@@ -117,6 +131,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_low_frequency_boost_curvature(&mut self, curvature: f32) -> PyResult<()> {
+        let curvature = Self::check_low_frequency_boost_curvature(curvature)?;
         self.as_mut()?.low_frequency_boost_curvature = curvature;
         Ok(())
     }
@@ -128,6 +143,7 @@ impl PyBloom {
 
     #[setter]
     pub fn set_high_pass_frequency(&mut self, frequency: f32) -> PyResult<()> {
+        let frequency = Self::check_high_pass_frequency(frequency)?;
         self.as_mut()?.high_pass_frequency = frequency;
         Ok(())
     }
@@ -168,12 +184,17 @@ impl PyBloom {
 
     #[getter]
     pub fn scale(&self) -> PyResult<PyVec2> {
-        Ok(self.storage.borrow_field_as(|b| &b.scale)?)
+        Ok(self.storage.borrow_validated_field_as(
+            |b| &b.scale,
+            |b| &mut b.scale,
+            Self::validate_scale,
+        )?)
     }
 
     #[setter]
     pub fn set_scale(&mut self, scale: PyVec2) -> PyResult<()> {
-        self.as_mut()?.scale = scale.try_into()?;
+        let scale = Self::check_scale(Vec2::try_from(scale)?)?;
+        self.as_mut()?.scale = scale;
         Ok(())
     }
 }

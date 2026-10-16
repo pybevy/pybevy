@@ -386,6 +386,7 @@ impl PyAnimationGraphNode {
 
     #[setter]
     pub fn set_weight(&mut self, py: Python<'_>, weight: f32) -> PyResult<()> {
+        let weight = check_for::<Self, _>("weight", weight, FINITE)?;
         self.with_node_mut(py, |node| node.weight = weight)
     }
 

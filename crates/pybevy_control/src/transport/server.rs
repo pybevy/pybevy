@@ -734,7 +734,7 @@ pub fn start_server(host: String, port: u16, state: AppState) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{env, fs, path::Path, process};
 
     use axum::{
         body::{Body, to_bytes},
@@ -831,11 +831,15 @@ mod tests {
     }
 
     fn test_state_enabled() -> (AppState, ControlReceiver) {
+        test_state_with_index(ApiIndex::build(Path::new("")))
+    }
+
+    fn test_state_with_index(api_index: ApiIndex) -> (AppState, ControlReceiver) {
         let (sender, receiver) = create_channel();
         let state = AppState::new(
             sender,
             SseEventBroadcaster::new(),
-            Arc::new(ApiIndex::build(Path::new(""))),
+            Arc::new(api_index),
             ControlConfig {
                 port: 0,
                 host: "127.0.0.1".into(),
@@ -1426,6 +1430,50 @@ mod tests {
         let app = build_router(state);
         let response = app.oneshot(get_req("/api/v1/guides")).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    async fn json_body(response: Response) -> serde_json::Value {
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn stub_search_and_guide_are_served_from_the_index() {
+        let dir = env::temp_dir().join(format!("pybevy_server_index_{}", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("mcp/guides")).unwrap();
+        fs::write(
+            dir.join("math.pyi"),
+            "class Vec2:\n    pass\nclass Vec3:\n    pass\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("mcp/guides/camera.md"),
+            "# Camera Guide\n\nOrbit.\n",
+        )
+        .unwrap();
+        let (state, _rx) = test_state_with_index(ApiIndex::build(&dir));
+        let app = build_router(state);
+
+        let search = app
+            .clone()
+            .oneshot(get_req("/api/v1/stubs/search?q=vec&limit=1"))
+            .await
+            .unwrap();
+        assert_eq!(search.status(), StatusCode::OK);
+        let search = json_body(search).await;
+        assert_eq!(search["results"].as_array().unwrap().len(), 1);
+        assert_eq!(search["total"], 2);
+        assert_eq!(search["truncated"], true);
+
+        let guide = app.oneshot(get_req("/api/v1/guides/camera")).await.unwrap();
+        assert_eq!(guide.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(guide).await,
+            serde_json::json!({"name": "camera", "content": "# Camera Guide\n\nOrbit.\n"})
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

@@ -1,7 +1,12 @@
 use std::collections::HashMap;
 
 use bevy::input::gamepad::{AxisSettings, ButtonAxisSettings, ButtonSettings, GamepadSettings};
-use pybevy_core::{ComponentStorage, PyComponent, public_error, repr::float_repr};
+use pybevy_core::{
+    ComponentStorage, PyComponent,
+    domain::{FINITE_NON_NEGATIVE, FieldDomain, check_for, check_ordered_for},
+    public_error,
+    repr::float_repr,
+};
 use pybevy_macros::pycomponent;
 use pyo3::{
     exceptions::PyValueError,
@@ -10,6 +15,11 @@ use pyo3::{
 };
 
 use crate::{gamepad_axis::PyGamepadAxis, gamepad_button::PyGamepadButton};
+
+// The ranges Bevy's ButtonSettings and AxisSettings constructors enforce.
+const UNIT_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 0.0, hi: 1.0 }];
+const NEGATIVE_UNIT_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: -1.0, hi: 0.0 }];
+const AXIS_THRESHOLD_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 0.0, hi: 2.0 }];
 
 #[pyclass(
     name = "ButtonSettings",
@@ -36,6 +46,15 @@ impl PyButtonSettings {
     #[new]
     #[pyo3(signature = (press_threshold=0.75, release_threshold=0.65))]
     pub fn new(press_threshold: f32, release_threshold: f32) -> PyResult<Self> {
+        check_for::<Self, _>("press_threshold", press_threshold, UNIT_DOMAIN)?;
+        check_for::<Self, _>("release_threshold", release_threshold, UNIT_DOMAIN)?;
+        check_ordered_for::<Self, _>(
+            "release_threshold",
+            release_threshold,
+            "press_threshold",
+            press_threshold,
+            false,
+        )?;
         ButtonSettings::new(press_threshold, release_threshold)
             .map(|inner| PyButtonSettings { inner })
             .map_err(|e| PyValueError::new_err(public_error::gamepad_settings_failed("button", e)))
@@ -105,6 +124,33 @@ impl PyAxisSettings {
         livezone_upperbound: f32,
         threshold: f32,
     ) -> PyResult<Self> {
+        check_for::<Self, _>(
+            "livezone_lowerbound",
+            livezone_lowerbound,
+            NEGATIVE_UNIT_DOMAIN,
+        )?;
+        check_for::<Self, _>(
+            "deadzone_lowerbound",
+            deadzone_lowerbound,
+            NEGATIVE_UNIT_DOMAIN,
+        )?;
+        check_for::<Self, _>("deadzone_upperbound", deadzone_upperbound, UNIT_DOMAIN)?;
+        check_for::<Self, _>("livezone_upperbound", livezone_upperbound, UNIT_DOMAIN)?;
+        check_for::<Self, _>("threshold", threshold, AXIS_THRESHOLD_DOMAIN)?;
+        check_ordered_for::<Self, _>(
+            "livezone_lowerbound",
+            livezone_lowerbound,
+            "deadzone_lowerbound",
+            deadzone_lowerbound,
+            false,
+        )?;
+        check_ordered_for::<Self, _>(
+            "deadzone_upperbound",
+            deadzone_upperbound,
+            "livezone_upperbound",
+            livezone_upperbound,
+            false,
+        )?;
         AxisSettings::new(
             livezone_lowerbound,
             deadzone_lowerbound,
@@ -180,14 +226,19 @@ impl From<&ButtonAxisSettings> for PyButtonAxisSettings {
 impl PyButtonAxisSettings {
     #[new]
     #[pyo3(signature = (*, high=0.95, low=0.05, threshold=0.01))]
-    pub fn new(high: f32, low: f32, threshold: f32) -> Self {
-        PyButtonAxisSettings {
+    pub fn new(high: f32, low: f32, threshold: f32) -> PyResult<Self> {
+        // Bevy documents 0.0 to 1.0 as the valid range but does not check it.
+        check_for::<Self, _>("high", high, UNIT_DOMAIN)?;
+        check_for::<Self, _>("low", low, UNIT_DOMAIN)?;
+        check_for::<Self, _>("threshold", threshold, FINITE_NON_NEGATIVE)?;
+        check_ordered_for::<Self, _>("low", low, "high", high, false)?;
+        Ok(PyButtonAxisSettings {
             inner: ButtonAxisSettings {
                 high,
                 low,
                 threshold,
             },
-        }
+        })
     }
 
     #[getter]

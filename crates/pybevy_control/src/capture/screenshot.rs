@@ -742,6 +742,7 @@ mod tests {
             camera::{DebugCameraCleanup, setup_debug_camera},
             headless::HeadlessFrameBuffer,
             hold::{GizmoEnabledRestore, OverlaySuppression, suppress_internal_overlay},
+            lease::capture_in_progress,
             queue::{
                 CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots,
             },
@@ -1824,5 +1825,67 @@ mod tests {
         let result = encode_rgb_screenshot(&resized).unwrap();
         assert_eq!(result["width"], 20);
         assert_eq!(result["height"], 10);
+    }
+
+    #[test]
+    fn captured_screenshot_answers_with_extra_fields_and_releases_its_hold() {
+        let mut world = world_with_gizmos();
+        world.init_resource::<PendingScreenshotResponders>();
+        world.init_resource::<TimelineCaptures>();
+        world.init_resource::<PendingTimelines>();
+        world.init_resource::<PendingTurnarounds>();
+        world.init_resource::<TurnaroundCaptures>();
+        world.init_resource::<CapturedFrames>();
+        world.add_observer(screenshot_captured_observer);
+        let ui = world.spawn((Node::default(), Visibility::Visible)).id();
+        let hold = CaptureHold::begin(&mut world, true, false);
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Hidden);
+        assert!(!gizmos_enabled(&world));
+        assert!(capture_in_progress(&world));
+
+        let entity = world.spawn_empty().id();
+        let (response_tx, mut response_rx) = oneshot::channel();
+        world
+            .resource_mut::<PendingScreenshotResponders>()
+            .map
+            .insert(
+                entity,
+                ScreenshotResponder {
+                    response_tx,
+                    max_width: None,
+                    hold,
+                    extra_response: Some(serde_json::json!({"reload": {"generation": 3}})),
+                    capture_viewport: None,
+                    response_kind: CaptureResponseKind::Screenshot,
+                    frames_waited: 0,
+                },
+            );
+
+        world.trigger(ScreenshotCaptured {
+            entity,
+            image: make_test_image(2, 1),
+        });
+        world.flush();
+
+        let response = response_rx.try_recv().unwrap().unwrap();
+        assert_eq!(response["reload"], serde_json::json!({"generation": 3}));
+        assert!(response["screenshot"].is_string());
+        assert_eq!(
+            (
+                &response["screenshot_width"],
+                &response["screenshot_height"]
+            ),
+            (&serde_json::json!(2), &serde_json::json!(1))
+        );
+        assert!(
+            world
+                .resource::<PendingScreenshotResponders>()
+                .map
+                .is_empty()
+        );
+        assert_eq!(*world.get::<Visibility>(ui).unwrap(), Visibility::Visible);
+        assert!(gizmos_enabled(&world));
+        assert!(!capture_in_progress(&world));
+        assert_eq!(world.resource::<OverlaySuppression>().0, 0);
     }
 }

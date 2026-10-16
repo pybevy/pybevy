@@ -654,7 +654,7 @@ fn collect_class_definitions(module: &str, content: &str) -> Vec<DefinitionCandi
 
 fn collect_function_definitions(module: &str, content: &str) -> Vec<DefinitionCandidate> {
     let lines = content.lines().collect::<Vec<_>>();
-    let mut candidates = Vec::new();
+    let mut candidates: Vec<DefinitionCandidate> = Vec::new();
     let mut in_docstring = false;
 
     for (index, line) in lines.iter().enumerate() {
@@ -697,10 +697,21 @@ fn collect_function_definitions(module: &str, content: &str) -> Vec<DefinitionCa
                     && (next.trim_end().ends_with(':') || next.trim_end().ends_with("..."));
             }
         }
+        let mut definition = deindent_definition(&lines[index..end], 0);
+        if index > 0 && lines[index - 1].trim() == "@overload" {
+            definition = format!("@overload\n{definition}");
+        }
+        if let Some(previous) = candidates
+            .last_mut()
+            .filter(|previous| previous.qualname == name)
+        {
+            previous.definition = format!("{}\n{definition}", previous.definition);
+            continue;
+        }
         candidates.push(DefinitionCandidate {
             module: module.to_string(),
             qualname: name.to_string(),
-            definition: deindent_definition(&lines[index..end], 0),
+            definition,
             kind: DefinitionKind::Function,
         });
     }
@@ -1121,10 +1132,57 @@ fn extract_docstring(raw: &str) -> Option<String> {
 
 fn format_function_structured(raw: &str) -> serde_json::Value {
     let lines = raw.lines().collect::<Vec<_>>();
-    let mut header = lines
-        .first()
-        .map(|line| line.trim().to_string())
+    let starts = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| function_name(line).is_some() && indentation(line) == 0)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let last = starts.last().copied().unwrap_or(0);
+    let overloads = starts[..starts.len().saturating_sub(1)]
+        .iter()
+        .map(|&start| {
+            let end = starts
+                .iter()
+                .find(|&&next| next > start)
+                .copied()
+                .unwrap_or(lines.len());
+            function_header(&lines[start..end])
+        })
+        .collect::<Vec<_>>();
+    let header = function_header(&lines[last..]);
+    let signature = header.strip_prefix("def ").unwrap_or(&header);
+    let parameters = signature
+        .find('(')
+        .zip(signature.rfind(')'))
+        .map(|(start, end)| signature[start..=end].to_string())
         .unwrap_or_default();
+
+    let mut structured = serde_json::json!({
+        "kind": "function",
+        "function": header,
+        "signature": signature,
+        "parameters": parameters,
+        "return_type": extract_return_type(signature),
+        "documentation": extract_docstring(raw),
+    });
+    if !overloads.is_empty()
+        && let Some(object) = structured.as_object_mut()
+    {
+        object.insert("overloads".into(), serde_json::json!(overloads));
+    }
+    structured
+}
+
+/// The `def` line of a function block, joined across continuation lines.
+fn function_header(lines: &[&str]) -> String {
+    let code = |line: &str| {
+        line.split_once("  #")
+            .map_or(line, |(code, _)| code)
+            .trim()
+            .to_string()
+    };
+    let mut header = lines.first().map(|line| code(line)).unwrap_or_default();
 
     for continuation in lines.iter().skip(1) {
         let open_parens = header.matches('(').count();
@@ -1135,30 +1193,19 @@ fn format_function_structured(raw: &str) -> serde_json::Value {
         {
             break;
         }
-        header.push(' ');
-        header.push_str(continuation.trim());
+        if !header.ends_with('(') {
+            header.push(' ');
+        }
+        header.push_str(&code(continuation));
     }
 
-    let header = header
+    header
+        .replace(", )", ")")
         .trim_end_matches(": ...")
         .trim_end_matches(" ...")
         .trim_end_matches(':')
-        .trim();
-    let signature = header.strip_prefix("def ").unwrap_or(header);
-    let parameters = signature
-        .find('(')
-        .zip(signature.rfind(')'))
-        .map(|(start, end)| signature[start..=end].to_string())
-        .unwrap_or_default();
-
-    serde_json::json!({
-        "kind": "function",
-        "function": header,
-        "signature": signature,
-        "parameters": parameters,
-        "return_type": extract_return_type(signature),
-        "documentation": extract_docstring(raw),
-    })
+        .trim()
+        .to_string()
 }
 
 /// Extract a displayable constructor signature, removing `self` param.
@@ -1192,9 +1239,13 @@ fn extract_return_type(sig: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
+    use std::{env, fs, path::PathBuf, process};
 
     use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        env::temp_dir().join(format!("{name}_{}", process::id()))
+    }
 
     #[test]
     fn parse_stub_definitions_classes() {
@@ -1279,6 +1330,63 @@ def resource(cls: type) -> type: ...
         let (classes, functions) = parse_stub_definitions(content);
         assert!(classes.is_empty());
         assert_eq!(functions, vec!["component", "resource"]);
+    }
+
+    #[test]
+    fn overloaded_function_definition_leads_with_its_implementation() {
+        let dir = scratch_dir("pybevy_test_overloads");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("decorators.pyi"),
+            "\
+@overload
+def component(cls: type[CT]) -> type[CT]: ...
+@overload
+def component(*, storage: str) -> Callable[[type[CT]], type[CT]]: ...
+def component(  # type: ignore[misc]
+    cls: type[CT] | None = None,
+    *,
+    storage: str | None = None,
+) -> type[CT] | Callable[[type[CT]], type[CT]]:
+    \"\"\"Register a component.
+
+    Args:
+        storage: Use \"python\" for PyObject storage.
+    \"\"\"
+
+def resource(cls: type[RT]) -> type[RT]: ...
+",
+        )
+        .unwrap();
+        let index = ApiIndex::build(&dir);
+
+        let text = index.get_type_definition("component").unwrap();
+        assert_eq!(text.matches("def component").count(), 3);
+        assert_eq!(text.matches("@overload").count(), 2);
+        assert!(!text.contains("def resource"));
+
+        let structured = index.get_type_definition_structured("component").unwrap();
+        assert_eq!(
+            structured["signature"],
+            "component(cls: type[CT] | None = None, *, storage: str | None = None) -> type[CT] | Callable[[type[CT]], type[CT]]"
+        );
+        assert_eq!(
+            structured["overloads"],
+            serde_json::json!([
+                "def component(cls: type[CT]) -> type[CT]",
+                "def component(*, storage: str) -> Callable[[type[CT]], type[CT]]",
+            ])
+        );
+        assert!(
+            structured["documentation"]
+                .as_str()
+                .unwrap()
+                .contains("storage: Use \"python\" for PyObject storage.")
+        );
+        assert!(index.get_type_definition_structured("resource").unwrap()["overloads"].is_null());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1661,7 +1769,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_build_with_temp_dir() {
-        let dir = env::temp_dir().join("pybevy_test_api_index");
+        let dir = scratch_dir("pybevy_test_api_index");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1688,7 +1796,7 @@ class Bloom(Component):
 
     #[test]
     fn package_init_stub_uses_the_package_module_name() {
-        let dir = env::temp_dir().join("pybevy_test_api_package_index");
+        let dir = scratch_dir("pybevy_test_api_package_index");
         let _ = fs::remove_dir_all(&dir);
         let ecs_dir = dir.join("ecs");
         fs::create_dir_all(&ecs_dir).unwrap();
@@ -1715,7 +1823,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_search_case_insensitive() {
-        let dir = env::temp_dir().join("pybevy_test_search");
+        let dir = scratch_dir("pybevy_test_search");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1736,7 +1844,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_search_truncation() {
-        let dir = env::temp_dir().join("pybevy_test_truncation");
+        let dir = scratch_dir("pybevy_test_truncation");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1764,7 +1872,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_get_type_definition() {
-        let dir = env::temp_dir().join("pybevy_test_typedef");
+        let dir = scratch_dir("pybevy_test_typedef");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 
@@ -1787,7 +1895,7 @@ class Bloom(Component):
 
     #[test]
     fn api_index_gets_structured_function_definitions() {
-        let dir = env::temp_dir().join("pybevy_test_function_definition");
+        let dir = scratch_dir("pybevy_test_function_definition");
         let _ = fs::remove_dir_all(&dir);
         let material_dir = dir.join("material");
         fs::create_dir_all(&material_dir).unwrap();
@@ -1836,7 +1944,7 @@ def material(
 
     #[test]
     fn api_index_type_lookup_is_qualified_and_reports_ambiguity() {
-        let dir = env::temp_dir().join("pybevy_test_qualified_typedef");
+        let dir = scratch_dir("pybevy_test_qualified_typedef");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(
@@ -1917,7 +2025,7 @@ class Shared:
 
     #[test]
     fn api_index_guides() {
-        let dir = env::temp_dir().join("pybevy_test_guides");
+        let dir = scratch_dir("pybevy_test_guides");
         let _ = fs::remove_dir_all(&dir);
         let guides_dir = dir.join("mcp/guides");
         fs::create_dir_all(&guides_dir).unwrap();
@@ -1953,7 +2061,7 @@ class Shared:
 
     #[test]
     fn api_index_keeps_only_public_python_fallbacks() {
-        let dir = env::temp_dir().join("pybevy_test_py_fallback");
+        let dir = scratch_dir("pybevy_test_py_fallback");
         let _ = fs::remove_dir_all(&dir);
         let contrib_dir = dir.join("contrib");
         let mcp_dir = dir.join("mcp");
@@ -2084,7 +2192,7 @@ from .single import Simple
 
     #[test]
     fn api_index_instructions() {
-        let dir = env::temp_dir().join("pybevy_test_instructions");
+        let dir = scratch_dir("pybevy_test_instructions");
         let _ = fs::remove_dir_all(&dir);
         let mcp_dir = dir.join("mcp");
         fs::create_dir_all(&mcp_dir).unwrap();
@@ -2105,7 +2213,7 @@ from .single import Simple
 
     #[test]
     fn api_index_instructions_missing() {
-        let dir = env::temp_dir().join("pybevy_test_instructions_missing");
+        let dir = scratch_dir("pybevy_test_instructions_missing");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
 

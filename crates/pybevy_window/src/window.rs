@@ -1,11 +1,12 @@
 use std::num::NonZero;
 
 use bevy::{
-    math::DVec2,
+    math::{DVec2, Vec2},
     window::{Window, WindowPosition},
 };
 use pybevy_core::{
-    ComponentStorage, PyComponent, StorageError, computed_owned, domain::IntegerInput,
+    ComponentStorage, PyComponent, StorageError, computed_owned,
+    domain::{FINITE, IntegerInput, check_for},
     repr::str_repr,
 };
 use pybevy_macros::pycomponent;
@@ -668,8 +669,9 @@ impl PyWindow {
     }
 
     pub fn set_cursor_position(&mut self, position: Option<PyVec2>) -> PyResult<()> {
-        self.as_mut()?
-            .set_cursor_position(position.map(TryInto::try_into).transpose()?);
+        let position: Option<Vec2> = position.map(TryInto::try_into).transpose()?;
+        let position = check_for::<Self, _>("cursor_position", position, FINITE)?;
+        self.as_mut()?.set_cursor_position(position);
         Ok(())
     }
 
@@ -694,8 +696,9 @@ impl PyWindow {
     }
 
     pub fn set_physical_cursor_position(&mut self, position: Option<(f64, f64)>) -> PyResult<()> {
-        self.as_mut()?
-            .set_physical_cursor_position(position.map(|(x, y)| DVec2::new(x, y)));
+        let position = position.map(|(x, y)| DVec2::new(x, y));
+        let position = check_for::<Self, _>("physical_cursor_position", position, FINITE)?;
+        self.as_mut()?.set_physical_cursor_position(position);
         Ok(())
     }
 

@@ -130,19 +130,25 @@ mod tests {
     use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfig, GizmoConfigStore};
     #[cfg(feature = "pyo3-runtime")]
     use bevy::{ecs::entity::Entity, prelude::Transform};
+    use pybevy_core::LastSystemError;
     #[cfg(feature = "pyo3-runtime")]
     use pybevy_core::bridge_inventory::collect_all;
     #[cfg(feature = "pyo3-runtime")]
     use pyo3::Python;
+    use serde_json::Value;
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{capture::queue::PendingScreenshots, engine::channel::create_channel};
-    #[cfg(feature = "pyo3-runtime")]
     use crate::{
-        protocol::{EntityRef, GetComponentParams},
-        pyo3::runtime::Pyo3ControlRuntime,
+        capture::queue::PendingScreenshots,
+        engine::{
+            channel::{ControlSender, create_channel},
+            runtime::fake::FakeRuntime,
+        },
+        protocol::{ControlError, EntityRef, ErrorCode},
     };
+    #[cfg(feature = "pyo3-runtime")]
+    use crate::{protocol::GetComponentParams, pyo3::runtime::Pyo3ControlRuntime};
 
     fn all_features_enabled() -> ControlConfig {
         ControlConfig {
@@ -214,6 +220,108 @@ mod tests {
         let (config, _) = store.config::<DefaultGizmoConfigGroup>();
         assert!(config.enabled, "gizmos must stay enabled for the capture");
     }
+    type Response = oneshot::Receiver<Result<Value, ControlError>>;
+
+    fn fake_runtime_world(config: ControlConfig) -> (World, ControlSender) {
+        let mut world = World::new();
+        world.insert_resource(config);
+        world.insert_non_send(Box::new(FakeRuntime) as Box<dyn ControlRuntime>);
+        let (sender, receiver) = create_channel();
+        world.insert_resource(receiver);
+        (world, sender)
+    }
+
+    fn submit(sender: &ControlSender, operation: ControlOperation) -> Response {
+        let (response_tx, response_rx) = oneshot::channel();
+        sender
+            .tx
+            .send(ControlRequest {
+                operation,
+                response_tx,
+            })
+            .unwrap();
+        response_rx
+    }
+
+    fn answered(responses: &mut [Response]) -> usize {
+        responses
+            .iter_mut()
+            .map(|response| response.try_recv())
+            .filter(Result::is_ok)
+            .count()
+    }
+
+    #[test]
+    fn requests_beyond_the_frame_cap_wait_for_the_next_frame() {
+        let (mut world, sender) = fake_runtime_world(all_features_enabled());
+        let mut responses: Vec<Response> = (0..=MAX_REQUESTS_PER_FRAME)
+            .map(|_| submit(&sender, ControlOperation::ListEntities))
+            .collect();
+
+        control_poll_system(&mut world);
+        assert_eq!(answered(&mut responses), MAX_REQUESTS_PER_FRAME);
+
+        control_poll_system(&mut world);
+        assert_eq!(answered(&mut responses[MAX_REQUESTS_PER_FRAME..]), 1);
+    }
+
+    #[test]
+    fn gated_request_is_answered_forbidden_without_dispatch() {
+        let config = ControlConfig {
+            manipulation: false,
+            ..all_features_enabled()
+        };
+        let (mut world, sender) = fake_runtime_world(config);
+        let entity = world.spawn_empty().id();
+        let mut response = submit(
+            &sender,
+            ControlOperation::DespawnEntity {
+                entity: EntityRef::Id(entity.to_bits()),
+            },
+        );
+
+        control_poll_system(&mut world);
+
+        let error = response.try_recv().unwrap().unwrap_err();
+        assert_eq!(error.code, ErrorCode::Forbidden);
+        assert!(world.get_entity(entity).is_ok());
+    }
+
+    fn publish_error(world: &mut World, message: &str, timestamp_secs: f64) {
+        world.insert_resource(LastSystemError {
+            error: Some(message.into()),
+            traceback: None,
+            timestamp_secs,
+            sequence: 0,
+        });
+    }
+
+    #[test]
+    fn each_system_error_is_broadcast_once_even_after_a_clock_reset() {
+        let (mut world, _sender) = fake_runtime_world(all_features_enabled());
+        let broadcaster = SseEventBroadcaster::new();
+        let mut events = broadcaster.tx.subscribe();
+        world.insert_resource(broadcaster);
+        let mut messages = || {
+            let mut received = Vec::new();
+            while let Ok(json) = events.try_recv() {
+                let event: Value = serde_json::from_str(&json).unwrap();
+                received.push(event["message"].as_str().unwrap().to_string());
+            }
+            received
+        };
+
+        publish_error(&mut world, "before reload", 12.5);
+        control_poll_system(&mut world);
+        control_poll_system(&mut world);
+        assert_eq!(messages(), ["before reload"]);
+
+        publish_error(&mut world, "after reload", 0.5);
+        control_poll_system(&mut world);
+        control_poll_system(&mut world);
+        assert_eq!(messages(), ["after reload"]);
+    }
+
     #[test]
     fn max_requests_per_frame_is_reasonable() {
         const _: () = assert!((MAX_REQUESTS_PER_FRAME > 0) && (MAX_REQUESTS_PER_FRAME <= 1000));

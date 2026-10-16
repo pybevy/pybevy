@@ -18,7 +18,10 @@ use pybevy_core::{
     ValueStorage, extract_handle_from_any,
 };
 use pybevy_macros::pyasset;
-use pybevy_material::{alpha_mode::PyAlphaMode, opaque_renderer_method::PyOpaqueRendererMethod};
+use pybevy_material::{
+    alpha_mode::{PyAlphaMode, checked_alpha_mode},
+    opaque_renderer_method::PyOpaqueRendererMethod,
+};
 use pybevy_math::affine2::PyAffine2;
 use pybevy_mesh::uv_channel::PyUvChannel;
 use pybevy_render::face::PyFace;
@@ -303,7 +306,7 @@ impl PyStandardMaterial {
             cull_mode: cull_mode.map(Into::into),
             unlit,
             fog_enabled,
-            alpha_mode: alpha_mode.into(),
+            alpha_mode: checked_alpha_mode(alpha_mode)?,
             depth_bias,
             depth_map: convert_optional_handle(depth_map)?,
             parallax_depth_scale,
@@ -1312,7 +1315,8 @@ impl PyStandardMaterial {
 
     #[setter]
     pub fn set_alpha_mode(&mut self, mode: PyAlphaMode) -> PyResult<()> {
-        self.as_mut()?.alpha_mode = mode.into();
+        let mode = checked_alpha_mode(mode)?;
+        self.as_mut()?.alpha_mode = mode;
         Ok(())
     }
 

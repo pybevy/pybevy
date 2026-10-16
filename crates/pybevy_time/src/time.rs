@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::time::{Fixed, Real, Time, Virtual};
 use pybevy_core::{
     PyResource, ResourceStorage,
-    domain::{DurationInput, POSITIVE, TimedeltaInput, check, check_for},
+    domain::{DurationInput, FINITE_NON_NEGATIVE, POSITIVE, TimedeltaInput, check, check_for},
     public_error::{DURATION_OVERFLOW, TIME_CONTEXT_TYPE_REQUIRED, time_moved_backwards},
     relative_speed,
     repr::float_repr,
@@ -76,7 +76,8 @@ impl PyTime {
         Ok(specialized.unbind().into_any())
     }
 
-    pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+    pub fn advance_by(&mut self, delta: TimedeltaInput) -> PyResult<()> {
+        let delta = check_for::<Self, _>("delta", delta, FINITE_NON_NEGATIVE)?.stored();
         check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
@@ -128,7 +129,8 @@ impl PyTime {
         Ok(self.as_ref()?.delta())
     }
 
-    pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+    pub fn advance_to(&mut self, elapsed: TimedeltaInput) -> PyResult<()> {
+        let elapsed = check_for::<Self, _>("elapsed", elapsed, FINITE_NON_NEGATIVE)?.stored();
         check_advance_to(<Self as PyClass>::NAME, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
@@ -215,7 +217,8 @@ impl PyTimeFixed {
         Ok(self.as_ref()?.overstep())
     }
 
-    pub fn discard_overstep(&mut self, discard: Duration) -> PyResult<()> {
+    pub fn discard_overstep(&mut self, discard: TimedeltaInput) -> PyResult<()> {
+        let discard = check(FIXED, "discard", discard, FINITE_NON_NEGATIVE)?.stored();
         self.as_mut()?.discard_overstep(discard);
         Ok(())
     }
@@ -252,13 +255,15 @@ impl PyTimeFixed {
         Ok(self.as_ref()?.delta())
     }
 
-    pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+    pub fn advance_to(&mut self, elapsed: TimedeltaInput) -> PyResult<()> {
+        let elapsed = check(FIXED, "elapsed", elapsed, FINITE_NON_NEGATIVE)?.stored();
         check_advance_to(FIXED, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
 
-    pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+    pub fn advance_by(&mut self, delta: TimedeltaInput) -> PyResult<()> {
+        let delta = check(FIXED, "delta", delta, FINITE_NON_NEGATIVE)?.stored();
         check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
@@ -395,13 +400,15 @@ impl PyTimeVirtual {
         Ok(self.as_ref()?.elapsed_secs_f64())
     }
 
-    pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+    pub fn advance_to(&mut self, elapsed: TimedeltaInput) -> PyResult<()> {
+        let elapsed = check(VIRTUAL, "elapsed", elapsed, FINITE_NON_NEGATIVE)?.stored();
         check_advance_to(VIRTUAL, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
 
-    pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+    pub fn advance_by(&mut self, delta: TimedeltaInput) -> PyResult<()> {
+        let delta = check(VIRTUAL, "delta", delta, FINITE_NON_NEGATIVE)?.stored();
         check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())
@@ -480,13 +487,15 @@ impl PyTimeReal {
         Ok(self.as_ref()?.elapsed_secs_f64())
     }
 
-    pub fn advance_to(&mut self, elapsed: Duration) -> PyResult<()> {
+    pub fn advance_to(&mut self, elapsed: TimedeltaInput) -> PyResult<()> {
+        let elapsed = check(REAL, "elapsed", elapsed, FINITE_NON_NEGATIVE)?.stored();
         check_advance_to(REAL, self.as_ref()?, elapsed)?;
         self.as_mut()?.advance_to(elapsed);
         Ok(())
     }
 
-    pub fn advance_by(&mut self, delta: Duration) -> PyResult<()> {
+    pub fn advance_by(&mut self, delta: TimedeltaInput) -> PyResult<()> {
+        let delta = check(REAL, "delta", delta, FINITE_NON_NEGATIVE)?.stored();
         check_advance_by(self.as_ref()?, delta)?;
         self.as_mut()?.advance_by(delta);
         Ok(())

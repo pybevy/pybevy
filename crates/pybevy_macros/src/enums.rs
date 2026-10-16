@@ -307,18 +307,20 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         .variants
         .iter()
         .find_map(|variant| match &variant.shape {
-            VariantShape::Tuple(fields) | VariantShape::Struct(fields) => {
-                fields.iter().find(|field| field.materialize)
-            }
+            VariantShape::Tuple(fields) | VariantShape::Struct(fields) => fields
+                .iter()
+                .find(|field| field.materialize || field.domain.is_some()),
             VariantShape::Unit | VariantShape::EmptyTuple => None,
         })
     {
-        return syn::Error::new_spanned(
-            field.rust_type,
-            "#[py_materialize] currently requires the struct-backed message pyenum mode",
-        )
-        .to_compile_error()
-        .into();
+        let message = if field.domain.is_some() {
+            "#[py_domain] requires the component or resource pyenum mode"
+        } else {
+            "#[py_materialize] currently requires the struct-backed message pyenum mode"
+        };
+        return syn::Error::new_spanned(field.rust_type, message)
+            .to_compile_error()
+            .into();
     }
     if let Some(field) = spec
         .variants

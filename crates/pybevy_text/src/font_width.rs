@@ -1,5 +1,8 @@
 use bevy::text::FontWidth;
-use pybevy_core::repr::float_repr;
+use pybevy_core::{
+    domain::{POSITIVE, check_for},
+    repr::float_repr,
+};
 use pyo3::prelude::*;
 
 #[pyclass(name = "FontWidth", module = "pybevy.text", frozen, eq, from_py_object)]
@@ -22,8 +25,10 @@ impl From<PyFontWidth> for FontWidth {
 impl PyFontWidth {
     #[new]
     #[pyo3(signature = (value = 1.0))]
-    pub fn new(value: f32) -> Self {
-        PyFontWidth(FontWidth(value))
+    pub fn new(value: f32) -> PyResult<Self> {
+        Ok(PyFontWidth(FontWidth(check_for::<Self, _>(
+            "value", value, POSITIVE,
+        )?)))
     }
 
     #[getter]

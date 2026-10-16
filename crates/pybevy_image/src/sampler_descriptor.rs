@@ -11,8 +11,12 @@ use crate::{
     image_filter_mode::PyImageFilterMode, image_sampler_border_color::PyImageSamplerBorderColor,
 };
 
-// wgpu requires 0 <= lod_min_clamp <= lod_max_clamp for every sampler.
-#[pyfield(domains = [lod_min_clamp => [non_negative], ordered(lod_min_clamp, lod_max_clamp)])]
+// wgpu requires 0 <= lod_min_clamp <= lod_max_clamp and anisotropy_clamp >= 1.
+#[pyfield(domains = [
+    lod_min_clamp => [non_negative],
+    anisotropy_clamp => [at_least(1)],
+    ordered(lod_min_clamp, lod_max_clamp)
+])]
 #[pyclass(
     name = "ImageSamplerDescriptor",
     module = "pybevy.image",
@@ -194,6 +198,7 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_anisotropy_clamp(&mut self, value: u16) -> PyResult<()> {
+        let value = Self::check_anisotropy_clamp(value)?;
         self.as_mut()?.anisotropy_clamp = value;
         Ok(())
     }

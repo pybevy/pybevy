@@ -7,7 +7,7 @@ use pybevy_macros::pyasset;
 use pybevy_math::affine2::PyAffine2;
 use pyo3::prelude::*;
 
-use crate::alpha_mode_2d::PyAlphaMode2d;
+use crate::alpha_mode_2d::{PyAlphaMode2d, checked_alpha_mode_2d};
 
 #[pyasset(ColorMaterial, bridge, input_converter)]
 #[pyclass(name = "ColorMaterial", module = "pybevy.sprite", extends = PyAsset, skip_from_py_object)]
@@ -60,7 +60,7 @@ impl PyColorMaterial {
         let color = color.try_into()?;
         Ok(Self::from_owned(ColorMaterial {
             color,
-            alpha_mode: alpha_mode.into(),
+            alpha_mode: checked_alpha_mode_2d(alpha_mode)?,
             uv_transform: uv_transform.try_into()?,
             texture: texture_handle,
         })
@@ -106,7 +106,8 @@ impl PyColorMaterial {
 
     #[setter]
     pub fn set_alpha_mode(&mut self, alpha_mode: PyAlphaMode2d) -> PyResult<()> {
-        self.as_mut()?.alpha_mode = alpha_mode.into();
+        let alpha_mode = checked_alpha_mode_2d(alpha_mode)?;
+        self.as_mut()?.alpha_mode = alpha_mode;
         Ok(())
     }
 

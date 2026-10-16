@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use bevy::app::{App, RunMode, ScheduleRunnerPlugin};
-use pybevy_core::{PluginBuild, PyPlugin};
+use pybevy_core::{
+    PluginBuild, PyPlugin,
+    domain::{IntegerInput, NON_NEGATIVE, check_for},
+};
 use pybevy_macros::{pyenum, pyplugin};
 use pyo3::prelude::*;
 
@@ -57,7 +60,9 @@ impl PyScheduleRunnerPlugin {
 
     #[staticmethod]
     #[pyo3(signature = (wait_duration = None))]
-    pub fn run_loop(py: Python, wait_duration: Option<u64>) -> PyResult<Py<Self>> {
+    pub fn run_loop(py: Python, wait_duration: Option<IntegerInput<u64>>) -> PyResult<Py<Self>> {
+        let wait_duration = check_for::<Self, _>("wait_duration", wait_duration, NON_NEGATIVE)?
+            .map(IntegerInput::stored);
         Py::new(
             py,
             (

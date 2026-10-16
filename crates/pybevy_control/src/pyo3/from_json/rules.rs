@@ -19,6 +19,7 @@ use crate::{
         value::{json_f32, json_f64},
     },
     pyo3::{
+        descriptors::constructor_fields,
         enum_names,
         from_json::{
             color::{construct_color_variant, linear_rgba_from_json, srgba_from_array},
@@ -27,8 +28,9 @@ use crate::{
                 reject_enum_constant,
             },
             field::{
-                construct_declared_optional, convert_field_value, entity_from_json,
-                has_public_getset_fields, is_dataclass_instance, json_to_py, rebuild_array_like,
+                construct_declared_optional, convert_field_value, convert_with_current,
+                entity_from_json, has_public_getset_fields, is_dataclass_instance, json_to_py,
+                rebuild_array_like,
             },
             lists::convert_list_elements,
             math::{math_readback_array, math_value_from_json, range_from_json},
@@ -140,6 +142,7 @@ pub(super) const RULES: &[Rule] = &[
     math_array,
     wrapped_scalar,
     pybevy_value_patch,
+    constructor_patch,
 ];
 
 fn declared_optional(cx: &FieldContext<'_, '_>) -> Converted {
@@ -551,6 +554,44 @@ fn pybevy_value_patch(cx: &FieldContext<'_, '_>) -> Converted {
     }
     cx.current
         .get_type()
+        .call((), Some(&kwargs))
+        .map(|value| Some(value.unbind()))
+        .map_err(|error| error.to_string())
+}
+
+/// Rebuild a pybevy value without field descriptors, such as `UiRect`, through
+/// its constructor; omitted parameters keep their current values.
+fn constructor_patch(cx: &FieldContext<'_, '_>) -> Converted {
+    let Some(fields) = cx.object() else {
+        return Ok(None);
+    };
+    let owner = cx.current.get_type();
+    if !owner
+        .module()
+        .is_ok_and(|module| module.to_string_lossy().starts_with("pybevy."))
+    {
+        return Ok(None);
+    }
+    let Some(current_fields) = constructor_fields(&cx.current) else {
+        return Ok(None);
+    };
+    if let Some(unknown) = fields
+        .keys()
+        .find(|key| !current_fields.iter().any(|(name, _)| name == *key))
+    {
+        return Err(format!("{} has no field '{unknown}'", cx.type_name));
+    }
+    let kwargs = PyDict::new(cx.py);
+    for (name, current) in current_fields {
+        let value = match fields.get(&name) {
+            Some(value) => convert_with_current(cx.py, &cx.current, &name, value, None, current)?,
+            None => current.unbind(),
+        };
+        kwargs
+            .set_item(name, value)
+            .map_err(|error| error.to_string())?;
+    }
+    owner
         .call((), Some(&kwargs))
         .map(|value| Some(value.unbind()))
         .map_err(|error| error.to_string())

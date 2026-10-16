@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Expr, ItemEnum, Lit, Meta, punctuated::Punctuated, token::Comma};
+use syn::{Expr, Ident, ItemEnum, Lit, Meta, punctuated::Punctuated, token::Comma};
 
 use crate::{
     enum_spec::{
@@ -208,17 +208,16 @@ fn try_expand(
 
         let parameters = fields.iter().map(parameter).collect::<Vec<_>>();
         let parameter_names = fields.iter().map(parameter_name).collect::<Vec<_>>();
-        let conversions = fields.iter().filter_map(|field| {
+        let conversions = fields.iter().map(|field| {
             let name = parameter_name(field);
             let stored = field.rust_type;
-            let fallible = field.try_into;
-            field.python_type.as_ref().map(|_| {
-                if fallible {
-                    quote! { let #name: #stored = #name.try_into()?; }
-                } else {
-                    quote! { let #name: #stored = #name.into(); }
-                }
-            })
+            let conversion = match (&field.python_type, field.try_into) {
+                (Some(_), true) => quote! { let #name: #stored = #name.try_into()?; },
+                (Some(_), false) => quote! { let #name: #stored = #name.into(); },
+                (None, _) => TokenStream::new(),
+            };
+            let check = domain_check(field, &qualname, &name);
+            quote! { #conversion #check }
         });
         let signature = constructor_signature(fields);
         let match_args_values = variant.match_args();
@@ -258,7 +257,9 @@ fn try_expand(
             fields,
             &parameter_names,
         );
-        let ctor_is_fallible = fields.iter().any(|field| field.try_into);
+        let ctor_is_fallible = fields
+            .iter()
+            .any(|field| field.try_into || field.domain.is_some());
         let (ctor_return, ctor_body) = if ctor_is_fallible {
             (
                 quote! { pyo3::PyResult<pyo3::PyClassInitializer<Self>> },
@@ -342,6 +343,7 @@ fn try_expand(
                 } else {
                     TokenStream::new()
                 };
+                let check = domain_check(field, &qualname, &format_ident!("value"));
                 let pattern = variant_binding_pattern(
                     inner_type,
                     rust_name,
@@ -357,6 +359,7 @@ fn try_expand(
                         value: #argument_type,
                     ) -> pyo3::PyResult<()> {
                         #conversion
+                        #check
                         let mut base = slf.into_super();
                         // Reject a stale wrapper before as_mut marks the component changed.
                         if !matches!(&*base.storage.as_ref()?, #materialize_pattern) {
@@ -490,6 +493,17 @@ fn try_expand(
             Ok(())
         }
     })
+}
+
+/// Checks a payload against its `#[py_domain]` rules, named `Enum.Variant.field`.
+fn domain_check(field: &FieldSpec<'_>, qualname: &str, value: &Ident) -> TokenStream {
+    let Some(domain) = &field.domain else {
+        return TokenStream::new();
+    };
+    let field_name = &field.python_name;
+    quote! {
+        let #value = pybevy_core::domain::check(#qualname, #field_name, #value, #domain)?;
+    }
 }
 
 fn construct_variant(
