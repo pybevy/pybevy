@@ -10,9 +10,9 @@ use bevy::{
 };
 use pybevy_color::linear_rgba::PyLinearRgba;
 use pybevy_core::{
-    AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, FromBorrowedStorage,
-    HandleArg, LogicalTypeId, NativeAsset, PluginBuild, PyComponent, PyHandle, PyMaterial,
-    PyPlugin, ValueStorage,
+    AssetInputConverter, AssetStorage, ComponentStorage, FromBorrowedStorage, HandleArg,
+    LogicalTypeId, NativeAsset, PluginBuild, PyComponent, PyHandle, PyMaterial, PyPlugin,
+    ValueStorage,
     asset_path::parse_asset_path,
     ensure_asset_type, extract_handle_from_any,
     public_error::{

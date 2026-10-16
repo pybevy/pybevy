@@ -3710,7 +3710,7 @@ paths = [
 [[validation.exceptions]]
 code = "E013"
 path = "pbr.StorageShaderMaterial"
-reason = "PyBevy's ExtendedMaterial specialization with one optional read-only ShaderBuffer binding; no matching upstream constructor"
+reason = "PyBevy's native Material with per-instance typed storage layouts and StandardMaterial delegation; no matching upstream constructor"
 
 [[validation.exceptions]]
 code = "E013"

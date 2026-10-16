@@ -37,9 +37,7 @@ It animates a shared read-only vec4 color array and indexes it with `MeshTag`.
 The Python annotation selects `StorageShaderMaterialPlugin`; generated bindings
 use slot 109 rather than the Rust example's standalone slot 0.
 
-Setup and 60 manually stepped headless frames pass, and the material binding
-has separate pixel and reload coverage. **Runtime verification pending:** the
-standard example-smoke command needs an X server (`xvfb-run` is unavailable in
-this environment). The shared headless scene runner also exits with signal 11
-on both this example and the existing `shader_material.py` control; its runner
-path remains unqualified. This is not an unqualified completed conversion.
+The standard 60-frame example-smoke test passes on a private Xvfb display
+with Vulkan. Material bindings also have headless pixel and reload coverage.
+The separate guide scene runner's previously observed signal 11 is not
+qualified by this windowed entrypoint check.

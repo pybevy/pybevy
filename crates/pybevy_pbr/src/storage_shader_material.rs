@@ -5,17 +5,25 @@ use crate::{
     },
     shader_material_py::build_shader_material,
 };
-use bevy::{app::App, asset::Handle, pbr::MeshMaterial3d, render::storage::ShaderBuffer};
+use bevy::{
+    app::App, asset::Handle, image::Image, pbr::MeshMaterial3d, render::storage::ShaderBuffer,
+};
 use pybevy_core::{
     AssetInputConverter, AssetStorage, ComponentStorage, LogicalTypeId, PluginBuild, PyComponent,
     PyHandle, PyMaterial, PyPlugin, ensure_asset_type, extract_handle_from_any,
 };
 use pybevy_macros::{pyasset, pycomponent, pyplugin};
+use pybevy_shader_types::{
+    storage_element::StorageElement, storage_material::StorageBinding,
+    texture_binding::TextureBindingLayout,
+};
 use pyo3::{
-    exceptions::PyTypeError,
+    exceptions::{PyIndexError, PyTypeError, PyValueError},
     prelude::*,
     types::{PyList, PyType},
 };
+
+type TextureLayoutInput = (String, String, bool, String);
 
 fn extract_storage_handle(
     handle: Option<&Bound<'_, PyAny>>,
@@ -61,9 +69,36 @@ impl PyStorageShaderMaterial {
     fn _validate_storage_handle(value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         extract_storage_handle(value).map(|_| ())
     }
+    #[staticmethod]
+    fn _storage_element_layout(element: &str, declarations: &str) -> PyResult<(u32, u32)> {
+        let element =
+            StorageElement::parse(element, declarations).map_err(PyValueError::new_err)?;
+        Ok((element.stride, element.alignment))
+    }
+    #[staticmethod]
+    fn _validate_texture_handle(value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        if let Some(value) = value.filter(|value| !value.is_none()) {
+            let handle = extract_handle_from_any(value)?;
+            let _: Handle<Image> = (&handle).try_into()?;
+        }
+        Ok(())
+    }
+    #[staticmethod]
+    fn _texture_layout(
+        dimension: &str,
+        sample_type: &str,
+        filterable: bool,
+        sampler: &str,
+    ) -> PyResult<(String, String)> {
+        Ok(
+            TextureBindingLayout::parse(dimension, sample_type, filterable, sampler)
+                .map_err(PyValueError::new_err)?
+                .wgsl_types(),
+        )
+    }
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, storage_buffer=None, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
+    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, storage_buffer=None, storage_buffers=None, storage_layouts=None, texture_layouts=None, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
     pub fn new(
         py: Python<'_>,
         base: &Bound<'_, PyAny>,
@@ -75,12 +110,59 @@ impl PyStorageShaderMaterial {
         textures: Option<Py<PyList>>,
         bindings_wgsl: Option<String>,
         storage_buffer: Option<&Bound<'_, PyAny>>,
+        storage_buffers: Option<&Bound<'_, PyList>>,
+        storage_layouts: Option<Vec<(String, String)>>,
+        texture_layouts: Option<Vec<Option<TextureLayoutInput>>>,
         prepass_vertex_shader: Option<String>,
         prepass_fragment_shader: Option<String>,
         deferred_vertex_shader: Option<String>,
         deferred_fragment_shader: Option<String>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        let storage_buffer = extract_storage_handle(storage_buffer)?;
+        if storage_buffers.is_some() && storage_buffer.is_some_and(|value| !value.is_none()) {
+            return Err(PyTypeError::new_err(
+                "Use storage_buffer or storage_buffers, not both",
+            ));
+        }
+        let texture_layouts = texture_layouts.unwrap_or_default();
+        if texture_layouts.len() > 4 {
+            return Err(PyValueError::new_err(
+                "At most four texture layouts are supported",
+            ));
+        }
+        let texture_layouts = texture_layouts
+            .into_iter()
+            .map(|value| {
+                value
+                    .map(|(dimension, sample, filterable, sampler)| {
+                        TextureBindingLayout::parse(&dimension, &sample, filterable, &sampler)
+                            .map_err(PyValueError::new_err)
+                    })
+                    .transpose()
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        let handles = match storage_buffers {
+            Some(values) => values
+                .iter()
+                .map(|value| extract_storage_handle(Some(&value)))
+                .collect::<PyResult<Vec<_>>>()?,
+            None => vec![extract_storage_handle(storage_buffer)?],
+        };
+        let layouts = match storage_layouts {
+            Some(values) => {
+                StorageElement::parse_layouts(&values).map_err(PyValueError::new_err)?
+            }
+            None => vec![StorageElement::default(); handles.len()],
+        };
+        if layouts.len() != handles.len() {
+            return Err(PyValueError::new_err(
+                "storage_layouts must match storage_buffers length",
+            ));
+        }
+        let buffers = handles
+            .into_iter()
+            .zip(layouts)
+            .map(|(handle, element)| StorageBinding { handle, element })
+            .collect();
         let material = build_shader_material(
             py,
             base,
@@ -100,7 +182,8 @@ impl PyStorageShaderMaterial {
             base: material.base,
             extension: StorageShaderMaterialExtension {
                 inner: material.extension,
-                storage_buffer,
+                buffers,
+                texture_layouts,
             },
         }))
     }
@@ -150,17 +233,32 @@ impl PyStorageShaderMaterial {
 
     #[getter]
     fn storage_buffer(&self) -> PyResult<Option<PyHandle>> {
-        Ok(self
-            .as_ref()?
-            .extension
-            .storage_buffer
-            .as_ref()
-            .map(PyHandle::from))
+        self.buffer_at(0)
     }
-    #[setter]
-    fn set_storage_buffer(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+    #[setter(storage_buffer)]
+    fn set_first_storage_buffer(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.set_buffer_at(0, value)
+    }
+    #[pyo3(name = "get_storage_buffer_at")]
+    fn buffer_at(&self, slot: usize) -> PyResult<Option<PyHandle>> {
+        let material = self.as_ref()?;
+        let binding = material
+            .extension
+            .buffers
+            .get(slot)
+            .ok_or_else(|| PyIndexError::new_err("Storage buffer slot out of range"))?;
+        Ok(binding.handle.as_ref().map(PyHandle::from))
+    }
+    # [pyo3(name = "set_storage_buffer_at", signature = (slot, value=None))]
+    fn set_buffer_at(&mut self, slot: usize, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         let handle = extract_storage_handle(value)?;
-        self.as_mut()?.extension.storage_buffer = handle;
+        let mut material = self.as_mut()?;
+        let binding = material
+            .extension
+            .buffers
+            .get_mut(slot)
+            .ok_or_else(|| PyIndexError::new_err("Storage buffer slot out of range"))?;
+        binding.handle = handle;
         Ok(())
     }
 }
