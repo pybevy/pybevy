@@ -14,12 +14,15 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::{
-    bridge::{
-        ControlError, ControlOperation, PendingScreenshots, json_object_schema, push_pending_depth,
-        push_pending_screenshot, push_pending_stats, push_pending_timeline,
-        push_pending_turnaround,
+    capture::queue::PendingScreenshots,
+    engine::{
+        deferred::{
+            push_pending_depth, push_pending_screenshot, push_pending_stats, push_pending_timeline,
+            push_pending_turnaround,
+        },
+        dispatch::dispatch,
     },
-    engine::dispatch::dispatch,
+    protocol::{ControlError, ControlOperation, json_object_schema},
     scene::transform_sync::propagate_transforms,
 };
 
@@ -1138,7 +1141,7 @@ fn finalize_schedule(schedule: ActiveSchedule) {
 mod tests {
     use super::*;
     use crate::{
-        bridge::{
+        protocol::{
             CaptureScreenshotParams, CaptureStatsParams, CompareFramesParams, EntityRef,
             GetComponentParams, QueryEntitiesParams, ReloadMode, ReloadParams, SeekTimeParams,
             SetComponentParams,

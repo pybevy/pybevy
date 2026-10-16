@@ -12,12 +12,29 @@ use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
 use crate::{
-    bridge::{
-        CaptureResponseKind, ControlError, DebugCameraRequest, PendingReloadResponses,
-        PendingScreenshots, ReloadMode,
+    capture::{
+        queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshots},
+        screenshot::{GizmoEnabledRestore, RenderFrameReadiness},
     },
-    capture::screenshot::{GizmoEnabledRestore, RenderFrameReadiness},
+    protocol::{ControlError, ReloadMode},
 };
+
+/// Bevy resource for pending reload responses (deferred until reload completes)
+#[derive(Resource, Default)]
+pub struct PendingReloadResponses {
+    pub pending: Vec<PendingReloadResponse>,
+}
+
+pub struct PendingReloadResponse {
+    pub response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    pub frames_remaining: u32,
+    pub mode: ReloadMode,
+    /// The countdown expired while a definition fetch was still running; a
+    /// fresh grace countdown starts when the fetch finishes.
+    pub awaiting_fetch: bool,
+    /// Backstop for a fetch flag that never clears.
+    pub fetch_deadline: Option<std::time::Instant>,
+}
 
 /// A pending reload-and-capture request.
 pub struct PendingReloadAndCapture {
@@ -438,7 +455,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                     look_at: rac.look_at.unwrap_or([0.0, 0.0, 0.0]),
                 });
 
-                let screenshot = crate::bridge::PendingScreenshot {
+                let screenshot = crate::capture::queue::PendingScreenshot {
                     response_tx: rac.response_tx,
                     frames_remaining: rac.screenshot_delay_frames,
                     required_render_epoch: world
@@ -448,7 +465,7 @@ pub fn process_pending_reload_and_capture(world: &mut World) {
                     gizmo_restore: GizmoEnabledRestore::new(),
                     max_width: rac
                         .max_width
-                        .or(Some(crate::bridge::DEFAULT_SCREENSHOT_MAX_WIDTH)),
+                        .or(Some(crate::capture::queue::DEFAULT_SCREENSHOT_MAX_WIDTH)),
                     debug_camera,
                     hide_ui: rac.hide_ui,
                     entity: None,
@@ -488,8 +505,8 @@ mod tests {
         },
     };
 
-    use super::*;
-    use crate::{bridge::PendingReloadResponse, capture::screenshot::process_pending_screenshots};
+    use super::{PendingReloadResponse, *};
+    use crate::capture::screenshot::process_pending_screenshots;
 
     #[test]
     fn get_reload_status_empty_world() {

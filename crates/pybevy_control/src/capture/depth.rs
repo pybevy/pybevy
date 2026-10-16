@@ -8,7 +8,7 @@ use bevy::{
 
 use super::screenshot::select_capture_camera_3d;
 use crate::{
-    bridge::ControlError,
+    protocol::ControlError,
     scene::spatial::{self, compute_world_aabb},
 };
 
@@ -820,7 +820,7 @@ mod tests {
         let error = compute_depth_samples(&mut world, &None, &None, &sample_points, &None)
             .expect_err("out-of-range coordinates must be rejected");
 
-        assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
+        assert_eq!(error.code, crate::protocol::ErrorCode::InvalidParams);
         assert_eq!(
             error.message,
             "sample_points[0] must be within [0, 800) on both axes (got [99999, -50])"
@@ -834,7 +834,7 @@ mod tests {
         let error = compute_depth_samples(&mut world, &None, &None, &None, &Some(0))
             .expect_err("zero grid density must be rejected");
 
-        assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
+        assert_eq!(error.code, crate::protocol::ErrorCode::InvalidParams);
         assert_eq!(error.message, "grid_density must be at least 1");
     }
 
@@ -856,7 +856,7 @@ mod tests {
         );
 
         let error = result.unwrap_err();
-        assert_eq!(error.code, crate::bridge::ErrorCode::NotFound);
+        assert_eq!(error.code, crate::protocol::ErrorCode::NotFound);
         assert_eq!(
             error.message,
             "No Camera3d found for capture_depth projection"
@@ -997,7 +997,7 @@ mod tests {
     fn coincident_camera_points_are_rejected() {
         let error = camera_transform(Vec3::ONE, Vec3::ONE).unwrap_err();
 
-        assert_eq!(error.code, crate::bridge::ErrorCode::InvalidParams);
+        assert_eq!(error.code, crate::protocol::ErrorCode::InvalidParams);
         assert_eq!(
             error.message,
             "position and look_at must be distinct finite points"

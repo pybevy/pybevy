@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::OnceLock};
 
 use serde_json::{Map, Value, json};
 
-use crate::bridge::ControlOperation;
+use crate::protocol::ControlOperation;
 
 static PUBLIC_TOOL_GATES: OnceLock<HashMap<String, Option<String>>> = OnceLock::new();
 

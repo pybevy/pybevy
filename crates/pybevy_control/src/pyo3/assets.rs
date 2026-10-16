@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use super::mutate::convert_field_value;
 use crate::{
-    bridge::{ControlError, EntityRef},
+    protocol::{ControlError, EntityRef},
     scene::entity::resolve_entity,
 };
 
@@ -202,7 +202,7 @@ mod tests {
     use pyo3::{ffi::c_str, prelude::*};
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::protocol::ErrorCode;
 
     static INIT: Once = Once::new();
 

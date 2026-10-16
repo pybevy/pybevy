@@ -14,7 +14,7 @@ use bevy::ecs::{
     resource::IsResource, world::World,
 };
 
-use crate::bridge::InternalOverlayUi;
+use crate::capture::hold::InternalOverlayUi;
 
 /// All real scene entities, excluding resource backing and internal overlays.
 ///

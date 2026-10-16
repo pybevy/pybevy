@@ -4,7 +4,7 @@ use bevy::ecs::{
 };
 use pybevy_core::public_error;
 
-use crate::bridge::{ControlError, EntityRef};
+use crate::protocol::{ControlError, EntityRef};
 
 fn ambiguous_name_error(name: &str, matches: &[Entity]) -> String {
     let count = matches.len();
@@ -71,7 +71,7 @@ mod tests {
     use bevy::ecs::name::Name;
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::protocol::ErrorCode;
 
     #[test]
     fn duplicate_roots_are_ambiguous() {

@@ -20,7 +20,7 @@ use pyo3::{
     types::{PyDict, PyModule, PyType},
 };
 
-use crate::bridge::ControlError;
+use crate::protocol::ControlError;
 
 /// Function that creates a Python World wrapper from a raw world pointer and validity flag.
 /// Registered by the root pybevy crate which has access to PyWorld.

@@ -1,0 +1,756 @@
+use std::sync::{Arc, Mutex};
+
+use bevy::{
+    ecs::world::World,
+    time::{Time, Virtual},
+};
+use tokio::sync::oneshot;
+
+use crate::{
+    capture::{
+        analysis::{FrameStatsOptions, validate_frame_stats_options},
+        depth::{PendingDepthAnalysis, compute_depth_samples_for_camera, validate_depth_sampling},
+        queue::{
+            CaptureResponseKind, DEFAULT_SCREENSHOT_MAX_WIDTH, DEFAULT_TIMELINE_MAX_WIDTH,
+            DebugCameraRequest, PendingScreenshot,
+        },
+        screenshot::{
+            ActiveTimeline, GizmoEnabledRestore, MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES,
+            PendingTimelines, compute_schedule, select_capture_camera_3d, validate_capture_delay,
+        },
+        turnaround::{
+            ActiveTurnaround, MAX_TURNAROUND_VIEWS, PendingTurnarounds, compute_scene_bounds,
+            compute_viewpoints,
+        },
+    },
+    protocol::{
+        CaptureDepthParams, CaptureScreenshotParams, CaptureStatsParams, CaptureTimelineParams,
+        CaptureTurnaroundParams, ControlError, ReloadAndCaptureParams, ReloadParams,
+    },
+    reload::{
+        self, PendingReloadAndCapture, PendingReloadAndCaptures, PendingReloadResponse,
+        PendingReloadResponses,
+    },
+    schedule::{
+        ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
+        SharedScheduleRegistryResource, SharedScheduleState,
+    },
+};
+
+pub fn push_pending_screenshot(
+    params: CaptureScreenshotParams,
+    with_gizmos: bool,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    deferred: &mut Vec<PendingScreenshot>,
+) {
+    if let Err(error) = validate_capture_delay(params.delay_frames) {
+        let _ = response_tx.send(Err(error));
+        return;
+    }
+    let debug_camera = params.position.map(|pos| DebugCameraRequest {
+        position: pos,
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    deferred.push(PendingScreenshot {
+        response_tx,
+        frames_remaining: params.delay_frames,
+        required_render_epoch: None,
+        with_gizmos,
+        gizmo_restore: GizmoEnabledRestore::new(),
+        max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
+        debug_camera,
+        hide_ui: params.hide_ui,
+        entity: params.entity,
+        depth_analysis: None,
+        response_kind: CaptureResponseKind::Screenshot,
+        extra_response: None,
+    });
+}
+
+pub fn push_pending_stats(
+    params: CaptureStatsParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    deferred: &mut Vec<PendingScreenshot>,
+) {
+    if params.max_width == Some(0) {
+        let _ = response_tx.send(Err(ControlError::invalid_params(
+            "max_width must be a positive integer",
+        )));
+        return;
+    }
+    let options = FrameStatsOptions {
+        grid: params.grid,
+        region: params.region,
+        sample_points: params.sample_points,
+    };
+    if let Err(error) = validate_frame_stats_options(&options)
+        .and_then(|()| validate_capture_delay(params.delay_frames))
+    {
+        let _ = response_tx.send(Err(error));
+        return;
+    }
+    let debug_camera = params.position.map(|position| DebugCameraRequest {
+        position,
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    deferred.push(PendingScreenshot {
+        response_tx,
+        frames_remaining: params.delay_frames,
+        required_render_epoch: None,
+        with_gizmos: params.gizmos,
+        gizmo_restore: GizmoEnabledRestore::new(),
+        max_width: params.max_width.or(Some(DEFAULT_SCREENSHOT_MAX_WIDTH)),
+        debug_camera,
+        hide_ui: params.hide_ui,
+        entity: params.entity,
+        depth_analysis: None,
+        response_kind: CaptureResponseKind::Stats(options),
+        extra_response: None,
+    });
+}
+
+pub fn push_pending_timeline(
+    params: CaptureTimelineParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    // capture_count == 0 makes compute_schedule emit a single frame while
+    // total_captures stays 0, so the completion check never matches and the
+    // request hangs until timeout; above the max the contact sheet is unusable.
+    if params.capture_count < 1 || params.capture_count > MAX_TIMELINE_CAPTURES {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "capture_count must be between 1 and {MAX_TIMELINE_CAPTURES}"
+        ))));
+        return;
+    }
+    if params.total_frames > MAX_TIMELINE_FRAMES {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "total_frames must be at most {MAX_TIMELINE_FRAMES}"
+        ))));
+        return;
+    }
+
+    let mut schedule = compute_schedule(params.total_frames, params.capture_count);
+    // Let one post-suppression frame reach both window and headless targets.
+    if let Some(first) = schedule.front_mut() {
+        *first += 1;
+    }
+
+    let debug_camera = params.position.map(|position| DebugCameraRequest {
+        position,
+        look_at: params.look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    if debug_camera.is_some()
+        && let Some(first) = schedule.front_mut()
+    {
+        *first += 2;
+    }
+
+    let mut pending = world.get_resource_or_insert_with(PendingTimelines::default);
+    let id = pending.next_id;
+    pending.next_id += 1;
+    pending.active.insert(
+        id,
+        ActiveTimeline {
+            response_tx: Some(response_tx),
+            // A contact sheet composes capture_count frames at this width, so
+            // an unclamped default produces a payload many times the size of a
+            // single screenshot. capture_turnaround already defaults the same
+            // way; capture_screenshot clamps to DEFAULT_SCREENSHOT_MAX_WIDTH.
+            max_width: Some(params.max_width.unwrap_or(DEFAULT_TIMELINE_MAX_WIDTH)),
+            columns: params.columns,
+            debug_camera,
+            debug_cleanup: None,
+            schedule,
+            total_captures: params.capture_count,
+            next_capture_index: 0,
+            collected: Vec::new(),
+            overlay_suppressed: false,
+            hide_ui: params.hide_ui,
+            with_gizmos: params.gizmos,
+            ui_restore: None,
+            gizmo_restore: GizmoEnabledRestore::new(),
+            headless_sequence: None,
+            stall_frames: 0,
+        },
+    );
+}
+
+pub fn push_pending_reload(
+    params: ReloadParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    // Surface validation errors (e.g. an out-of-range time_scale) directly.
+    // Otherwise the caller would silently drop the bad param and still receive
+    // a false "reload_completed" from the deferred response waiter below.
+    if let Err(e) = reload::trigger_reload(world, params.mode, params.pause, params.time_scale) {
+        let _ = response_tx.send(Err(e));
+        return;
+    }
+
+    let mut pending = world.get_resource_or_insert_with(PendingReloadResponses::default);
+    pending.pending.push(PendingReloadResponse {
+        response_tx,
+        frames_remaining: 5,
+        mode: params.mode,
+        awaiting_fetch: false,
+        fetch_deadline: None,
+    });
+}
+
+pub fn push_pending_reload_and_capture(
+    params: ReloadAndCaptureParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    // Surface validation errors (e.g. an out-of-range time_scale) directly
+    // instead of dropping the bad param and reporting a false success later.
+    if let Err(e) = validate_capture_delay(params.delay_frames.unwrap_or(30))
+        .and_then(|()| reload::trigger_reload(world, params.mode, params.pause, params.time_scale))
+    {
+        let _ = response_tx.send(Err(e));
+        return;
+    }
+
+    let mut pending = world.get_resource_or_insert_with(PendingReloadAndCaptures::default);
+    pending.pending.push(PendingReloadAndCapture {
+        response_tx,
+        mode: params.mode,
+        reload_frames_remaining: 5,
+        awaiting_fetch: false,
+        screenshot_delay_frames: params.delay_frames.unwrap_or(30),
+        max_width: params.max_width,
+        position: params.position,
+        look_at: params.look_at,
+        hide_ui: params.hide_ui.unwrap_or(true),
+    });
+}
+
+pub fn push_pending_turnaround(
+    params: CaptureTurnaroundParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    if params
+        .distance
+        .is_some_and(|distance| !distance.is_finite() || distance <= 0.0)
+    {
+        let _ = response_tx.send(Err(ControlError::invalid_params(
+            "distance must be > 0 and finite",
+        )));
+        return;
+    }
+
+    let vc = params.view_count.unwrap_or(6);
+    if !(1..=MAX_TURNAROUND_VIEWS).contains(&vc) {
+        let _ = response_tx.send(Err(ControlError::invalid_params(format!(
+            "view_count must be between 1 and {MAX_TURNAROUND_VIEWS}"
+        ))));
+        return;
+    }
+
+    let elev = params.elevation.unwrap_or(25.0);
+    let top = params.include_top.unwrap_or(true);
+
+    let (auto_look_at, auto_distance) = if params.distance.is_none() || params.look_at.is_none() {
+        if let Some((scene_min, scene_max)) = compute_scene_bounds(world) {
+            let center = (scene_min + scene_max) * 0.5;
+            let extent = scene_max - scene_min;
+            let diagonal = (extent.x * extent.x + extent.y * extent.y + extent.z * extent.z).sqrt();
+            let dist = diagonal / (30.0_f32.to_radians().tan() * 2.0);
+            ([center.x, center.y, center.z], dist.max(2.0))
+        } else {
+            ([0.0, 0.0, 0.0], 10.0)
+        }
+    } else {
+        ([0.0, 0.0, 0.0], 10.0)
+    };
+
+    let final_look_at = params.look_at.unwrap_or(auto_look_at);
+    let final_distance = params.distance.unwrap_or(auto_distance);
+    let viewpoints = compute_viewpoints(final_look_at, final_distance, elev, vc, top);
+
+    let mut pending = world.get_resource_or_insert_with(PendingTurnarounds::default);
+    pending.active.push(ActiveTurnaround {
+        response_tx: Some(response_tx),
+        viewpoints,
+        current_index: 0,
+        captures: Vec::new(),
+        columns: params.columns.unwrap_or(3),
+        max_width: Some(params.max_width.unwrap_or(1200)),
+        frames_remaining: 0,
+        view_staged: false,
+        hide_ui: params.hide_ui.unwrap_or(true),
+        ui_restore: None,
+        overlay_suppressed: false,
+        debug_cleanup: None,
+        look_at: final_look_at,
+        pending_screenshot_entity: None,
+        headless_sequence: None,
+        stall_frames: 0,
+    });
+}
+
+pub fn push_pending_depth(
+    params: CaptureDepthParams,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    deferred: &mut Vec<PendingScreenshot>,
+    world: &mut World,
+) {
+    if let Err(error) = validate_depth_sampling(&params.sample_points, &params.grid_density)
+        .and_then(|()| validate_capture_delay(params.delay_frames.unwrap_or(2)))
+    {
+        let _ = response_tx.send(Err(error));
+        return;
+    }
+    let Some(camera_entity) = select_capture_camera_3d(world) else {
+        let _ = response_tx.send(Err(ControlError::not_found(
+            "No active Camera3d found for capture_depth projection",
+        )));
+        return;
+    };
+    let CaptureDepthParams {
+        position,
+        look_at,
+        sample_points,
+        grid_density,
+        include_rgb,
+        delay_frames,
+        hide_ui,
+        max_width,
+    } = params;
+    let want_rgb = include_rgb.unwrap_or(true);
+    let df = delay_frames.unwrap_or(2);
+    let mw = Some(max_width.unwrap_or(DEFAULT_SCREENSHOT_MAX_WIDTH));
+    let hu = hide_ui.unwrap_or(true);
+    let dc = position.as_ref().map(|pos| DebugCameraRequest {
+        position: *pos,
+        look_at: look_at.unwrap_or([0.0, 0.0, 0.0]),
+    });
+    let depth_analysis = PendingDepthAnalysis {
+        camera_entity,
+        position,
+        look_at,
+        sample_points,
+        grid_density,
+    };
+
+    if want_rgb {
+        deferred.push(PendingScreenshot {
+            response_tx,
+            frames_remaining: df,
+            required_render_epoch: None,
+            with_gizmos: false,
+            gizmo_restore: GizmoEnabledRestore::new(),
+            max_width: mw,
+            debug_camera: dc,
+            hide_ui: hu,
+            entity: None,
+            depth_analysis: Some(depth_analysis),
+            response_kind: CaptureResponseKind::UnretainedScreenshot,
+            extra_response: None,
+        });
+    } else {
+        let result = compute_depth_samples_for_camera(
+            world,
+            depth_analysis.camera_entity,
+            &depth_analysis.position,
+            &depth_analysis.look_at,
+            &depth_analysis.sample_points,
+            &depth_analysis.grid_density,
+        )
+        .map(|depth| {
+            serde_json::json!({
+                "screenshot": null,
+                "depth_samples": depth,
+            })
+        });
+        let _ = response_tx.send(result);
+    }
+}
+
+/// Handle ScheduleActions requests (no GIL needed).
+pub(crate) fn handle_submit_schedule(
+    sched_req: ScheduleRequest,
+    response_tx: oneshot::Sender<Result<serde_json::Value, ControlError>>,
+    world: &mut World,
+) {
+    let mut active = world.get_resource_or_insert_with(ActiveSchedules::default);
+    let schedule_id = format!("schedule-{}", active.next_id);
+    active.next_id += 1;
+
+    let t0 = world
+        .get_resource::<Time<Virtual>>()
+        .map(|t| t.elapsed_secs_f64())
+        .unwrap_or(0.0);
+
+    if sched_req.mode == ScheduleMode::Async {
+        let shared = Arc::new(Mutex::new(SharedScheduleState::new(
+            &schedule_id,
+            sched_req.actions.len(),
+        )));
+
+        if let Some(registry_res) = world.get_resource::<SharedScheduleRegistryResource>() {
+            registry_res.0.insert(schedule_id.clone(), shared.clone());
+        }
+
+        let _ = response_tx.send(Ok(serde_json::json!({
+            "schedule_id": schedule_id,
+            "status": "running",
+        })));
+
+        let mut active = world.get_resource_or_insert_with(ActiveSchedules::default);
+        active.schedules.push(ActiveSchedule::new_async(
+            schedule_id,
+            sched_req,
+            t0,
+            shared,
+        ));
+    } else {
+        let mut active = world.get_resource_or_insert_with(ActiveSchedules::default);
+        active.schedules.push(ActiveSchedule::new_sync(
+            schedule_id,
+            sched_req,
+            t0,
+            response_tx,
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::prelude::Camera2d;
+
+    use super::*;
+    use crate::{
+        capture::{hold::OverlaySuppression, screenshot::process_pending_timelines},
+        protocol::{ErrorCode, ReloadMode},
+    };
+
+    #[test]
+    fn push_pending_screenshot_applies_default_max_width() {
+        let (tx, _rx) = oneshot::channel();
+        let params: CaptureScreenshotParams = serde_json::from_str("{}").unwrap();
+        let mut deferred = Vec::new();
+        push_pending_screenshot(params, false, tx, &mut deferred);
+        assert_eq!(deferred[0].max_width, Some(DEFAULT_SCREENSHOT_MAX_WIDTH));
+    }
+
+    #[test]
+    fn push_pending_screenshot_keeps_explicit_max_width() {
+        let (tx, _rx) = oneshot::channel();
+        let params: CaptureScreenshotParams =
+            serde_json::from_str(r#"{"max_width": 1280}"#).unwrap();
+        let mut deferred = Vec::new();
+        push_pending_screenshot(params, false, tx, &mut deferred);
+        assert_eq!(deferred[0].max_width, Some(1280));
+    }
+    #[test]
+    fn push_pending_stats_preserves_analysis_options() {
+        let (tx, _rx) = oneshot::channel();
+        let params: CaptureStatsParams = serde_json::from_str(
+            r#"{"grid": 3, "region": [1, 2, 9, 6], "sample_points": [[2, 3]]}"#,
+        )
+        .unwrap();
+        let mut deferred = Vec::new();
+        push_pending_stats(params, tx, &mut deferred);
+
+        assert_eq!(deferred[0].max_width, Some(DEFAULT_SCREENSHOT_MAX_WIDTH));
+        let CaptureResponseKind::Stats(options) = &deferred[0].response_kind else {
+            panic!("capture_stats must queue a stats response");
+        };
+        assert_eq!(options.grid, 3);
+        assert_eq!(options.region, Some([1, 2, 9, 6]));
+        assert_eq!(options.sample_points, Some(vec![[2, 3]]));
+    }
+
+    #[test]
+    fn push_pending_stats_rejects_invalid_options_before_capture() {
+        let (tx, rx) = oneshot::channel();
+        let params: CaptureStatsParams = serde_json::from_str(r#"{"grid": 0}"#).unwrap();
+        let mut deferred = Vec::new();
+        push_pending_stats(params, tx, &mut deferred);
+
+        assert!(deferred.is_empty());
+        let error = rx.blocking_recv().unwrap().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert!(error.message.contains("grid"));
+    }
+
+    #[test]
+    fn push_pending_depth_returns_structured_coordinate_error() {
+        let (tx, rx) = oneshot::channel();
+        let params: CaptureDepthParams = serde_json::from_str(
+            r#"{"sample_points": [[99999, -50], [10, 10]], "include_rgb": false}"#,
+        )
+        .unwrap();
+        let mut deferred = Vec::new();
+        let mut world = World::new();
+
+        push_pending_depth(params, tx, &mut deferred, &mut world);
+
+        assert!(deferred.is_empty());
+        let error = rx.blocking_recv().unwrap().unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "sample_points[0] must be within [0, 800) on both axes (got [99999, -50])"
+        );
+    }
+    #[test]
+    fn push_pending_reload_surfaces_time_scale_error() {
+        // Regression: trigger_reload's Result was discarded with `let _ =`, so a
+        // rejected time_scale silently dropped the param and the deferred waiter
+        // still reported a false "reload_completed". The error must reach the
+        // caller and no response waiter should be queued.
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let (tx, mut rx) = oneshot::channel();
+        push_pending_reload(
+            ReloadParams {
+                mode: ReloadMode::Full,
+                pause: false,
+                time_scale: Some(1.0e6),
+            },
+            tx,
+            &mut world,
+        );
+        let result = rx.try_recv().expect("caller should receive a response");
+        let err = result.expect_err("out-of-range time_scale must be an error");
+        assert!(err.message.contains("1000"));
+        // No deferred waiter queued, and the bad scale was not applied.
+        let queued = world
+            .get_resource::<PendingReloadResponses>()
+            .map(|p| p.pending.len())
+            .unwrap_or(0);
+        assert_eq!(queued, 0);
+        let speed = world.resource::<Time<Virtual>>().relative_speed();
+        assert!((speed - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn push_pending_reload_valid_time_scale_defers() {
+        // A valid time_scale applies and queues the deferred waiter (no immediate
+        // response), confirming the error path did not regress the happy path.
+        let mut world = World::new();
+        world.init_resource::<Time<Virtual>>();
+        let (tx, mut rx) = oneshot::channel();
+        push_pending_reload(
+            ReloadParams {
+                mode: ReloadMode::Full,
+                pause: false,
+                time_scale: Some(2.0),
+            },
+            tx,
+            &mut world,
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "response is deferred, not immediate"
+        );
+        let queued = world
+            .get_resource::<PendingReloadResponses>()
+            .map(|p| p.pending.len())
+            .unwrap_or(0);
+        assert_eq!(queued, 1);
+        let speed = world.resource::<Time<Virtual>>().relative_speed();
+        assert!((speed - 2.0).abs() < 1e-6);
+    }
+
+    fn timeline_params(capture_count: u32) -> CaptureTimelineParams {
+        CaptureTimelineParams {
+            total_frames: 6,
+            capture_count,
+            max_width: None,
+            columns: 3,
+            position: None,
+            look_at: None,
+            hide_ui: true,
+            gizmos: false,
+        }
+    }
+
+    #[test]
+    fn push_pending_timeline_rejects_out_of_range_capture_count() {
+        // Regression: capture_count == 0 made compute_schedule emit one frame
+        // while total_captures stayed 0, so the completion check never matched
+        // and the request hung until the 120s timeout. Out-of-range counts must
+        // be rejected up front with no timeline queued.
+        for bad in [0, MAX_TIMELINE_CAPTURES + 1] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            push_pending_timeline(timeline_params(bad), tx, &mut world);
+            let result = rx.try_recv().expect("caller should receive a response");
+            let err = result.expect_err("out-of-range capture_count must be an error");
+            assert!(err.message.contains("between 1 and"));
+            let queued = world
+                .get_resource::<PendingTimelines>()
+                .map(|p| p.active.len())
+                .unwrap_or(0);
+            assert_eq!(queued, 0);
+        }
+    }
+
+    #[test]
+    fn push_pending_timeline_accepts_valid_capture_count() {
+        let mut world = World::new();
+        let (tx, mut rx) = oneshot::channel();
+        let mut params = timeline_params(6);
+        params.hide_ui = false;
+        params.gizmos = true;
+        push_pending_timeline(params, tx, &mut world);
+        assert!(
+            rx.try_recv().is_err(),
+            "response is deferred, not immediate"
+        );
+        let pending = world.resource::<PendingTimelines>();
+        assert_eq!(pending.active.len(), 1);
+        let timeline = pending.active.values().next().unwrap();
+        assert!(!timeline.hide_ui);
+        assert!(timeline.with_gizmos);
+        assert!(
+            !timeline.overlay_suppressed,
+            "a queued timeline holds no state"
+        );
+        assert_eq!(timeline.schedule.front(), Some(&1));
+        assert!(!world.contains_resource::<OverlaySuppression>());
+
+        process_pending_timelines(&mut world);
+        let timeline = world
+            .resource::<PendingTimelines>()
+            .active
+            .values()
+            .next()
+            .unwrap();
+        assert!(timeline.overlay_suppressed);
+        assert_eq!(timeline.schedule.front(), Some(&0));
+        assert_eq!(world.resource::<OverlaySuppression>().0, 1);
+    }
+
+    #[test]
+    fn push_pending_timeline_rejects_camera2d_position_override() {
+        let mut world = World::new();
+        world.spawn(Camera2d);
+        let (tx, mut rx) = oneshot::channel();
+        let mut params = timeline_params(6);
+        params.position = Some([0.0, 0.0, 500.0]);
+
+        push_pending_timeline(params, tx, &mut world);
+        assert!(
+            rx.try_recv().is_err(),
+            "the pose is applied when the timeline starts"
+        );
+        process_pending_timelines(&mut world);
+
+        let error = rx.try_recv().unwrap().unwrap_err();
+        assert!(error.message.contains("require a Camera3d"));
+        assert!(world.resource::<PendingTimelines>().active.is_empty());
+        assert!(!world.contains_resource::<OverlaySuppression>());
+    }
+
+    #[test]
+    fn push_pending_timeline_clamps_the_default_sheet_width() {
+        // A contact sheet composes capture_count frames, so an unclamped
+        // default produces a payload many times a single screenshot and can
+        // exceed the transport's inline image bound. capture_turnaround
+        // already defaults the same way.
+        let mut world = World::new();
+        let (tx, _rx) = oneshot::channel();
+        push_pending_timeline(timeline_params(6), tx, &mut world);
+        let width = world
+            .get_resource::<PendingTimelines>()
+            .and_then(|pending| pending.active.values().next().map(|t| t.max_width))
+            .expect("timeline was queued");
+        assert_eq!(width, Some(DEFAULT_TIMELINE_MAX_WIDTH));
+    }
+
+    #[test]
+    fn push_pending_timeline_keeps_an_explicit_sheet_width() {
+        let mut world = World::new();
+        let (tx, _rx) = oneshot::channel();
+        let mut params = timeline_params(6);
+        params.max_width = Some(2400);
+        push_pending_timeline(params, tx, &mut world);
+        let width = world
+            .get_resource::<PendingTimelines>()
+            .and_then(|pending| pending.active.values().next().map(|t| t.max_width))
+            .expect("timeline was queued");
+        assert_eq!(width, Some(2400));
+    }
+
+    fn turnaround_params(distance: Option<f32>) -> CaptureTurnaroundParams {
+        CaptureTurnaroundParams {
+            look_at: None,
+            distance,
+            elevation: None,
+            view_count: None,
+            include_top: None,
+            columns: None,
+            max_width: None,
+            hide_ui: None,
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_rejects_invalid_distance() {
+        for distance in [0.0, -1.0, f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            push_pending_turnaround(turnaround_params(Some(distance)), tx, &mut world);
+
+            let error = rx
+                .try_recv()
+                .expect("caller should receive a response")
+                .expect_err("invalid distance must be an error");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(error.message, "distance must be > 0 and finite");
+            assert!(!world.contains_resource::<PendingTurnarounds>());
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_accepts_automatic_and_positive_distance() {
+        for distance in [None, Some(1.0)] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            push_pending_turnaround(turnaround_params(distance), tx, &mut world);
+
+            assert!(rx.try_recv().is_err(), "response should remain deferred");
+            assert_eq!(world.resource::<PendingTurnarounds>().active.len(), 1);
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_rejects_out_of_range_view_count() {
+        for view_count in [0, MAX_TURNAROUND_VIEWS + 1] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = turnaround_params(None);
+            params.view_count = Some(view_count);
+            push_pending_turnaround(params, tx, &mut world);
+
+            let error = rx
+                .try_recv()
+                .expect("caller should receive a response")
+                .expect_err("out-of-range view count must be an error");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(error.message, "view_count must be between 1 and 20");
+            assert!(!world.contains_resource::<PendingTurnarounds>());
+        }
+    }
+
+    #[test]
+    fn push_pending_turnaround_accepts_boundary_view_counts() {
+        for view_count in [1, MAX_TURNAROUND_VIEWS] {
+            let mut world = World::new();
+            let (tx, mut rx) = oneshot::channel();
+            let mut params = turnaround_params(None);
+            params.view_count = Some(view_count);
+            push_pending_turnaround(params, tx, &mut world);
+
+            assert!(rx.try_recv().is_err(), "response should remain deferred");
+            assert_eq!(world.resource::<PendingTurnarounds>().active.len(), 1);
+        }
+    }
+}

@@ -1,7 +1,7 @@
 use crate::{
-    bridge::{ControlError, ControlOperation},
     catalog::tools::public_tool_feature_gate,
     plugin::ControlConfig,
+    protocol::{ControlError, ControlOperation},
 };
 
 /// A `McpPlugin` switch that disables a group of control tools.
@@ -131,7 +131,7 @@ mod tests {
     use serde_json::{Map, Value, json};
 
     use super::*;
-    use crate::{bridge::ErrorCode, catalog::tools::list_tools, schedule::tool_to_operation};
+    use crate::{catalog::tools::list_tools, protocol::ErrorCode, schedule::tool_to_operation};
 
     fn config(screenshot: bool, manipulation: bool, execute_python: bool) -> ControlConfig {
         ControlConfig {

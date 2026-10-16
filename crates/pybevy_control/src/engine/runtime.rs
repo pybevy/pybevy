@@ -1,10 +1,12 @@
 use bevy::ecs::world::World;
 use serde_json::Value;
 
-use crate::bridge::{
-    ControlError, ControlRequest, EntityRef, GetComponentParams, GetResourceParams,
-    QueryEntitiesParams, RemoveComponentParams, SetAssetParams, SetComponentParams,
-    SetResourceParams,
+use crate::{
+    engine::channel::ControlRequest,
+    protocol::{
+        ControlError, EntityRef, GetComponentParams, GetResourceParams, QueryEntitiesParams,
+        RemoveComponentParams, SetAssetParams, SetComponentParams, SetResourceParams,
+    },
 };
 
 /// Trait for runtime-specific operations in the control server.

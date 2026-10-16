@@ -5,7 +5,7 @@ use image::{Rgb, Rgb32FImage, RgbImage};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use crate::bridge::ControlError;
+use crate::protocol::ControlError;
 
 pub const MAX_STATS_GRID: u32 = 16;
 pub const MAX_SAMPLE_POINTS: usize = 256;
@@ -568,7 +568,7 @@ mod tests {
     use image::{Rgb, RgbImage};
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::protocol::ErrorCode;
 
     fn options() -> FrameStatsOptions {
         FrameStatsOptions {

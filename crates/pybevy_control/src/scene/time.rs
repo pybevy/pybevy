@@ -7,7 +7,7 @@ use bevy::{
 use pybevy_core::try_duration_from_secs_f64;
 
 use crate::{
-    bridge::{ControlError, SeekTimeParams},
+    protocol::{ControlError, SeekTimeParams},
     scene::transform_sync::propagate_transforms,
 };
 
@@ -124,7 +124,7 @@ mod tests {
     use bevy::prelude::{GlobalTransform, Transform};
 
     use super::*;
-    use crate::bridge::ErrorCode;
+    use crate::protocol::ErrorCode;
 
     fn world_with_virtual_time() -> World {
         let mut world = World::new();
