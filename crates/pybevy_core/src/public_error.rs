@@ -136,6 +136,15 @@ pub fn queued_component_layout_changed(name: &str) -> String {
     format!("Component '{name}' changed storage or layout after command preparation")
 }
 
+pub fn component_identity_clash(qualified_name: &str, first: &str, second: &str) -> String {
+    format!(
+        "@component classes {first} and {second} share the identity '{qualified_name}' with \
+         different fields. Classes are identified by module and qualified name: give each class \
+         a distinct name (for example, set __qualname__), or hot reload the scene to change a \
+         component's fields"
+    )
+}
+
 pub fn asset_settings_type_mismatch(expected: &str, actual: &str) -> String {
     format!("Loader settings require asset type {expected}, got `{actual}`")
 }
@@ -184,6 +193,7 @@ pub const REQUIRED_SINGLE_NO_MATCHES: &str = "Required Single parameter matched 
 pub const REQUIRED_SINGLE_MULTIPLE_MATCHES: &str =
     "Required Single parameter matched multiple entities";
 pub const QUERY_ROW_SHAPE_MISMATCH: &str = "Query row shape did not match its data";
+pub const QUERY_COMBINATIONS_SIZE: &str = "Query combination size must be a positive integer";
 
 /// `names` are the query data spellings recovered from the rejected argument;
 /// empty when none could be recovered.
@@ -765,6 +775,7 @@ pub const OR_FILTER_EMPTY: &str = "Or requires at least one query filter";
 pub const OR_IS_FILTER: &str = "Or[...] is a query filter, not query data; place it after the data tuple: Query[tuple[...], Or[tuple[With[A], With[B]]]]";
 pub const QUERY_BUILTIN_TUPLE_REQUIRED: &str =
     "Direct Query, Single, and View tuple slots require builtin tuple[...], not typing.Tuple[...]";
+pub const QUERY_DATA_TUPLE_REQUIRED: &str = "Query, Single, and View data groups require builtin tuple[...], not list[...], dict[...] or other generic types";
 pub fn any_of_query_data_position(kind: &str) -> String {
     format!(
         "AnyOf[...] is query data, not a filter; put it in the first {kind} argument: {kind}[AnyOf[tuple[A, B]]] or {kind}[tuple[T, AnyOf[tuple[A, B]]]]"
@@ -917,6 +928,11 @@ pub const CONDITION_MESSAGE_WRITER: &str = "MessageWriter (writing messages muta
 pub const CONDITION_MESSAGE_MUTATOR: &str =
     "MessageMutator (reading, mutating, and writing messages mutates the world)";
 pub const CONDITION_MESSAGE_READER: &str = "MessageReader (advancing the read cursor mutates reader state; read messages in a regular system instead)";
+pub const REMOVED_COMPONENTS_EXPECTS_COMPONENT: &str =
+    "RemovedComponents[...] expects a Component class";
+pub const REMOVED_COMPONENTS_NOT_RESOURCE: &str =
+    "RemovedComponents[...] expects a Component class, not a Resource class";
+pub const CONDITION_REMOVED_COMPONENTS: &str = "RemovedComponents (advancing the removal cursor mutates reader state; read removals in a regular system instead)";
 pub const CONDITION_OPAQUE_MESSAGE_READER: &str =
     "MessageReader for a custom Python message (opaque Python access is exclusive)";
 pub const CONDITION_RES_MUT: &str = "ResMut (mutable resource access)";
@@ -1192,6 +1208,12 @@ pub fn invalid_entity_bits(bits: u64) -> String {
 pub fn custom_component_wrapper_storage(component: impl Display) -> String {
     format!(
         "Component '{component}' uses wrapper storage, which does not support MCP field mutation. Declare it with `@component(storage=\"python\")` to make its fields editable through `set_component`."
+    )
+}
+
+pub fn read_only_message_attribute(name: &str) -> String {
+    format!(
+        "Cannot set attribute '{name}' on a message read through MessageReader - use MessageMutator instead"
     )
 }
 

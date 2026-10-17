@@ -20,9 +20,10 @@ use pybevy_core::public_error::{
     CONDITION_COMMANDS, CONDITION_GIZMOS, CONDITION_INPUT, CONDITION_MESSAGE_MUTATOR,
     CONDITION_MESSAGE_READER, CONDITION_MESSAGE_WRITER, CONDITION_MUTABLE_ASSETS,
     CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OPAQUE_MESSAGE_READER,
-    CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE, CONDITION_OPAQUE_VIEW, CONDITION_RES_MUT,
-    CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, REQUIRED_SINGLE_MULTIPLE_MATCHES,
-    REQUIRED_SINGLE_NO_MATCHES, pipe_input_type_mismatch, resolved_access_conflict,
+    CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE, CONDITION_OPAQUE_VIEW,
+    CONDITION_REMOVED_COMPONENTS, CONDITION_RES_MUT, CONDITION_RETURNED_CALLABLE, CONDITION_WORLD,
+    REQUIRED_SINGLE_MULTIPLE_MATCHES, REQUIRED_SINGLE_NO_MATCHES, pipe_input_type_mismatch,
+    resolved_access_conflict,
 };
 #[cfg(debug_assertions)]
 use pybevy_ecs::shared::access_audit::assert_query_access_declared;
@@ -81,6 +82,7 @@ fn condition_rejection_reason(rejection: ConditionRejection) -> &'static str {
         ConditionRejection::MessageMutator => CONDITION_MESSAGE_MUTATOR,
         ConditionRejection::MessageReader => CONDITION_MESSAGE_READER,
         ConditionRejection::OpaqueMessageReader => CONDITION_OPAQUE_MESSAGE_READER,
+        ConditionRejection::RemovedComponents => CONDITION_REMOVED_COMPONENTS,
         ConditionRejection::ResMut => CONDITION_RES_MUT,
         ConditionRejection::OpaqueResource => CONDITION_OPAQUE_RESOURCE,
         ConditionRejection::MutableAssets => CONDITION_MUTABLE_ASSETS,
@@ -107,6 +109,7 @@ pub(crate) struct MainPreparedCall {
 pub(crate) struct MainScheduledRunState {
     query_caches: Vec<CachedQuery>,
     view_caches: Vec<Result<Arc<CachedPyView>, Arc<str>>>,
+    removed_component_ids: Vec<ComponentId>,
     args: SmallVec<[Py<PyAny>; 8]>,
 }
 
@@ -211,7 +214,9 @@ fn prepare_callable(
         .filter(|param| {
             matches!(
                 param.ty,
-                SystemParamType::MessageReader { .. } | SystemParamType::MessageMutator { .. }
+                SystemParamType::MessageReader { .. }
+                    | SystemParamType::MessageMutator { .. }
+                    | SystemParamType::RemovedComponents { .. }
             )
         })
         .count();
@@ -433,7 +438,9 @@ pub(crate) fn new_main_observer(
         .filter(|param| {
             matches!(
                 param.ty,
-                SystemParamType::MessageReader { .. } | SystemParamType::MessageMutator { .. }
+                SystemParamType::MessageReader { .. }
+                    | SystemParamType::MessageMutator { .. }
+                    | SystemParamType::RemovedComponents { .. }
             )
         })
         .count();
@@ -551,6 +558,10 @@ impl MainInterpreter {
             .params
             .iter()
             .any(|param| matches!(param.ty, SystemParamType::Commands));
+        let needs_main_thread = system_func
+            .params
+            .iter()
+            .any(|param| matches!(param.ty, SystemParamType::NonSendMarker));
 
         let name = function_name.clone();
         let plan_retained = retained.clone();
@@ -572,6 +583,7 @@ impl MainInterpreter {
             flags: SystemFlags {
                 needs_exclusive,
                 needs_commands,
+                needs_main_thread,
             },
             stage,
             expected_generation: Some(generation),
@@ -708,7 +720,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
 
         #[allow(clippy::arc_with_non_send_sync)]
         let snapshot = Arc::new(custom_component_ids.clone());
-        let (query_caches, view_caches) = Python::attach(|py| {
+        let (query_caches, view_caches, removed_component_ids) = Python::attach(|py| {
             let query_caches: Vec<CachedQuery> = params
                 .iter()
                 .filter_map(|param| match &param.ty {
@@ -742,7 +754,18 @@ unsafe impl SystemInterpreter for MainInterpreter {
                     _ => None,
                 })
                 .collect();
-            (query_caches, view_caches)
+            let removed_component_ids = params
+                .iter()
+                .filter_map(|param| match &param.ty {
+                    SystemParamType::RemovedComponents { param } => Some(
+                        param
+                            .component_type
+                            .register_with_world(world, &custom_component_ids, py),
+                    ),
+                    _ => None,
+                })
+                .collect();
+            (query_caches, view_caches, removed_component_ids)
         });
 
         #[cfg(debug_assertions)]
@@ -759,6 +782,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
             state: MainScheduledRunState {
                 query_caches,
                 view_caches,
+                removed_component_ids,
                 args: SmallVec::new(),
             },
             failure_sink: MainFailureSink {
@@ -1034,6 +1058,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                     &params,
                     &state.query_caches,
                     &state.view_caches,
+                    &state.removed_component_ids,
                     &message_cursors,
                     &mut commands,
                     &mut state.args,

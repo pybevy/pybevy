@@ -34,8 +34,10 @@ use crate::{
     ecs::{
         component_type::PyComponentType,
         messages::{MessageType, PyMessageType},
+        non_send_marker::PyNonSendMarker,
         observer::EventType,
         query::{query_param::PyQueryParam, single::PySingle},
+        removed_components::PyRemovedComponentsParam,
         resource_type::{reject_state_type_as_resource, reject_unparameterized_button_input},
         view::{view::PyView, view_param::PyViewParam},
     },
@@ -600,6 +602,8 @@ impl SystemFunction {
                 SystemParamType::World
             } else if annotation.is(PyCommands::type_object(py)) {
                 SystemParamType::Commands
+            } else if annotation.is(PyNonSendMarker::type_object(py)) {
+                SystemParamType::NonSendMarker
             } else if annotation.is(PyGizmos::type_object(py)) {
                 SystemParamType::Gizmos
             } else if annotation.get_type().is(MessageTypeParam::type_object(py)) {
@@ -622,6 +626,13 @@ impl SystemFunction {
                             message_type: message_param.message_type,
                         }
                     }
+                }
+            } else if annotation
+                .get_type()
+                .is(PyRemovedComponentsParam::type_object(py))
+            {
+                SystemParamType::RemovedComponents {
+                    param: Arc::new(annotation.extract::<PyRemovedComponentsParam>()?),
                 }
             } else if annotation
                 .get_type()
@@ -730,6 +741,8 @@ pub enum SystemParamType {
     World,
     Commands,
     Gizmos,
+    /// Bevy's `NonSendMarker`: pins the system to the main thread.
+    NonSendMarker,
     MessageWriter {
         message_type: MessageType,
     },
@@ -738,6 +751,9 @@ pub enum SystemParamType {
     },
     MessageMutator {
         message_type: MessageType,
+    },
+    RemovedComponents {
+        param: Arc<PyRemovedComponentsParam>,
     },
     On {
         event_type: EventType,
@@ -784,6 +800,7 @@ impl Clone for SystemParamType {
             },
             SystemParamType::World => SystemParamType::World,
             SystemParamType::Commands => SystemParamType::Commands,
+            SystemParamType::NonSendMarker => SystemParamType::NonSendMarker,
             SystemParamType::Gizmos => SystemParamType::Gizmos,
             SystemParamType::MessageWriter { message_type } => SystemParamType::MessageWriter {
                 message_type: message_type.clone(),
@@ -793,6 +810,9 @@ impl Clone for SystemParamType {
             },
             SystemParamType::MessageMutator { message_type } => SystemParamType::MessageMutator {
                 message_type: message_type.clone(),
+            },
+            SystemParamType::RemovedComponents { param } => SystemParamType::RemovedComponents {
+                param: Arc::clone(param),
             },
             SystemParamType::On {
                 event_type,

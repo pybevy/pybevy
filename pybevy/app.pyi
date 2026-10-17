@@ -402,9 +402,10 @@ class HotReloadControl(Resource):
     Example:
         ```python
         from pybevy.app import HotReloadControl
-        from pybevy.ecs import World
+        from pybevy.ecs import World, system
         from pybevy.input import ButtonInput, KeyCode
 
+        @system
         def handle_f5(world: World) -> None:
             if world.resource(ButtonInput[KeyCode]).just_pressed(KeyCode.F5):
                 world.resource(HotReloadControl).request_full_reload()

@@ -417,7 +417,6 @@ types = [
     "ecs::MultiThreadedExecutor",
     "ecs::NameOrEntity",
     "ecs::NameOrEntityItem",
-    "ecs::NonSendMarker",
     "ecs::ObservedBy",
     "ecs::ObserverDescriptor",
     "ecs::OccupiedComponentEntry",
@@ -2913,6 +2912,18 @@ message = "class 'MessageMutator' has constructor in Rust but not in Python stub
 reason = "Direct construction deliberately raises; the scheduler injects the system parameter"
 
 [[validation.exceptions]]
+code = "E008"
+path = "ecs.NonSendMarker"
+message = "class 'NonSendMarker' has constructor in Rust but not in Python stub"
+reason = "Direct construction deliberately raises, as Bevy's private PhantomData field forbids it; the scheduler injects the system parameter"
+
+[[validation.exceptions]]
+code = "E008"
+path = "ecs.RemovedComponents"
+message = "class 'RemovedComponents' has constructor in Rust but not in Python stub"
+reason = "Direct construction deliberately raises; the scheduler injects the system parameter"
+
+[[validation.exceptions]]
 code = "E001"
 path = "ecs.In"
 message = "class 'In' (Rust: PyIn) not found in Python stubs"
@@ -3383,6 +3394,11 @@ reason = "core-010: iterator implementation type, also a reviewed tests/surface/
 
 [[validation.exceptions]]
 code = "W016"
+path = "ecs.RemovedComponentsIter"
+reason = "iterator implementation type, also a reviewed tests/surface/_exceptions.py entry"
+
+[[validation.exceptions]]
+code = "W016"
 path = "ecs.MessageTypeParam"
 reason = "core-010: unregistered shadow of the exported ecs.MessageTypeParam; the ledger routes it to removal"
 
@@ -3531,10 +3547,12 @@ paths = [
 
 [[validation.exceptions]]
 code = "W038"
-reason = "QueryIter is the runtime object injected for a Query[...] parameter, Query itself being the annotation class; single, is_empty, get and iter_many are Bevy Query methods, and only the class name matches Bevy's QueryIter"
+reason = "QueryIter is the runtime object injected for a Query[...] parameter, Query itself being the annotation class; single, is_empty, get, iter_many, iter_combinations and iter_combinations_mut are Bevy Query methods, and only the class name matches Bevy's QueryIter"
 paths = [
     "ecs.QueryIter.get",
     "ecs.QueryIter.is_empty",
+    "ecs.QueryIter.iter_combinations",
+    "ecs.QueryIter.iter_combinations_mut",
     "ecs.QueryIter.iter_many",
     "ecs.QueryIter.single",
 ]
@@ -3558,6 +3576,13 @@ code = "W039"
 reason = "A borrowed &World cannot escape to Python while the App can still run, update or be consumed; world() lends the World to a callback for a scoped, validity-fenced borrow"
 paths = [
     "app.App.world",
+]
+
+[[validation.exceptions]]
+code = "W039"
+reason = "RemovedIter is a Bevy iterator adapter over the reader's cursor; the private Python iterator consumes the same cursor and yields Entity like RemovedIter"
+paths = [
+    "ecs.RemovedComponents.read",
 ]
 
 [[validation.exceptions]]

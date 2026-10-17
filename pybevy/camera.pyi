@@ -592,11 +592,13 @@ class Camera(Component):
             ValueError: If viewport size is not available or conversion fails
 
         Example:
-            >>> def mouse_to_world(
+            >>> @system
+            ... def mouse_to_world(
             ...     camera_query: Single[tuple[Camera, GlobalTransform], With[Camera2d]],
-            ...     window: Single[Window],
+            ...     window_query: Single[Window],
             ... ) -> None:
-            ...     camera, transform = camera_query.get()
+            ...     camera, transform = camera_query.into_inner()
+            ...     window = window_query.into_inner()
             ...     if cursor_pos := window.cursor_position():
             ...         world_pos = camera.viewport_to_world_2d(transform, cursor_pos)
             ...         print(f"World position: {world_pos}")
@@ -622,11 +624,12 @@ class Camera(Component):
             ValueError: If viewport size is not available or position is not visible
 
         Example:
-            >>> def check_visibility(
+            >>> @system
+            ... def check_visibility(
             ...     camera_query: Single[tuple[Camera, GlobalTransform], With[Camera3d]],
             ...     entity_query: Query[GlobalTransform, With[Enemy]],
             ... ) -> None:
-            ...     camera, cam_transform = camera_query.get()
+            ...     camera, cam_transform = camera_query.into_inner()
             ...     for entity_transform in entity_query:
             ...         world_pos = entity_transform.translation
             ...         try:
@@ -656,11 +659,13 @@ class Camera(Component):
             ValueError: If viewport size is not available or conversion fails
 
         Example:
-            >>> def raycast_from_cursor(
+            >>> @system
+            ... def raycast_from_cursor(
             ...     camera_query: Single[tuple[Camera, GlobalTransform], With[Camera3d]],
-            ...     window: Single[Window],
+            ...     window_query: Single[Window],
             ... ) -> None:
-            ...     camera, transform = camera_query.get()
+            ...     camera, transform = camera_query.into_inner()
+            ...     window = window_query.into_inner()
             ...     if cursor_pos := window.cursor_position():
             ...         ray = camera.viewport_to_world(transform, cursor_pos)
             ...         # Use ray.origin and ray.direction for raycasting

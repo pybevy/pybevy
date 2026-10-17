@@ -220,6 +220,36 @@ impl RegisterOutcome {
     }
 }
 
+/// The `ComponentId` of a different class already registered this reload
+/// generation under the same `module.qualname`, when its storage or field
+/// schema differs from the class being registered.
+///
+/// Classes share an identity by `module.qualname`. A later generation (a hot
+/// reload) may change the layout; within one generation a second layout under
+/// the same name would orphan the first class's entities.
+pub fn custom_component_identity_clash(
+    world: &World,
+    type_id: usize,
+    qualified_name: Option<&str>,
+    storage_type: ComponentStorageType,
+    wrapper_schema: Option<&WrapperComponentSchema>,
+    generation: u32,
+) -> Option<ComponentId> {
+    let registry = world.get_resource::<CustomComponentRegistry>()?;
+    let existing = *registry.by_name.get(qualified_name?)?;
+    if registry.by_id.get(&type_id) == Some(&existing) {
+        return None;
+    }
+    let compatible = registry.storage_types.get(&existing) == Some(&storage_type)
+        && registry.wrapper_schemas.get(&existing) == wrapper_schema;
+    let registered_this_generation = registry.by_id.iter().any(|(other, id)| {
+        *id == existing
+            && *other != type_id
+            && registry.alias_generations.get(other) == Some(&generation)
+    });
+    (!compatible && registered_this_generation).then_some(existing)
+}
+
 /// Register a custom Python component behind the shared storage-flip guard.
 ///
 /// The caller (holding the interpreter handle) precomputes the backend-specific
@@ -291,11 +321,23 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
         // branch below (qualified_name is stable for a given class) evicts it.
     }
 
+    // A second layout under a name another class holds this generation gets a
+    // separate id and leaves the name's binding, and its entities, in place.
+    let clash = custom_component_identity_clash(
+        world,
+        type_id,
+        qualified_name,
+        storage_type,
+        wrapper_schema,
+        generation,
+    )
+    .is_some();
+
     // Hot-reload path: a previous generation may have registered the same
     // qualified name under a different `ComponentId` (Python re-executes
     // `@component`, minting a new type object each time).
     let mut evicted: Option<ComponentId> = None;
-    if let Some(qname) = qualified_name {
+    if let Some(qname) = qualified_name.filter(|_| !clash) {
         let existing = world
             .resource::<CustomComponentRegistry>()
             .by_name
@@ -364,7 +406,7 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
     if let Some(schema) = wrapper_schema {
         reg.wrapper_schemas.insert(id, schema.clone());
     }
-    if let Some(qname) = qualified_name {
+    if let Some(qname) = qualified_name.filter(|_| !clash) {
         reg.by_name.insert(qname.to_string(), id);
     }
 
@@ -481,6 +523,15 @@ mod tests {
         type_id: usize,
         storage: ComponentStorageType,
     ) -> RegisterOutcome {
+        guarded_in(world, type_id, storage, 0)
+    }
+
+    fn guarded_in(
+        world: &mut World,
+        type_id: usize,
+        storage: ComponentStorageType,
+        generation: u32,
+    ) -> RegisterOutcome {
         let wrapper_schema = schema(storage);
         register_custom_component_guarded::<TestObjectDescriptor>(
             world,
@@ -489,7 +540,7 @@ mod tests {
             Some("m.Foo"),
             storage,
             wrapper_schema.as_ref(),
-            0,
+            generation,
         )
     }
 
@@ -608,14 +659,56 @@ mod tests {
         // New type object, same qualified_name, storage changed (w8 -> w32):
         // fresh id, evict the old one.
         let mut world = World::new();
-        let a = guarded(&mut world, 0x1000, w8());
-        let b = guarded(&mut world, 0x2000, w32());
+        let a = guarded_in(&mut world, 0x1000, w8(), 0);
+        let b = guarded_in(&mut world, 0x2000, w32(), 1);
         assert!(matches!(b, RegisterOutcome::Registered { evicted: Some(e), .. } if e == a.id()));
         assert_ne!(a.id(), b.id());
         assert_eq!(
             world.resource::<CustomComponentRegistry>().get(0x2000),
             Some(b.id())
         );
+    }
+
+    #[test]
+    fn guarded_same_generation_layout_clash_keeps_the_first_binding() {
+        // Two live classes, one name, different storage, one generation: the
+        // second gets its own id and the name keeps the first class's entities.
+        let mut world = World::new();
+        let a = guarded_in(&mut world, 0x1000, w8(), 0);
+        let schema_b = schema(w32());
+        assert_eq!(
+            custom_component_identity_clash(
+                &world,
+                0x2000,
+                Some("m.Foo"),
+                w32(),
+                schema_b.as_ref(),
+                0
+            ),
+            Some(a.id())
+        );
+        assert_eq!(
+            custom_component_identity_clash(
+                &world,
+                0x2000,
+                Some("m.Foo"),
+                w32(),
+                schema_b.as_ref(),
+                1
+            ),
+            None
+        );
+
+        let b = guarded_in(&mut world, 0x2000, w32(), 0);
+        assert!(matches!(
+            b,
+            RegisterOutcome::Registered { evicted: None, .. }
+        ));
+        assert_ne!(a.id(), b.id());
+        let reg = world.resource::<CustomComponentRegistry>();
+        assert_eq!(reg.get(0x1000), Some(a.id()));
+        assert_eq!(reg.storage_type(a.id()), Some(w8()));
+        assert_eq!(reg.by_name.get("m.Foo"), Some(&a.id()));
     }
 
     /// A freed type object leaves its address reusable. Reusing the cached

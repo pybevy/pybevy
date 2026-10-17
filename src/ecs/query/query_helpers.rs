@@ -2,8 +2,8 @@ use pybevy_core::{
     LogicalTypeId, PyLogicalComponentParam,
     public_error::{
         ANY_OF_EMPTY, ANY_OF_TUPLE_REQUIRED, OR_IS_FILTER, QUERY_BUILTIN_TUPLE_REQUIRED,
-        any_of_query_data_position, parenthesized_filter_tuple, query_data_required,
-        variadic_filters,
+        QUERY_DATA_TUPLE_REQUIRED, any_of_query_data_position, parenthesized_filter_tuple,
+        query_data_required, variadic_filters,
     },
     registry::global_registry,
 };
@@ -11,6 +11,7 @@ use pybevy_ecs::shared::query_runtime::QueryRowShape;
 use pyo3::{
     IntoPyObjectExt, PyTypeInfo,
     exceptions::PyTypeError,
+    ffi::PyTypeObject,
     prelude::*,
     types::{PyGenericAlias, PyTuple, PyType},
 };
@@ -33,12 +34,7 @@ use crate::{
     },
 };
 
-type ExtractedAssetResource = (
-    bool,
-    Py<PyAssetTypeParam>,
-    *const pyo3::ffi::PyTypeObject,
-    String,
-);
+type ExtractedAssetResource = (bool, Py<PyAssetTypeParam>, *const PyTypeObject, String);
 
 fn extract_asset_resource(
     py: Python<'_>,
@@ -142,8 +138,13 @@ pub(crate) fn extract_param_type_from_query_param(
     }
 
     if key.is_instance_of::<PyGenericAlias>() {
-        // tuple[.., ...]
         let generic_alias = key.cast::<PyGenericAlias>()?;
+        if !generic_alias
+            .getattr("__origin__")?
+            .is(py.get_type::<PyTuple>())
+        {
+            return Err(PyTypeError::new_err(QUERY_DATA_TUPLE_REQUIRED));
+        }
         let args = generic_alias.getattr("__args__")?;
 
         let mut values = SmallVec::<[ParamType; 2]>::new();
@@ -256,7 +257,7 @@ pub(crate) fn extract_component_with_mutability(
 
     let comp_type = PyComponentType::try_from((type_key.cast::<PyType>()?, py))?;
     if mutable && !comp_type.supports_mutable_access() {
-        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        return Err(PyTypeError::new_err(format!(
             "{} is a read-only resource and cannot be queried through Mut",
             comp_type.display_name(py)
         )));

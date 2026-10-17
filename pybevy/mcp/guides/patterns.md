@@ -323,6 +323,25 @@ After insertion, mutate the value through its ECS access. Do not retain a
 mutable external alias or insert the same object into multiple ECS slots; the
 scheduler cannot associate those aliases with the component access.
 
+**Class identity:** custom component, resource, message and state classes are
+identified by module and qualified name (`module.__qualname__`). Classes that
+share a qualified name share one identity: same-named components with equal
+fields read and write the same entities, and same-named resources share one
+value. Within one app, a second same-named component class with different
+fields raises `TypeError` when it is spawned or inserted; change fields with a
+hot reload or a new `App`. Give classes made by a factory function distinct
+names, for example by setting `__qualname__`:
+
+```python
+def make_tag(name: str) -> type[Component]:
+    @component
+    class Tag(Component):
+        pass
+
+    Tag.__qualname__ = f"Tag_{name}"
+    return Tag
+```
+
 ### Entity Hierarchies
 
 Parent-child relationships use `ChildOf`. Children inherit their parent's `Transform`.
@@ -418,6 +437,18 @@ def print_tree(query: Query[tuple[Name, Children]]) -> None:
 Systems are functions decorated with `@system`. Parameter type hints control
 what data is injected; they are resolved when the system is registered, so a
 system may refer to classes defined later in the module.
+
+Bevy runs systems on worker threads. A system that touches a thread-affine
+Python object, such as a second `App`, takes a `NonSendMarker` parameter to
+run on the main thread, as in Bevy:
+
+```python
+from pybevy.ecs import NonSendMarker, system
+
+@system
+def drive_viewer(_main_thread: NonSendMarker) -> None:
+    ...
+```
 
 On Python 3.14, dynamically generated systems can resolve annotations lazily.
 Use a factory to capture each component type separately. Each new callable
@@ -738,6 +769,26 @@ instead of inferring the runtime result. Use `typing.cast` on the returned row
 to declare its concrete nested result type. This typing limitation does not
 restrict runtime nesting.
 
+#### Combinations
+
+`query.iter_combinations(k)` yields every group of `k` distinct matching
+entities as a tuple of rows, in Bevy's order: (e1, e2), (e1, e3), ...,
+(e2, e3). Its rows are read-only even for `Mut[...]` data. Use
+`query.iter_combinations_mut(k)` to write: `Mut[...]` items are writable and
+mark the component changed on write.
+
+```python
+@system
+def attract(query: Query[tuple[Mut[Velocity], Transform]], time: Res[Time]) -> None:
+    for (vel_a, pos_a), (vel_b, pos_b) in query.iter_combinations_mut(2):
+        pull = (pos_b.translation - pos_a.translation) * time.delta_secs()
+        vel_a.value += pull
+        vel_b.value -= pull
+```
+
+An entity appears in several combinations, so use each row before taking the
+next one, as Bevy's `fetch_next` loop does.
+
 #### Filters
 
 ```python
@@ -1045,12 +1096,36 @@ message type. Custom types use their registered qualified name, preserved across
 reloads and unaffected by later class metadata edits. Native types use Bevy's type
 identity. IDs do not retain the Python class or message payload.
 `MessageReader` methods: iteration via `for msg in reader`, `read()`, reader-local `clear()`, `is_empty()`, `len()`. Each reader parameter has an independent cursor, and iteration consumes only values actually yielded.
+A custom message reaches readers exactly as written: `write()` stores a shallow copy, and a
+`MessageReader` yields a read-only view that supports field reads, `isinstance`, `match` and `==`.
+The view lasts for the system run; `copy.copy(msg)` gives an owned, writable copy to keep.
 
 In an exclusive system, `world.resource(Messages[T])` returns Bevy's `Messages<T>` buffer for a native
 message type, with `len()` and `is_empty()`; `world.resource_mut(Messages[T]).clear()` empties it.
 `world.contains_resource(Messages[T])` and `world.resource_entity(Messages[T])` work as for other
 resources. Custom Python messages live in PyBevy's message store rather than a `Messages<T>` resource,
 so read them with `MessageReader[T]`.
+
+Use `RemovedComponents[T]` to react after component `T` was removed or its
+entity was despawned. It yields `Entity` IDs and provides `read()`, `clear()`,
+`is_empty()` and `len()` with an independent cursor per parameter, like
+`MessageReader`:
+
+```python
+from pybevy.prelude import *
+
+@component
+class Health(Component):
+    value: int = 100
+
+@system
+def track_removed(removed: RemovedComponents[Health]) -> None:
+    for entity in removed:
+        print("Health removed from", entity)
+```
+
+Read removals in a regular system or observer; run conditions reject
+`RemovedComponents` because consuming it advances its cursor.
 
 For a custom Python message system that must read, mutate, and write the same channel, use
 `MessageMutator[T]`. It combines the reader and writer methods above. Messages yielded from it are
@@ -1205,7 +1280,7 @@ def sway_lanterns(
         transform.translation.y += math.sin(t + phase) * 0.01
 ```
 
-**Note:** `Entity` is an opaque handle - it has no `.index()` or `.id()` method. Use `enumerate()` instead when you need a numeric index.
+**Note:** `Entity.index()` is a transient slot index that is reused after despawn, not a position in the query. Use `enumerate()` when you need a numeric index.
 
 ### Runtime Entity Lifecycle (Spawn/Despawn in Update)
 

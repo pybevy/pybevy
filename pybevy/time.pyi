@@ -164,7 +164,7 @@ class Time(Resource, Generic[_TimeContext]):
             ```python
             time = Time()
             time.advance_by(timedelta(milliseconds=16))  # Simulate one frame at 60 FPS
-            assert time.delta_secs() == 0.016
+            assert time.delta() == timedelta(milliseconds=16)
             ```
         """
 
@@ -190,7 +190,7 @@ class Time(Resource, Generic[_TimeContext]):
 
         The wrap period prevents f32 precision loss by wrapping elapsed time
         back to zero after the specified duration. Default is 1 hour.
-        A zero duration raises TypeError.
+        A zero or negative duration raises ValueError.
 
         Args:
             wrap_period: Duration after which elapsed_wrapped() wraps to zero
@@ -374,7 +374,8 @@ class Time(Resource, Generic[_TimeContext]):
         """Set the maximum delta time allowed in a single update.
 
         This prevents large time jumps after events such as tab switching or
-        suspend. The default is 250 ms. A zero duration raises TypeError.
+        suspend. The default is 250 ms. A zero or negative duration raises
+        ValueError.
         """
 
     # Time[Fixed]-only API

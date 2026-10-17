@@ -13,10 +13,12 @@ use bevy::ecs::{
 pub use pybevy_core::custom_component::CustomComponentRegistry as ComponentRegistry;
 use pybevy_core::{
     custom_component::{
-        PythonObjectDescriptor, RegisterOutcome, register_custom_component_guarded,
+        PythonObjectDescriptor, RegisterOutcome, custom_component_identity_clash,
+        register_custom_component_guarded,
     },
     public_error::{
-        RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE, queued_component_layout_changed,
+        RESOURCE_COMPONENT_INSERT, RESOURCE_COMPONENT_REMOVE, component_identity_clash,
+        queued_component_layout_changed,
     },
     registry::global_registry,
 };
@@ -661,7 +663,88 @@ impl PreparedCustomComponentRegistration {
     }
 }
 
+fn current_reload_generation(world: &World) -> u32 {
+    world
+        .get_resource::<pybevy_reload::HotReloadGeneration>()
+        .map_or(0, |generation| generation.current)
+}
+
+/// `'Name' (path:line)` for a class, for identity-clash messages.
+fn class_definition_label(class: &Bound<'_, PyType>) -> String {
+    let py = class.py();
+    let name = class
+        .qualname()
+        .map(|name| name.to_string())
+        .unwrap_or_else(|_| "?".to_owned());
+    let file = class
+        .getattr(intern!(py, "__module__"))
+        .and_then(|module| py.import("sys")?.getattr("modules")?.get_item(module))
+        .and_then(|module| module.getattr(intern!(py, "__file__")))
+        .and_then(|file| file.extract::<String>());
+    let line = class
+        .getattr(intern!(py, "__firstlineno__"))
+        .and_then(|line| line.extract::<u32>());
+    match (file, line) {
+        (Ok(file), Ok(line)) => format!("'{name}' ({file}:{line})"),
+        (Ok(file), Err(_)) => format!("'{name}' ({file})"),
+        _ => format!("'{name}'"),
+    }
+}
+
+/// Reject a class whose layout differs from another class registered this
+/// generation under the same `module.qualname`.
+pub(crate) fn check_custom_component_identity(
+    world: &World,
+    prepared: &PreparedCustomComponentRegistration,
+) -> PyResult<()> {
+    let wrapper_schema = prepared
+        .wrapper_layout
+        .as_deref()
+        .map(ComponentLayout::schema);
+    let Some(existing) = custom_component_identity_clash(
+        world,
+        prepared.type_id,
+        prepared.qualified_name.as_deref(),
+        prepared.storage_type,
+        wrapper_schema.as_ref(),
+        current_reload_generation(world),
+    ) else {
+        return Ok(());
+    };
+    let qualified_name = prepared.qualified_name.as_deref().unwrap_or(&prepared.name);
+    Python::attach(|py| {
+        let first = world
+            .get_resource::<pybevy_core::CustomComponentInfo>()
+            .and_then(|info| info.get(existing))
+            .and_then(|entry| entry.retained_type.as_ref())
+            .map_or_else(
+                || format!("'{}'", prepared.name),
+                |class| class_definition_label(class.bind(py)),
+            );
+        let second = prepared.retained_type.as_ref().map_or_else(
+            || format!("'{}'", prepared.name),
+            |class| class_definition_label(class.bind(py)),
+        );
+        Err(PyTypeError::new_err(component_identity_clash(
+            qualified_name,
+            &first,
+            &second,
+        )))
+    })
+}
+
+/// Register a prepared custom component, rejecting a same-name layout clash.
 pub(crate) fn register_prepared_custom_component(
+    world: &mut World,
+    prepared: &PreparedCustomComponentRegistration,
+) -> PyResult<ComponentId> {
+    check_custom_component_identity(world, prepared)?;
+    Ok(register_prepared_custom_component_unchecked(
+        world, prepared,
+    ))
+}
+
+fn register_prepared_custom_component_unchecked(
     world: &mut World,
     prepared: &PreparedCustomComponentRegistration,
 ) -> ComponentId {
@@ -671,9 +754,7 @@ pub(crate) fn register_prepared_custom_component(
         world.insert_resource(pybevy_core::CustomComponentInfo::default());
     }
 
-    let generation = world
-        .get_resource::<pybevy_reload::HotReloadGeneration>()
-        .map_or(0, |generation| generation.current);
+    let generation = current_reload_generation(world);
     let wrapper_schema = prepared
         .wrapper_layout
         .as_deref()
@@ -786,7 +867,7 @@ pub(crate) fn register_custom_component(
         wrapper_layout,
         retained_type,
     };
-    register_prepared_custom_component(world, &prepared)
+    register_prepared_custom_component_unchecked(world, &prepared)
 }
 
 /// Register the decorated `@component` class named `module.qualname`.

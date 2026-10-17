@@ -1081,8 +1081,16 @@ pub fn validate_methods_with_config(
 
         // Annotation markers document methods implemented by injected runtime wrappers.
         let is_runtime_delegate = match rust.python_name.as_str() {
-            "Query" => ["get", "get_mut", "single", "is_empty", "iter_many"]
-                .contains(&py_method.name.as_str()),
+            "Query" => [
+                "get",
+                "get_mut",
+                "single",
+                "is_empty",
+                "iter_many",
+                "iter_combinations",
+                "iter_combinations_mut",
+            ]
+            .contains(&py_method.name.as_str()),
             "Single" => py_method.name == "into_inner",
             _ => false,
         };

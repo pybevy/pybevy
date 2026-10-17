@@ -38,7 +38,17 @@ pub fn apply_reader_cursor<M: Message>(
     cursor_state: &mut Option<Box<dyn Any + Send + Sync>>,
     op: ReaderCursorOp,
 ) -> usize {
-    let Some(messages) = world.get_resource::<Messages<M>>() else {
+    apply_cursor_op(world.get_resource::<Messages<M>>(), cursor_state, op)
+}
+
+/// [`apply_reader_cursor`] over a buffer the caller already resolved, such as
+/// one of `RemovedComponentMessages`' per-component buffers.
+pub fn apply_cursor_op<M: Message>(
+    messages: Option<&Messages<M>>,
+    cursor_state: &mut Option<Box<dyn Any + Send + Sync>>,
+    op: ReaderCursorOp,
+) -> usize {
+    let Some(messages) = messages else {
         return 0;
     };
     let mut cursor = cursor_state

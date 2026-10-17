@@ -1,9 +1,12 @@
 use pybevy_core::LogicalTypeId;
 
-use crate::ecs::{
-    component_type::PyComponentType,
-    filter::{QueryFilter, filters::PyHas},
-    query::query_helpers::construct_query_class_item,
+use crate::{
+    assets::asset_type::PyAssetTypeParam,
+    ecs::{
+        component_type::PyComponentType,
+        filter::{QueryFilter, filters::PyHas},
+        query::query_helpers::construct_query_class_item,
+    },
 };
 
 pub mod query_helpers;
@@ -14,6 +17,7 @@ pub mod single_runtime;
 
 use pyo3::{
     Bound,
+    ffi::PyTypeObject,
     prelude::*,
     types::{PyAny, PyType},
 };
@@ -28,8 +32,8 @@ pub(crate) enum ParamType {
         logical_type_id: Option<LogicalTypeId>,
     },
     AssetResource {
-        param: Py<crate::assets::asset_type::PyAssetTypeParam>,
-        type_ptr: *const pyo3::ffi::PyTypeObject,
+        param: Py<PyAssetTypeParam>,
+        type_ptr: *const PyTypeObject,
         name: String,
         mutable: bool,
         optional: bool,

@@ -14,10 +14,9 @@ use bevy::ecs::{
     world::{CommandQueue, World},
 };
 use pybevy_core::{
-    ComponentBridge, LogicalTypeId, LogicalTypeMap, PreparedUniformComponent,
-    PyLogicalComponentParam,
+    LogicalTypeId, LogicalTypeMap, PreparedUniformComponent, PyLogicalComponentParam,
     component_layout::ComponentLayout,
-    custom_resource::validate_hierarchy_link,
+    custom_resource::{HierarchyLinkError, validate_hierarchy_link},
     ensure_no_live_asset_access, extract_entity_from_any,
     public_error::{
         self, ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BORROWED_COMPONENT_INSERT,
@@ -44,7 +43,7 @@ use super::{
     PyEntity,
     component_type::{
         PreparedCustomComponentRegistration, PyComponentType, ValidationIdentity,
-        register_prepared_custom_component,
+        check_custom_component_identity, register_prepared_custom_component,
     },
     custom_component::PyCustomComponent,
     entity_commands::PyEntityCommands,
@@ -814,6 +813,8 @@ pub(crate) struct PreparedInsertion {
     types: ResolvedComponentTypes,
     classes: Vec<Py<PyType>>,
     values: Vec<PreparedComponentValue>,
+    /// The target was spawned for this bundle, so a rejected bundle despawns it.
+    spawned: bool,
 }
 
 impl PreparedInsertion {
@@ -821,6 +822,7 @@ impl PreparedInsertion {
         commands: &PyCommands,
         components: &Bound<'_, PyTuple>,
         types: ResolvedComponentTypes,
+        spawned: bool,
     ) -> PyResult<Self> {
         let mut classes = Vec::with_capacity(components.len());
         let mut values = Vec::with_capacity(components.len());
@@ -857,6 +859,7 @@ impl PreparedInsertion {
             types,
             classes,
             values,
+            spawned,
         })
     }
 
@@ -891,6 +894,20 @@ impl PreparedInsertion {
             Ok::<(), PyErr>(())
         })?;
         ensure_entity_exists(world, entity)?;
+        let parents: Vec<Entity> = self
+            .values
+            .iter()
+            .filter_map(|value| match value {
+                PreparedComponentValue::Native { parent, .. } => *parent,
+                PreparedComponentValue::Custom(..) => None,
+            })
+            .collect();
+        let registrations = self.values.iter().filter_map(|value| match value {
+            PreparedComponentValue::Custom(registration, _) => Some(registration),
+            PreparedComponentValue::Native { .. } => None,
+        });
+        validate_bundle_identities(world, entity, registrations, self.spawned)?;
+        validate_bundle_links(world, entity, &parents, self.spawned)?;
         let mut result = Ok(());
         crate::ecs::lifecycle_mutation::insert_many_with(world, entity, &self.types, |world| {
             result = Python::attach(|py| {
@@ -899,13 +916,9 @@ impl PreparedInsertion {
                     match &mut value {
                         PreparedComponentValue::Native {
                             value,
-                            parent,
                             logical_type,
+                            ..
                         } => {
-                            if let Some(parent) = parent {
-                                validate_hierarchy_link(world, entity, *parent)
-                                    .map_err(|error| PyTypeError::new_err(error.to_string()))?;
-                            }
                             let id = kind.register_simple(world, py);
                             value.insert(id, &[entity], world);
                             if entity_exists(world, entity)
@@ -916,7 +929,7 @@ impl PreparedInsertion {
                             }
                         }
                         PreparedComponentValue::Custom(registration, value) => {
-                            let id = register_prepared_custom_component(world, registration);
+                            let id = register_prepared_custom_component(world, registration)?;
                             match value {
                                 PreparedCustomComponentValue::Wrapper {
                                     bytes,
@@ -1032,14 +1045,17 @@ pub(crate) fn insert_components_to_entity_helper(
     components: &Bound<'_, PyTuple>,
 ) -> PyResult<()> {
     let component_types = resolve_insert_bundle(py, components)?;
-    insert_resolved_components_to_entity(commands, entity_id, components, component_types)
+    insert_resolved_components_to_entity(commands, entity_id, components, component_types, false)
 }
 
+/// `spawned` marks an entity spawned for this bundle: a bundle rejected for its
+/// relationship links despawns it rather than leaving it empty.
 pub(crate) fn insert_resolved_components_to_entity(
     commands: &PyCommands,
     entity_id: Entity,
     components: &Bound<'_, PyTuple>,
     component_types: ResolvedComponentTypes,
+    spawned: bool,
 ) -> PyResult<()> {
     let trace_operations = if commands.parity_trace.is_some() {
         components
@@ -1053,7 +1069,7 @@ pub(crate) fn insert_resolved_components_to_entity(
     };
 
     if commands.is_world_queue() {
-        let insertion = PreparedInsertion::new(commands, components, component_types)?;
+        let insertion = PreparedInsertion::new(commands, components, component_types, spawned)?;
         commands.queue_world(WorldCommand::Insert(entity_id, Box::new(insertion)))?;
         for operation in trace_operations {
             commands.record_prepared_trace_op(operation);
@@ -1069,11 +1085,17 @@ pub(crate) fn insert_resolved_components_to_entity(
         return Ok(());
     }
 
+    let links = bundle_relationship_parents(components, &component_types)?;
+    let parents: Vec<Entity> = links.iter().map(|(parent, _)| *parent).collect();
+
     if commands.is_immediate() {
         commands.check_native_asset_access("entity.insert()")?;
         let validity = commands.validity.clone();
         let mut world = commands.world_mut()?;
         ensure_entity_exists(&world, entity_id)?;
+        let registrations = bundle_custom_registrations(commands, components, &component_types)?;
+        validate_bundle_identities(&mut world, entity_id, registrations.iter(), spawned)?;
+        validate_bundle_links(&mut world, entity_id, &parents, spawned)?;
         let mut insertion_error = None;
         crate::ecs::lifecycle_mutation::insert_many_with(
             &mut world,
@@ -1124,7 +1146,22 @@ pub(crate) fn insert_resolved_components_to_entity(
             components,
             &component_types,
         )?;
+        let error_sink = commands.error_sink.clone();
         commands.execute_or_queue(move |world| {
+            if spawned
+                && entity_exists(world, entity_id)
+                && let Err(error) = validate_bundle_links(world, entity_id, &parents, true)
+            {
+                let name = links.first().map_or("ChildOf", |(_, name)| *name);
+                report_deferred_error(
+                    &error_sink,
+                    &format!("Failed to validate component '{name}'"),
+                    error,
+                );
+                // The entity is gone, so each queued insert is a no-op.
+                structural_queue.apply(world);
+                return;
+            }
             crate::ecs::lifecycle_mutation::insert_many_with(
                 world,
                 entity_id,
@@ -1175,12 +1212,6 @@ fn insert_components_to_entity(
                 if commands.is_immediate() {
                     // Direct world access - insert immediately via bridge
                     let mut world = commands.world_mut()?;
-                    validate_relationship_component(
-                        &world,
-                        entity_id,
-                        &component,
-                        bridge.as_ref(),
-                    )?;
                     bridge.insert(&mut world, entity_id, &component)?;
                     if let Some(logical_type) = logical_type {
                         update_entity_logical_type(
@@ -1206,7 +1237,7 @@ fn insert_components_to_entity(
                             return;
                         }
                         if let Some(parent) = parent
-                            && let Err(error) = validate_hierarchy_link(world, entity_id, parent)
+                            && let Err(error) = validate_inserted_link(world, entity_id, parent)
                         {
                             report_deferred_error(
                                 &error_sink,
@@ -1233,7 +1264,7 @@ fn insert_components_to_entity(
                 if commands.is_immediate() {
                     let mut world = commands.world_mut()?;
                     let component_id =
-                        register_prepared_custom_component(&mut world, &registration);
+                        register_prepared_custom_component(&mut world, &registration)?;
                     match prepared_value {
                         PreparedCustomComponentValue::Wrapper {
                             bytes,
@@ -1258,6 +1289,7 @@ fn insert_components_to_entity(
                         }
                     }
                 } else {
+                    let error_sink = commands.error_sink.clone();
                     commands.execute_or_queue(move |world: &mut World| {
                         Python::attach(move |_py| {
                             if !entity_exists(world, entity_id) {
@@ -1265,7 +1297,17 @@ fn insert_components_to_entity(
                             }
 
                             let component_id =
-                                register_prepared_custom_component(world, &registration);
+                                match register_prepared_custom_component(world, &registration) {
+                                    Ok(component_id) => component_id,
+                                    Err(error) => {
+                                        report_deferred_error(
+                                            &error_sink,
+                                            "Failed to insert custom component",
+                                            error,
+                                        );
+                                        return;
+                                    }
+                                };
                             match prepared_value {
                                 PreparedCustomComponentValue::Wrapper {
                                     bytes,
@@ -1299,18 +1341,99 @@ fn insert_components_to_entity(
     Ok(())
 }
 
-fn validate_relationship_component(
+/// PyBevy rejects resource-entity and cyclic links; Bevy's `ChildOf` hook
+/// drops a missing or self parent with a warning.
+fn validate_inserted_link(
     world: &World,
     child: Entity,
-    component: &Bound<'_, PyAny>,
-    bridge: &dyn ComponentBridge,
+    parent: Entity,
+) -> Result<(), HierarchyLinkError> {
+    match validate_hierarchy_link(world, child, parent) {
+        Err(error) if error.bevy_drops_link() => Ok(()),
+        result => result,
+    }
+}
+
+/// Check a bundle's relationship parents before any of it applies; a rejected
+/// spawn despawns its still-empty entity.
+fn validate_bundle_links(
+    world: &mut World,
+    entity: Entity,
+    parents: &[Entity],
+    spawned: bool,
 ) -> PyResult<()> {
-    let Some(field) = bridge.relationship_field() else {
-        return Ok(());
-    };
-    let parent = component.getattr(field)?.extract::<PyEntity>()?.0;
-    validate_hierarchy_link(world, child, parent)
-        .map_err(|error| PyTypeError::new_err(error.to_string()))
+    for &parent in parents {
+        if let Err(error) = validate_inserted_link(world, entity, parent) {
+            if spawned && entity_exists(world, entity) {
+                world.despawn(entity);
+            }
+            return Err(PyTypeError::new_err(error.to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Reject a bundle holding a custom component whose layout clashes with a
+/// same-named class, before any of it applies.
+fn validate_bundle_identities<'a>(
+    world: &mut World,
+    entity: Entity,
+    registrations: impl Iterator<Item = &'a PreparedCustomComponentRegistration>,
+    spawned: bool,
+) -> PyResult<()> {
+    for registration in registrations {
+        if let Err(error) = check_custom_component_identity(world, registration) {
+            if spawned && entity_exists(world, entity) {
+                world.despawn(entity);
+            }
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+/// The registration of each custom component in a bundle.
+fn bundle_custom_registrations(
+    commands: &PyCommands,
+    components: &Bound<'_, PyTuple>,
+    component_types: &[PyComponentType],
+) -> PyResult<Vec<PreparedCustomComponentRegistration>> {
+    let mut registrations = Vec::new();
+    for (component, kind) in components.iter().zip(component_types) {
+        if matches!(kind, PyComponentType::Custom(_)) {
+            let class = component.get_type();
+            let (storage, layout) = commands.storage_and_layout(&class)?;
+            registrations.push(
+                PreparedCustomComponentRegistration::from_python_class_with_layout(
+                    &class, storage, layout,
+                )?,
+            );
+        }
+    }
+    Ok(registrations)
+}
+
+/// The parent and component name of each relationship component in a bundle.
+fn bundle_relationship_parents(
+    components: &Bound<'_, PyTuple>,
+    component_types: &[PyComponentType],
+) -> PyResult<Vec<(Entity, &'static str)>> {
+    let mut parents = Vec::new();
+    for (component, kind) in components.iter().zip(component_types) {
+        let PyComponentType::Dynamic(pointer) = kind else {
+            continue;
+        };
+        let Some(bridge) = global_registry::get_bridge_by_py_type(*pointer) else {
+            continue;
+        };
+        if let Some(field) = bridge.relationship_field() {
+            parents.push((
+                component.getattr(field)?.extract::<PyEntity>()?.0,
+                bridge.name(),
+            ));
+        }
+    }
+    Ok(parents)
 }
 
 /// Helper function to add a child to an entity
@@ -1327,7 +1450,7 @@ pub(crate) fn add_child_helper(
     if commands.is_immediate() {
         let mut world = commands.world_mut()?;
         ensure_entities_exist(&world, &[parent_id, child_id])?;
-        validate_hierarchy_link(&world, child_id, parent_id)
+        validate_inserted_link(&world, child_id, parent_id)
             .map_err(|error| PyTypeError::new_err(error.to_string()))?;
         ensure_no_live_asset_access(&world, "entity.add_child()")
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -1336,7 +1459,7 @@ pub(crate) fn add_child_helper(
         let error_sink = commands.error_sink.clone();
         commands.execute_or_queue(move |world| {
             if entity_exists(world, parent_id) && entity_exists(world, child_id) {
-                if let Err(error) = validate_hierarchy_link(world, child_id, parent_id) {
+                if let Err(error) = validate_inserted_link(world, child_id, parent_id) {
                     let error = PyTypeError::new_err(error.to_string());
                     match &error_sink {
                         Some(sink) => sink.record(error),
@@ -1537,6 +1660,7 @@ impl PyCommands {
                 entity_id,
                 &components_to_insert,
                 component_types,
+                true,
             )?;
 
             Ok(PyEntityCommands::with_commands(entity_id, self, py))

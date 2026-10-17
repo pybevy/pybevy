@@ -2,6 +2,12 @@
 
 For Python query syntax (`Query[T]`, `Mut[T]`, filters, `Optional`, borrow rules), see `guide://patterns` (Queries section).
 
+Group Query and Single data with builtin `tuple[...]`; `list[...]`, `dict[...]`
+and other generic origins raise `TypeError`. An iterable passed to
+`query.iter_many()` must not re-enter iteration on the same query: that raises
+`RuntimeError`. Scheduled queries and their inspection methods expire when the
+system ends.
+
 When calling `world.run_system_once()` or `world.run_schedule()`, use the inner
 system's injected parameters. Captured outer World/Commands handles and borrowed
 children raise `RuntimeError` until the nested call returns. Observer callbacks

@@ -34,12 +34,14 @@ pub mod message;
 pub mod messages;
 pub mod mutable;
 // Name moved to pybevy_ecs crate
+pub mod non_send_marker;
 pub mod observer;
 pub mod observer_registry;
 pub(crate) mod parity_trace;
 pub(crate) mod python_message;
 pub mod query;
 mod reflect_dump;
+pub mod removed_components;
 pub mod resource;
 pub mod resource_type;
 pub mod state;
@@ -96,6 +98,9 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<message::PyMessageReader>()?;
     ecs.add_class::<message::PyMessageWriter>()?;
     ecs.add_class::<message::PyMessageMutator>()?;
+    ecs.add_class::<message::PyReadOnlyMessage>()?;
+    ecs.add_class::<non_send_marker::PyNonSendMarker>()?;
+    ecs.add_class::<removed_components::PyRemovedComponents>()?;
     ecs.add_class::<messages::PyMessageType>()?;
     ecs.add_class::<messages::PyMessageTypeParam>()?;
     ecs.add_class::<messages::PyMessages>()?;
@@ -118,6 +123,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<query::query_param::PyQueryParam>()?;
     ecs.add_class::<query::query_runtime::PyQueryIter>()?;
     ecs.add_class::<query::query_runtime::PyQueryIterator>()?;
+    ecs.add_class::<query::query_runtime::PyQueryCombinationIter>()?;
     ecs.add_class::<view::view::PyView>()?;
     ecs.add_class::<view::view_param::PyViewParam>()?;
     ecs.add_class::<view::view::PyViewCol>()?;

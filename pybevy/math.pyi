@@ -4832,7 +4832,6 @@ class Line3d:
     """An infinite line going through the origin along a direction in 3D space.
 
     The line extends infinitely in both the given direction and its opposite direction.
-    For a finite line segment, use Segment3d instead.
 
     Example:
         >>> from pybevy.math import Line3d, Dir3

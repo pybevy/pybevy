@@ -8,6 +8,7 @@
 
 use std::{
     fmt,
+    mem::transmute,
     ptr::NonNull,
     sync::{
         Arc,
@@ -62,6 +63,8 @@ pub enum QueryRuntimeError {
     NestedIteration,
     /// A query operation was re-entered while another operation held entity access.
     ReentrantOperation,
+    /// The supplied traversal belongs to another runtime and validity window.
+    ForeignIterationToken,
     /// A fresh-traversal operation (count/is_empty/get/single) was attempted
     /// while a Python `for` loop was paused mid-iteration.
     IterationInProgress,
@@ -77,6 +80,9 @@ impl fmt::Display for QueryRuntimeError {
             Self::Storage(error) => error.fmt(formatter),
             Self::NestedIteration => formatter.write_str(NESTED_ITERATION_MESSAGE),
             Self::ReentrantOperation => formatter.write_str(REENTRANT_OPERATION_MESSAGE),
+            Self::ForeignIterationToken => {
+                formatter.write_str("Query iterator belongs to a different runtime")
+            }
             Self::IterationInProgress => formatter.write_str(ITERATION_IN_PROGRESS_MESSAGE),
             Self::NoEntities => formatter.write_str(NO_ENTITIES_MESSAGE),
             Self::MultipleEntities => formatter.write_str(MULTIPLE_ENTITIES_MESSAGE),
@@ -285,6 +291,61 @@ pub struct QueryRuntimeCore {
     live_ticks: bool,
 }
 
+/// Lazy traversal of every `width`-item index combination of `item_count`
+/// items, in Bevy's `QueryCombinationIter` order: [0, 1], [0, 2], ..., [1, 2].
+#[derive(Debug, Clone)]
+pub struct CombinationCursor {
+    item_count: usize,
+    indices: Vec<usize>,
+    started: bool,
+    exhausted: bool,
+}
+
+impl CombinationCursor {
+    /// `width` must be non-zero; a width above `item_count` yields nothing.
+    pub fn new(item_count: usize, width: usize) -> Self {
+        assert!(width != 0, "combination width must be non-zero");
+        let exhausted = width > item_count;
+        Self {
+            item_count,
+            indices: if exhausted {
+                Vec::new()
+            } else {
+                (0..width).collect()
+            },
+            started: false,
+            exhausted,
+        }
+    }
+}
+
+impl Iterator for CombinationCursor {
+    type Item = Vec<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.exhausted {
+            return None;
+        }
+        if !self.started {
+            self.started = true;
+            return Some(self.indices.clone());
+        }
+        let width = self.indices.len();
+        let Some(pivot) = (0..width)
+            .rev()
+            .find(|&index| self.indices[index] < self.item_count - width + index)
+        else {
+            self.exhausted = true;
+            return None;
+        };
+        self.indices[pivot] += 1;
+        for index in (pivot + 1)..width {
+            self.indices[index] = self.indices[index - 1] + 1;
+        }
+        Some(self.indices.clone())
+    }
+}
+
 /// RAII owner for one Python-level query traversal.
 pub struct IterationToken {
     erased: Option<ErasedQueryIter>,
@@ -321,9 +382,9 @@ impl QueryRuntimeCore {
     ///
     /// # Safety
     ///
-    /// A non-empty `cached` value must remain at a stable address until this
-    /// runtime is dropped. `world_cell` must reference the world from which the
-    /// cache was built. Both must remain live while `validity` permits access.
+    /// A non-empty `cached` value must remain at a stable address while
+    /// `validity` permits access. `world_cell` must reference the world from
+    /// which the cache was built. Invalidate before either allocation is freed.
     /// No other runtime may operate on the same cached state concurrently.
     pub unsafe fn new(
         cached: Option<&CachedQueryCore>,
@@ -333,9 +394,8 @@ impl QueryRuntimeCore {
         this_run: Tick,
     ) -> Self {
         // SAFETY: the caller fences this lifetime-erased cell with `validity`.
-        let world_cell = unsafe {
-            std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell)
-        };
+        let world_cell =
+            unsafe { transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell) };
         Self {
             cached: cached.map(NonNull::from),
             world_cell,
@@ -461,7 +521,8 @@ impl QueryRuntimeCore {
         })
     }
 
-    /// Advance a traversal token and materialize one row through the backend leaf.
+    /// Advance this runtime's traversal token and materialize one backend row.
+    /// A foreign token is rejected without advancing or releasing it.
     pub fn advance_with<Context, Materializer>(
         &self,
         token: &mut IterationToken,
@@ -471,15 +532,17 @@ impl QueryRuntimeCore {
     where
         Materializer: RowMaterializer<Context>,
     {
+        if !Arc::ptr_eq(&self.live_iterators, &token.live) {
+            return Err(QueryRuntimeError::ForeignIterationToken.into());
+        }
         self.check_valid()?;
         let _operation = self.enter_operation()?;
         let (Some(cached), Some(iterator)) = (self.cached(), token.erased) else {
             return Ok(None);
         };
         self.iteration_started.store(true, Ordering::Release);
-        // SAFETY: the token uniquely owns the live allocation and `_operation`
-        // prevents overlapping access while the row is materialized.
         loop {
+            // SAFETY: the origin token and operation guard serialize this valid traversal.
             match unsafe { self.next_passing(cached, iterator) } {
                 Some(mut entity) if materializer.matches(&entity) => {
                     return materializer
@@ -523,6 +586,7 @@ impl QueryRuntimeCore {
         };
         let iterator = ErasedIterGuard(iterator);
         let mut count = 0;
+        // SAFETY: validity is checked and the guard owns this isolated traversal.
         while let Some(entity) = unsafe { self.next_passing(cached, iterator.0) } {
             if materializer.matches(&entity) {
                 count += 1;
@@ -557,6 +621,7 @@ impl QueryRuntimeCore {
             )
         };
         let iterator = ErasedIterGuard(iterator);
+        // SAFETY: validity is checked and the guard owns this isolated traversal.
         while let Some(entity) = unsafe { self.next_passing(cached, iterator.0) } {
             if materializer.matches(&entity) {
                 return Ok(false);
@@ -721,6 +786,7 @@ impl QueryRuntimeCore {
         };
         let iterator = ErasedIterGuard(iterator);
         let mut first = None;
+        // SAFETY: validity is checked and the guard owns this isolated traversal.
         while let Some(entity) = unsafe { self.next_passing(cached, iterator.0) } {
             if materializer.matches(&entity) {
                 if first.is_some() {
@@ -835,6 +901,11 @@ impl Drop for OperationGuard<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        convert::Infallible,
+        panic::{AssertUnwindSafe, catch_unwind},
+    };
+
     use bevy::ecs::{
         change_detection::DetectChangesMut,
         component::{Component, ComponentId},
@@ -843,6 +914,41 @@ mod tests {
     use super::{super::query_builder_ext::QueryComponent, *};
     use crate::shared::query_builder_ext::QueryBuildSpec;
 
+    #[test]
+    fn combination_cursor_follows_bevy_order() {
+        assert_eq!(
+            CombinationCursor::new(4, 2).collect::<Vec<_>>(),
+            vec![
+                vec![0, 1],
+                vec![0, 2],
+                vec![0, 3],
+                vec![1, 2],
+                vec![1, 3],
+                vec![2, 3],
+            ]
+        );
+        assert_eq!(
+            CombinationCursor::new(4, 3).collect::<Vec<_>>(),
+            vec![vec![0, 1, 2], vec![0, 1, 3], vec![0, 2, 3], vec![1, 2, 3]]
+        );
+    }
+
+    #[test]
+    fn combination_cursor_handles_exact_and_oversized_widths() {
+        assert_eq!(
+            CombinationCursor::new(3, 3).collect::<Vec<_>>(),
+            vec![vec![0, 1, 2]]
+        );
+        assert!(CombinationCursor::new(3, 4).next().is_none());
+        assert!(CombinationCursor::new(0, usize::MAX).next().is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "combination width must be non-zero")]
+    fn combination_cursor_rejects_zero_width() {
+        let _ = CombinationCursor::new(3, 0);
+    }
+
     #[derive(Component)]
     struct A(u32);
 
@@ -850,7 +956,7 @@ mod tests {
 
     impl RowMaterializer<()> for EntityMaterializer {
         type Output = Entity;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
 
         fn materialize(
             &self,
@@ -867,7 +973,7 @@ mod tests {
 
     impl RowMaterializer<()> for OddMaterializer {
         type Output = Entity;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
 
         fn matches(&self, entity: &FilteredEntityAccess<'_, '_>) -> bool {
             let pointer = entity.get_by_id(self.component_id).unwrap();
@@ -889,7 +995,7 @@ mod tests {
 
     impl RowMaterializer<()> for IsMutableMaterializer {
         type Output = bool;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
 
         fn materialize(
             &self,
@@ -906,7 +1012,7 @@ mod tests {
 
     impl RowMaterializer<()> for ReentrantMaterializer<'_> {
         type Output = Entity;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
 
         fn materialize(
             &self,
@@ -944,7 +1050,7 @@ mod tests {
 
     impl RowMaterializer<()> for PanickingMaterializer {
         type Output = Entity;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
 
         fn materialize(
             &self,
@@ -1032,6 +1138,72 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn foreign_token_is_rejected_without_consuming_its_traversal() {
+        let mut first_world = World::new();
+        let first_entity = first_world.spawn(A(1)).id();
+        let first_cache = cache(&mut first_world, false, false);
+        // SAFETY: each runtime has its own live World and stable cache.
+        let first =
+            unsafe { build_runtime(&first_cache, &mut first_world, ValidityFlag::new_write()) };
+        let mut second_world = World::new();
+        let second_cache = cache(&mut second_world, false, false);
+        // SAFETY: this runtime owns a distinct World/cache validity window.
+        let second =
+            unsafe { build_runtime(&second_cache, &mut second_world, ValidityFlag::new_write()) };
+        let mut token = first.begin_iteration().unwrap();
+
+        assert!(matches!(
+            second.advance_with(&mut token, &EntityMaterializer, ()),
+            Err(QueryExecutionError::Runtime(
+                QueryRuntimeError::ForeignIterationToken
+            ))
+        ));
+        assert_eq!(second.count().unwrap(), 0);
+        assert_eq!(
+            first
+                .advance_with(&mut token, &EntityMaterializer, ())
+                .unwrap(),
+            Some(first_entity)
+        );
+        assert_eq!(
+            first
+                .advance_with(&mut token, &EntityMaterializer, ())
+                .unwrap(),
+            None
+        );
+        assert_eq!(first.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn foreign_token_cannot_bypass_its_expired_origin() {
+        let mut first_world = World::new();
+        first_world.spawn(A(1));
+        let first_cache = cache(&mut first_world, false, false);
+        let validity = ValidityFlag::new_write();
+        // SAFETY: origin storage remains live through invalidation and teardown.
+        let first = unsafe { build_runtime(&first_cache, &mut first_world, validity.clone()) };
+        let mut token = first.begin_iteration().unwrap();
+        validity.set_invalid();
+        drop(first);
+        drop(first_cache);
+        drop(first_world);
+
+        let mut second_world = World::new();
+        let second_cache = cache(&mut second_world, false, false);
+        // SAFETY: the receiver's own World and cache remain live.
+        let second =
+            unsafe { build_runtime(&second_cache, &mut second_world, ValidityFlag::new_write()) };
+        assert!(matches!(
+            second.advance_with(&mut token, &EntityMaterializer, ()),
+            Err(QueryExecutionError::Runtime(
+                QueryRuntimeError::ForeignIterationToken
+            ))
+        ));
+        assert_eq!(second.count().unwrap(), 0);
+        drop(token);
     }
 
     #[test]
@@ -1355,7 +1527,7 @@ mod tests {
         let runtime = unsafe { build_runtime(&cache, &mut world, ValidityFlag::new_write()) };
         let mut token = runtime.begin_iteration().unwrap();
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let result = catch_unwind(AssertUnwindSafe(|| {
             let _ = runtime.advance_with(&mut token, &PanickingMaterializer, ());
         }));
         assert!(result.is_err());
@@ -1463,7 +1635,7 @@ mod tests {
 
     impl RowMaterializer<()> for MarkChangedMaterializer {
         type Output = Entity;
-        type Error = std::convert::Infallible;
+        type Error = Infallible;
 
         fn materialize(
             &self,

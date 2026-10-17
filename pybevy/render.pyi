@@ -8,7 +8,6 @@ from pybevy.array import Array
 from pybevy.assets import Asset
 from pybevy.ecs import Component
 from pybevy.math import Range, Vec2
-from pybevy.pbr import StandardMaterial as StandardMaterial
 
 class ShaderBuffer(Asset):
     """A storage-buffer asset uploaded for shader access.
@@ -294,8 +293,6 @@ class Face:
     Back: ClassVar[Face]
 
     def __hash__(self) -> int: ...
-
-PyFace = Face
 
 class TextureAspect:
     """Which aspect of a texture a view covers."""
@@ -762,7 +759,7 @@ class Msaa(Component):
             Msaa configuration for the given sample count
 
         Raises:
-            RuntimeError: If samples is not 1, 2, 4, or 8
+            ValueError: If samples is not 1, 2, 4, or 8
         """
 
 class TemporalJitter(Component):

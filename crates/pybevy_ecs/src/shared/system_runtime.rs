@@ -327,6 +327,7 @@ pub struct CallMetadata {
 pub struct SystemFlags {
     pub needs_exclusive: bool,
     pub needs_commands: bool,
+    pub needs_main_thread: bool,
 }
 
 pub struct TriggerContext<'a, Event> {
@@ -697,7 +698,11 @@ where
     }
 
     fn flags(&self) -> SystemStateFlags {
-        compute_system_flags(self.flags.needs_exclusive, self.flags.needs_commands)
+        compute_system_flags(
+            self.flags.needs_exclusive,
+            self.flags.needs_commands,
+            self.flags.needs_main_thread,
+        )
     }
 
     unsafe fn run_unsafe(

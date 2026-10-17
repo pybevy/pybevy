@@ -1352,7 +1352,6 @@ class KeyCode:
         def value(self) -> NativeKeyCode: ...
         def __init__(self, value: NativeKeyCode) -> None: ...
 
-    # Function keys
     Backquote: ClassVar[KeyCode]
     Backslash: ClassVar[KeyCode]
     BracketLeft: ClassVar[KeyCode]
@@ -1910,7 +1909,6 @@ class MouseInput(Resource):
 
     def clear(self) -> None:
         """Clear the just-pressed and just-released state (simulates an elapsed time step)."""
-        """Returns true if all of the given buttons were just released."""
 
 class ButtonState:
     """State of a button (pressed or released)."""
@@ -3269,5 +3267,3 @@ class GamepadSettings(Component):
     def button_axis_settings(
         self, value: dict[GamepadButton, ButtonAxisSettings]
     ) -> None: ...
-
-# Type aliases for Bevy's Event suffix naming convention

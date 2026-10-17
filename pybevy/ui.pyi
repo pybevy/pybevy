@@ -1623,7 +1623,7 @@ class BorderRadius:
     the radius of each corner independently. All corners use Val sizing,
     supporting pixels, percentages, auto-sizing, and viewport-relative units.
 
-    In Bevy 0.18, BorderRadius is no longer a Component - it cannot be spawned
+    Since Bevy 0.18, BorderRadius is no longer a Component - it cannot be spawned
     or queried from the ECS directly.
 
     Example:
@@ -3796,7 +3796,7 @@ class BackgroundGradient(Component):
 class TextShadow(Component):
     """Adds a shadow behind text.
 
-    Use Text2dShadow for Text2d shadows (not yet implemented).
+    Use pybevy.sprite.Text2dShadow for Text2d shadows.
 
     Example:
         ```python
@@ -3826,8 +3826,8 @@ class TextShadow(Component):
         """Create a text shadow.
 
         Args:
-            offset: Shadow displacement in logical pixels (default: Vec2.ZERO)
-            color: Color of the shadow (default: BLACK)
+            offset: Shadow displacement in logical pixels (default: Vec2(4.0, 4.0))
+            color: Color of the shadow (default: 75% opaque linear black)
         """
 
     @property
@@ -3846,9 +3846,6 @@ class TextShadow(Component):
 
     def __eq__(self, other: object) -> bool: ...
 
-
-# Backwards compatibility alias: UiImage was the old PyBevy name
-UiImage = ImageNode
 
 __all__ = [
     "AlignContent",
@@ -3909,7 +3906,6 @@ __all__ = [
     "Text",
     "TextShadow",
     "UiGlobalTransform",
-    "UiImage",
     "UiPosition",
     "UiRect",
     "UiScale",

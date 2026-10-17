@@ -159,7 +159,8 @@ class OrbitCameraPlugin(Plugin):
         >>> app.add_plugins(OrbitCameraPlugin())
         >>>
         >>> # Spawn a camera with orbit controls
-        >>> def setup(commands: Commands) -> None:
+        >>> @system
+        ... def setup(commands: Commands) -> None:
         ...     commands.spawn(
         ...         Camera3d(),
         ...         Transform.from_xyz(0.0, 50.0, 100.0).looking_at(Vec3.ZERO, Vec3.Y),

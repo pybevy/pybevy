@@ -21,7 +21,8 @@ use super::{
     commands::reject_borrowed_component_proxy,
     component_layout::{ComponentStorageType, ComponentStorageTypeExt, serialize_to_wrapper},
     component_type::{
-        PreparedCustomComponentRegistration, PyComponentType, register_prepared_custom_component,
+        PreparedCustomComponentRegistration, PyComponentType, check_custom_component_identity,
+        register_prepared_custom_component,
     },
     component_wrapper::*,
     custom_batch::PyCustomComponentBatch,
@@ -243,6 +244,9 @@ impl SpawnBatchCommand {
             }
             Ok::<(), PyErr>(())
         })?;
+        for registration in self.registrations.iter().flatten() {
+            check_custom_component_identity(world, registration)?;
+        }
         let lifecycle_types = self
             .components
             .iter()
@@ -265,11 +269,11 @@ impl SpawnBatchCommand {
                     };
                     let component_id = match registration {
                         Some(registration) => {
-                            register_prepared_custom_component(world, &registration)
+                            register_prepared_custom_component(world, &registration)?
                         }
                         None => kind.register_simple(world, py),
                     };
-                    match component {
+                    Ok(match component {
                         ComponentData::Batch {
                             name,
                             component_type,
@@ -293,10 +297,10 @@ impl SpawnBatchCommand {
                             payload: PreparedPayload::Uniform(prepared),
                             logical_type,
                         }) as Box<dyn PreparedBatchInserter>,
-                    }
+                    })
                 })
-                .collect()
-        });
+                .collect::<PyResult<Vec<_>>>()
+        })?;
 
         let validated =
             BatchSpawnCore::validate(BatchSpawnPlan::new(self.explicit_count, insertions))

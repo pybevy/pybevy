@@ -84,7 +84,8 @@ pub struct PyDespawn;
 ///
 /// # Type Parameters
 /// - `E`: The event type (required)
-/// - `B`: Optional bundle filter - observer only triggers if entity has these components
+/// - `B`: Optional component filter - the observer runs when the event's target
+///   entity has any of these components
 ///
 /// # Example
 /// ```python

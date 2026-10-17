@@ -200,6 +200,14 @@ impl std::fmt::Display for HierarchyLinkError {
     }
 }
 
+impl HierarchyLinkError {
+    /// Bevy's `ChildOf` insert hook removes these links with a warning, so an
+    /// insert keeps the rest of its bundle.
+    pub fn bevy_drops_link(&self) -> bool {
+        matches!(self, Self::MissingParent(_) | Self::SelfParent)
+    }
+}
+
 /// Validate a relationship before inserting [`ChildOf`].
 pub fn validate_hierarchy_link(
     world: &World,
