@@ -361,6 +361,7 @@ impl ObserverRegistry {
                 &prepared.retained,
                 &prepared.params,
                 &prepared.persistent,
+                &prepared.history,
                 &prepared.failure_sink,
                 &prepared.metadata,
                 current_generation,

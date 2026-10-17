@@ -802,7 +802,6 @@ pub enum ConditionRejection {
     MessageMutator,
     MessageReader,
     OpaqueMessageReader,
-    RemovedComponents,
     ResMut,
     OpaqueResource,
     MutableAssets,
@@ -833,7 +832,6 @@ pub fn condition_param_rejection<K: BackendKeys>(
             ..
         } => Some(ConditionRejection::OpaqueMessageReader),
         ParamSpec::MessageReader { .. } => Some(ConditionRejection::MessageReader),
-        ParamSpec::RemovedComponents { .. } => Some(ConditionRejection::RemovedComponents),
         ParamSpec::Res { mutable: true, .. } => Some(ConditionRejection::ResMut),
         ParamSpec::Res {
             scheduler_access: SchedulerAccess::Exclusive,
@@ -2137,7 +2135,7 @@ mod tests {
 
     #[test]
     fn condition_rejects_world_commands_messages_and_mut_access() {
-        let rejected: [ParamSpec<MockKeys>; 10] = [
+        let rejected: [ParamSpec<MockKeys>; 9] = [
             ParamSpec::Observer,
             ParamSpec::World,
             ParamSpec::Commands,
@@ -2151,7 +2149,6 @@ mod tests {
                 scheduler_access: SchedulerAccess::Shared,
             },
             ParamSpec::MessageMutator { key: "M" },
-            ParamSpec::RemovedComponents { key: "T" },
             ParamSpec::Res {
                 key: "r",
                 vkey: Some(1),
@@ -2165,8 +2162,9 @@ mod tests {
             assert!(condition_param_rejection(param).is_some());
         }
 
-        let allowed: [ParamSpec<MockKeys>; 4] = [
+        let allowed: [ParamSpec<MockKeys>; 5] = [
             ParamSpec::Local,
+            ParamSpec::RemovedComponents { key: "T" },
             ParamSpec::Res {
                 key: "r",
                 vkey: Some(1),

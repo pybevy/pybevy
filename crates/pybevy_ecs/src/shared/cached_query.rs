@@ -227,17 +227,6 @@ impl CachedQueryCore {
         Self::with_state(state, spec)
     }
 
-    /// Build with a `FilteredEntityMut` state unconditionally. This preserves
-    /// compatibility with adapter extraction paths that are not yet
-    /// variant-aware; migrating them to [`Self::build_auto`] is a known
-    /// follow-up of the extraction campaign.
-    pub fn build_mut(world: &mut World, spec: &QueryBuildSpec) -> Self {
-        Self::with_state(
-            ErasedQueryState::from_mut(build_query_state(world, spec)),
-            spec,
-        )
-    }
-
     fn with_state(state: ErasedQueryState, spec: &QueryBuildSpec) -> Self {
         Self {
             state,
@@ -394,15 +383,6 @@ mod tests {
         let mut world = World::new();
         let spec = spec(&mut world, true, false);
         let core = CachedQueryCore::build_auto(&mut world, &spec);
-        let (read_only, _) = core.state.parts();
-        assert!(!read_only);
-    }
-
-    #[test]
-    fn build_mut_is_always_mutable() {
-        let mut world = World::new();
-        let spec = spec(&mut world, false, false);
-        let core = CachedQueryCore::build_mut(&mut world, &spec);
         let (read_only, _) = core.state.parts();
         assert!(!read_only);
     }

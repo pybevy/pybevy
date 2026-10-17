@@ -1555,14 +1555,18 @@ mod tests {
         let mut vm = VM::new();
         let base = buf.as_mut_ptr() as *mut u8;
         for i in 0..n {
+            // SAFETY: Each row contains two f32 lanes within the live interleaved slice.
             let xp = unsafe { base.add(i * 8) };
+            // SAFETY: Each row contains two f32 lanes within the live interleaved slice.
             let vp = unsafe { base.add(i * 8 + 4) };
+            // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
             unsafe { vm.execute(bc, &[xp, vp], i as u64) };
         }
     }
 
     fn bases_strides(buf: &mut [f32]) -> ([*mut u8; 2], [usize; 2]) {
         let base = buf.as_mut_ptr() as *mut u8;
+        // SAFETY: The live interleaved slice contains the second f32 lane.
         ([base, unsafe { base.add(4) }], [8usize, 8usize])
     }
 
@@ -1574,9 +1578,11 @@ mod tests {
             .flat_map(|i| [i as f32 * 0.5, (i as f32).sin()])
             .collect();
         let mut b = a.clone();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe { run_scalar(&bc, &mut a, n) };
         let (bases, strides) = bases_strides(&mut b);
         let mut s = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe { execute_assignment_tiled(&bc, &bases, &strides, n, &mut s).unwrap() };
         assert_eq!(a, b, "serial f64 tiled must match scalar bit-for-bit");
     }
@@ -1592,6 +1598,7 @@ mod tests {
         let mut got = init.clone();
         let (bases, strides) = bases_strides(&mut got);
         let mut s = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe { execute_assignment_tiled_f32(&bc, &bases, &strides, n, &mut s).unwrap() };
         let mut want = init.clone();
         for i in 0..n {
@@ -1651,10 +1658,12 @@ mod tests {
         let mut a = init.clone();
         let (ba, sa) = bases_strides(&mut a);
         let mut s = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe { execute_assignment_tiled(&bc, &ba, &sa, n, &mut s).unwrap() };
 
         let mut b = init.clone();
         let (bb, sb) = bases_strides(&mut b);
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe { execute_assignment_tiled_parallel(&bc, &bb, &sb, n, false).unwrap() };
 
         assert_eq!(a, b, "parallel f64 tiled must match serial");
@@ -1672,6 +1681,7 @@ mod tests {
         let bc = c.finalize();
         let mut s = TiledScratch::new();
         let base = std::ptr::null_mut::<u8>();
+        // SAFETY: The iteration domain is empty, so no pointer is dereferenced.
         let r = unsafe { execute_assignment_tiled(&bc, &[base], &[8], 0, &mut s) };
         assert_eq!(r, Err(UnsupportedOp));
     }
@@ -1687,6 +1697,7 @@ mod tests {
         let destination = ColumnMut::from_f64_slice(&mut output);
         let mut scratch = TiledScratch::new();
         let result =
+            // SAFETY: The output is a live slice; invalid bytecode is rejected before execution.
             unsafe { run_map(&[Op::PushConst(0)], &[], &[], &destination, 1, &mut scratch) };
         assert_eq!(result, Err(UnsupportedOp));
     }
@@ -1804,9 +1815,11 @@ mod tests {
         let mut data: Vec<f64> = vec![f64::NAN, 1.0, 2.0, f64::NAN, f64::NAN, f64::NAN, 3.0, -4.0];
         let n = data.len() / 2;
         let base = data.as_mut_ptr() as *mut u8;
+        // SAFETY: The live interleaved slice contains the second f64 lane.
         let bases = [base, unsafe { base.add(8) }];
         let strides = [16usize, 16usize];
         let mut s = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe { execute_assignment_tiled(&bc, &bases, &strides, n, &mut s).unwrap() };
 
         assert!(data[0].is_nan(), "min(NaN, 1.0) must be NaN");
@@ -1958,6 +1971,7 @@ mod tests {
             let mut scalar_buf: Vec<f64> = (0..n * row_slots).map(|_| rng.value()).collect();
             let mut tiled_buf = scalar_buf.clone();
 
+            // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
             unsafe {
                 let base = scalar_buf.as_mut_ptr() as *mut u8;
                 let mut vm = VM::new();
@@ -1968,6 +1982,7 @@ mod tests {
                     vm.execute(&bc, &ptrs, i as u64);
                 }
             }
+            // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
             unsafe {
                 let base = tiled_buf.as_mut_ptr() as *mut u8;
                 let bases: Vec<*mut u8> = (0..num_fields).map(|f| base.add(f * 8)).collect();
@@ -2050,6 +2065,7 @@ mod tests {
             let mut scalar_out = vec![0.0f64; n];
             let mut tiled_out = vec![0.0f64; n];
 
+            // SAFETY: Typed columns cover every row; output storage is distinct and exclusive.
             unsafe {
                 let mut vm = VM::new();
                 for i in 0..n {
@@ -2229,6 +2245,7 @@ mod tests {
         let bases = [values.as_mut_ptr().cast::<u8>()];
         let strides = [size_of::<f64>()];
         let mut scratch = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe {
             execute_assignment_tiled(&bytecode, &bases, &strides, values.len(), &mut scratch)
                 .unwrap()
@@ -2257,6 +2274,7 @@ mod tests {
         let bases = [values.as_mut_ptr()];
         let strides = [size_of::<u8>()];
         let mut scratch = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe {
             execute_assignment_tiled(&bytecode, &bases, &strides, values.len(), &mut scratch)
                 .unwrap()
@@ -2282,6 +2300,7 @@ mod tests {
         let bases = [values.as_mut_ptr().cast::<u8>()];
         let strides = [size_of::<i64>()];
         let mut scratch = TiledScratch::new();
+        // SAFETY: The live typed allocation covers all rows/strides; writes are exclusive.
         unsafe {
             execute_assignment_tiled(&bytecode, &bases, &strides, values.len(), &mut scratch)
                 .unwrap()

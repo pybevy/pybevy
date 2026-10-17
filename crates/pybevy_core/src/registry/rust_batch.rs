@@ -7,7 +7,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use bevy::ecs::{entity::Entity, world::World};
-use pybevy_storage::batch_columns::{BatchScalar, IntegerColumn, check_batch_integer};
+use pybevy_storage::batch_columns::{
+    BatchScalar, IntegerColumn, check_batch_integer, check_batch_integer_f32,
+};
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyOverflowError, PyTypeError, PyValueError},
@@ -111,9 +113,29 @@ pub fn check_integer_batch_column(
     name: &str,
     column: IntegerColumn,
 ) -> PyResult<()> {
+    check_column(value, name, column, false)
+}
+
+/// [`check_integer_batch_column`] for a native `batch` column carried as
+/// `f32`, which also rejects, with `ValueError`, values the field would not
+/// store exactly.
+pub fn check_f32_integer_batch_column(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    column: IntegerColumn,
+) -> PyResult<()> {
+    check_column(value, name, column, true)
+}
+
+fn check_column(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    column: IntegerColumn,
+    carried_f32: bool,
+) -> PyResult<()> {
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         for (row, item) in value.try_iter()?.enumerate() {
-            check_integer_items(&item?, name, column, row)?;
+            check_integer_items(&item?, name, column, carried_f32, row)?;
         }
         return Ok(());
     }
@@ -122,7 +144,7 @@ pub fn check_integer_batch_column(
         let items = value.call_method0("ravel")?.call_method0("tolist")?;
         let stride = row_stride(value, items.len()?)?;
         for (index, item) in items.try_iter()?.enumerate() {
-            check_integer_scalar(&item?, name, column, index / stride)?;
+            check_integer_scalar(&item?, name, column, carried_f32, index / stride)?;
         }
         return Ok(());
     }
@@ -143,7 +165,7 @@ pub fn check_integer_batch_column(
     if !matches!(kind.as_str(), "i" | "u" | "f") {
         let items = array.call_method0("tolist")?;
         for (index, item) in items.try_iter()?.enumerate() {
-            check_integer_scalar(&item?, name, column, index / stride)?;
+            check_integer_scalar(&item?, name, column, carried_f32, index / stride)?;
         }
         return Ok(());
     }
@@ -157,12 +179,47 @@ pub fn check_integer_batch_column(
         )?;
         if !integral.call_method0("all")?.is_truthy()? {
             let first: usize = np.call_method1("argmin", (&integral,))?.extract()?;
-            return check_integer_scalar(&array.get_item(first)?, name, column, first / stride);
+            return check_integer_scalar(
+                &array.get_item(first)?,
+                name,
+                column,
+                carried_f32,
+                first / stride,
+            );
         }
     }
     for reduction in ["argmin", "argmax"] {
         let index: usize = array.call_method0(reduction)?.extract()?;
-        check_integer_scalar(&array.get_item(index)?, name, column, index / stride)?;
+        check_integer_scalar(
+            &array.get_item(index)?,
+            name,
+            column,
+            carried_f32,
+            index / stride,
+        )?;
+    }
+    if !carried_f32 {
+        return Ok(());
+    }
+    // Mirror the f32 carry and the saturating cast into the field.
+    let (low, high) = column.bounds();
+    let carried = array
+        .call_method1("astype", ("float32",))?
+        .call_method1("astype", ("float64",))?;
+    let stored = np.call_method1("clip", (carried, low as f64, high as f64))?;
+    let exact = np.call_method1(
+        "equal",
+        (stored, array.call_method1("astype", ("float64",))?),
+    )?;
+    if !exact.call_method0("all")?.is_truthy()? {
+        let first: usize = np.call_method1("argmin", (&exact,))?.extract()?;
+        return check_integer_scalar(
+            &array.get_item(first)?,
+            name,
+            column,
+            carried_f32,
+            first / stride,
+        );
     }
     Ok(())
 }
@@ -170,22 +227,23 @@ pub fn check_integer_batch_column(
 /// Flat elements per row of `value`, whose raveled length is `len`.
 fn row_stride(value: &Bound<'_, PyAny>, len: usize) -> PyResult<usize> {
     let rows = value.len()?;
-    Ok(if rows == 0 { 1 } else { (len / rows).max(1) })
+    Ok(len.checked_div(rows).unwrap_or(1).max(1))
 }
 
 fn check_integer_items(
     item: &Bound<'_, PyAny>,
     name: &str,
     column: IntegerColumn,
+    carried_f32: bool,
     row: usize,
 ) -> PyResult<()> {
     if item.is_instance_of::<PyList>() || item.is_instance_of::<PyTuple>() {
         for inner in item.try_iter()? {
-            check_integer_items(&inner?, name, column, row)?;
+            check_integer_items(&inner?, name, column, carried_f32, row)?;
         }
         Ok(())
     } else {
-        check_integer_scalar(item, name, column, row)
+        check_integer_scalar(item, name, column, carried_f32, row)
     }
 }
 
@@ -193,6 +251,7 @@ fn check_integer_scalar(
     item: &Bound<'_, PyAny>,
     name: &str,
     column: IntegerColumn,
+    carried_f32: bool,
     row: usize,
 ) -> PyResult<()> {
     let scalar = if item.is_instance_of::<PyBool>() {
@@ -209,9 +268,14 @@ fn check_integer_scalar(
             },
         }
     };
-    check_batch_integer(name, column, scalar).map_err(|error| {
+    let checked = if carried_f32 {
+        check_batch_integer_f32(name, column, scalar)
+    } else {
+        check_batch_integer(name, column, scalar)
+    };
+    checked.map_err(|error| {
         let error = error.at_row(row);
-        if error.is_out_of_range() {
+        if error.is_value_error() {
             PyValueError::new_err(error.to_string())
         } else {
             PyTypeError::new_err(error.to_string())

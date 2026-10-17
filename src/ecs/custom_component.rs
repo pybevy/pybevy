@@ -38,6 +38,7 @@ struct CustomComponentStorage {
 // SAFETY: Py<PyAny> follows PyO3's cross-thread ownership rules. World access is
 // fenced by ValidityFlag and pinned to its owning thread.
 unsafe impl Send for CustomComponentStorage {}
+// SAFETY: shared world access checks thread-bound validity; Python access attaches first.
 unsafe impl Sync for CustomComponentStorage {}
 
 /// Python wrapper for custom component instances

@@ -1148,6 +1148,7 @@ mod tests {
         let mut strides = HashMap::new();
         strides.insert(cid, 4usize); // f32 stride
 
+        // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
         unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         assert_eq!(data[0], 11.0);
@@ -1331,6 +1332,7 @@ mod tests {
         let mut strides = HashMap::new();
         strides.insert(cid, 4usize);
 
+        // SAFETY: The live typed allocation covers the batch count and stride; writes are exclusive.
         unsafe { execute_filtered_assignment(&batches, &bytecode, &strides, false) }.unwrap();
 
         assert_eq!(data[0], 1.0); // unchanged
@@ -1495,6 +1497,7 @@ mod tests {
         let strides = HashMap::from([(cid, size_of::<f32>())]);
 
         // Should not panic on empty batches
+        // SAFETY: The iteration domain is empty, so no pointer is dereferenced.
         unsafe { execute_batch_assignment(&batches, &bytecode, &strides, false) }.unwrap();
     }
 

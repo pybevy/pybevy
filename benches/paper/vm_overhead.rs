@@ -97,6 +97,7 @@ fn bench_vm_per_entity(c: &mut Criterion) {
                         let ptr = &mut t.translation.x as *mut f32;
                         field_ptrs.push(ptr);
 
+                        // SAFETY: the query owns this live f32 field and the bytecode addresses only it.
                         unsafe {
                             vm.execute(
                                 &bytecode,
@@ -144,6 +145,7 @@ fn bench_vm_reused(c: &mut Criterion) {
                             let ptr = &mut t.translation.x as *mut f32;
                             field_ptrs.push(ptr);
 
+                            // SAFETY: the cached pointer list was rebuilt from this exclusive live query row.
                             unsafe {
                                 vm.execute(
                                     &bytecode,
@@ -188,6 +190,7 @@ fn bench_vm_fixed_array(c: &mut Criterion) {
                         let field_ptrs: [*mut u8; 1] =
                             [&mut t.translation.x as *mut f32 as *mut u8];
 
+                        // SAFETY: the stack pointer targets the exclusive live f32 query field.
                         unsafe {
                             vm.execute(&bytecode, &field_ptrs, 0);
                         }

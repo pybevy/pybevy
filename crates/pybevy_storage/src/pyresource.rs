@@ -447,6 +447,7 @@ mod tests {
         let resource = TestResource { value: 42 };
         let validity = ValidityFlag::new_read();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             ResourceStorage::borrowed_read(&resource as *const TestResource, validity.clone())
         };
@@ -461,6 +462,7 @@ mod tests {
         let resource = TestResource { value: 42 };
         let validity = ValidityFlag::new_read();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let mut storage = unsafe {
             ResourceStorage::borrowed_read(&resource as *const TestResource, validity.clone())
         };
@@ -474,6 +476,7 @@ mod tests {
         let mut resource = TestResource { value: 42 };
         let validity = ValidityFlag::new_write();
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let mut storage = unsafe {
             ResourceStorage::borrowed_write(&mut resource as *mut TestResource, validity.clone())
         };
@@ -488,6 +491,7 @@ mod tests {
         let resource = TestResource { value: 42 };
         let flag = ValidityFlag::new();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             ResourceStorage::borrowed_read(&resource as *const TestResource, flag.clone())
         };
@@ -505,6 +509,7 @@ mod tests {
         let resource = TestResource { value: 42 };
         let flag = ValidityFlag::new();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let mut storage = unsafe {
             ResourceStorage::borrowed_read(&resource as *const TestResource, flag.clone())
         };
@@ -529,6 +534,7 @@ mod tests {
         let validity = ValidityFlag::new_read();
 
         let storage =
+            // SAFETY: The local value outlives storage and is only read through this borrow.
             unsafe { ResourceStorage::borrowed_read(&resource as *const TestResource, validity) };
 
         let owned = storage.into_owned().unwrap();
@@ -540,6 +546,7 @@ mod tests {
         let resource = TestResource { value: 42 };
         let flag = ValidityFlag::new();
 
+        // SAFETY: The local value outlives storage and is only read through this borrow.
         let storage = unsafe {
             ResourceStorage::borrowed_read(&resource as *const TestResource, flag.clone())
         };
@@ -593,6 +600,7 @@ mod tests {
         let mut resource = NestedResource { x: 5.0, y: 6.0 };
         let validity = ValidityFlag::new_write();
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe {
             ResourceStorage::borrowed_write(&mut resource as *mut NestedResource, validity)
         };
@@ -607,6 +615,7 @@ mod tests {
         let mut resource = NestedResource { x: 1.0, y: 2.0 };
         let flag = ValidityFlag::new();
 
+        // SAFETY: The local value outlives storage; all guarded accesses are sequential.
         let storage = unsafe {
             ResourceStorage::borrowed_write(&mut resource as *mut NestedResource, flag.clone())
         };
@@ -628,6 +637,7 @@ mod tests {
         });
 
         let mut projected: FieldStorage<String> =
+            // SAFETY: The projection stays inside the live owner; no other mutable guard overlaps.
             unsafe { storage.borrow_projected_mut(|resource| &mut resource.value) }.unwrap();
         projected.as_mut().unwrap().push_str(" after");
 
@@ -645,11 +655,13 @@ mod tests {
             value: "value".to_string(),
         };
         let validity = ValidityFlag::new_write();
+        // SAFETY: The projection stays inside the live owner and is only read.
         let storage = unsafe {
             ResourceStorage::borrowed_write(&mut resource as *mut ProjectedResource, validity)
         };
 
         let mut projected: FieldStorage<String> =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { storage.borrow_projected_ref(|resource| &resource.value) }.unwrap();
 
         assert_eq!(projected.as_ref().unwrap().as_str(), "value");
@@ -664,6 +676,7 @@ mod tests {
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let cell = world.as_unsafe_world_cell();
+        // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage = unsafe {
             ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
         };
@@ -684,6 +697,7 @@ mod tests {
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let cell = world.as_unsafe_world_cell();
+        // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage = unsafe {
             ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
         };
@@ -706,6 +720,7 @@ mod tests {
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let cell = world.as_unsafe_world_cell();
+        // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage = unsafe {
             ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
         };

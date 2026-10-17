@@ -481,8 +481,9 @@ impl TryFrom<(&Bound<'_, PyType>, Python<'_>)> for PyComponentType {
     }
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: holders retain custom classes; native classes are retained by their modules.
 unsafe impl Send for PyComponentType {}
+// SAFETY: pointer dereferences attach to Python while the owning holder retains the class.
 unsafe impl Sync for PyComponentType {}
 
 /// Drop function for custom Python objects (components and resources).

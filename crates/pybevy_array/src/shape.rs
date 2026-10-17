@@ -270,11 +270,16 @@ impl Layout {
                 }
             }
         }
+        // Empty selections address no element; keep their base within any backing allocation.
+        let offset = if shape.contains(&0) {
+            0
+        } else {
+            usize::try_from(offset).map_err(|_| ArrayError::Overflow("layout offset"))?
+        };
         Ok(Layout {
             shape,
             strides,
-            // Checked indices keep `offset` non-negative; a negative one means the layout escaped.
-            offset: usize::try_from(offset).map_err(|_| ArrayError::Overflow("layout offset"))?,
+            offset,
         })
     }
 

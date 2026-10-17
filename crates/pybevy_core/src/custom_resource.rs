@@ -372,6 +372,7 @@ mod tests {
         let entity = world.resource_entities().get(id).unwrap();
         // SAFETY: TestObjectDescriptor describes u64 exactly.
         assert_eq!(
+            // SAFETY: This ID was registered with TestObjectDescriptor and contains an initialized u64.
             unsafe { world.get_resource_by_id(id).unwrap().deref::<u64>() },
             &10
         );
@@ -392,6 +393,7 @@ mod tests {
         assert_eq!(world.resource_entities().get(id), Some(entity));
         // SAFETY: TestObjectDescriptor describes u64 exactly.
         assert_eq!(
+            // SAFETY: This ID was registered with TestObjectDescriptor and contains an initialized u64.
             unsafe { world.get_resource_by_id(id).unwrap().deref::<u64>() },
             &20
         );
@@ -641,6 +643,7 @@ mod tests {
 
         // SAFETY: same descriptor/value invariant as above.
         assert_eq!(
+            // SAFETY: This ID was registered with TestObjectDescriptor and contains an initialized u64.
             unsafe { world.get_resource_by_id(id).unwrap().deref::<u64>() },
             &41
         );

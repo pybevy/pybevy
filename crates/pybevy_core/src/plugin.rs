@@ -173,8 +173,9 @@ struct PluginRegistry {
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn PluginBridge>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for PluginRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for PluginRegistry {}
 
 impl PluginRegistry {

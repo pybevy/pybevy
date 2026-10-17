@@ -32,4 +32,7 @@ pub use message_bridge::{
 };
 pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;
-pub use rust_batch::{PyRustComponentBatch, check_integer_batch_column, portable_f32_batch_column};
+pub use rust_batch::{
+    PyRustComponentBatch, check_f32_integer_batch_column, check_integer_batch_column,
+    portable_f32_batch_column,
+};

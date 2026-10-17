@@ -685,6 +685,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         assert!(!storage.is_owned());
@@ -701,6 +702,7 @@ mod tests {
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
 
         let mut storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         storage.as_mut().unwrap().name = "modified".into();
@@ -718,6 +720,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         // Should work while valid (with guard active)
@@ -739,6 +742,7 @@ mod tests {
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
 
         let mut storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         {
@@ -829,6 +833,7 @@ mod tests {
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         let borrowed: FieldStorage<Vec<i32>> = storage.borrow_field(|f| &f.values).unwrap();
@@ -846,6 +851,7 @@ mod tests {
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         let mut borrowed: FieldStorage<Vec<i32>> = storage.borrow_field(|f| &f.values).unwrap();
@@ -955,6 +961,7 @@ mod tests {
         let validity = flag.with_access_mode(AccessMode::Write);
 
         let storage =
+            // SAFETY: The local value outlives storage; all guarded accesses are sequential.
             unsafe { FieldStorage::borrowed(&mut field as *mut TestField, validity.clone()) };
 
         let borrowed: FieldStorage<Vec<i32>>;
@@ -988,6 +995,7 @@ mod tests {
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let comp =
+            // SAFETY: The registered type/offset match; the live World is accessed sequentially.
             unsafe { ComponentStorage::<StringHolder>::revalidating(cell, e, cid, validity) };
         // Non-Copy field reached from a re-resolving component: itself re-resolves.
         let mut field: FieldStorage<String> = comp.borrow_field(|c| &c.text).unwrap();
@@ -1078,6 +1086,7 @@ mod tests {
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         // text is the first field of a #[repr(C)] struct, so offset 0.
+        // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage: FieldStorage<String> = unsafe {
             <FieldStorage<String> as BorrowableStorage<String>>::revalidating_field(
                 cell, e, cid, 0, validity,

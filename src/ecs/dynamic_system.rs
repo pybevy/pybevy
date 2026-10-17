@@ -36,6 +36,7 @@ use pybevy_ecs::shared::{
         conflict_error_message, to_param_accesses,
     },
     parity_trace::ParityRunHandle,
+    run_ticks::RunTicks,
     state_machine_registry::validate_bare_state_resource_topology,
 };
 use pybevy_gizmos::{config::PyGizmoConfigStore, gizmos::PyGizmos};
@@ -1273,6 +1274,17 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
     None
 }
 
+/// How an observer invocation ended once its arguments were built.
+///
+/// Argument-construction failures are returned as `Err` instead, because the
+/// callback never ran.
+#[derive(Debug)]
+pub(crate) enum ObserverCall {
+    Ran,
+    Skipped,
+    Raised(PyErr),
+}
+
 /// Build arguments and invoke one observer callable using the caller's
 /// validity window and callback-local command queue.
 ///
@@ -1286,13 +1298,14 @@ pub(crate) unsafe fn execute_prepared_observer(
     callable: &Bound<'_, PyAny>,
     params: &[SystemParam],
     world_cell: UnsafeWorldCell<'_>,
+    ticks: RunTicks,
     command_queue: &mut CommandQueue,
     on_param: Py<PyOn>,
     validity: &ValidityFlag,
     command_error_sink: &CommandErrorSink,
     message_cursor_storage: &[CursorStorage],
     parity_trace: Option<ParityRunHandle>,
-) -> PyResult<()> {
+) -> PyResult<ObserverCall> {
     // SAFETY: the observer core supplies exclusive access for this callback;
     // every derived wrapper is fenced by `validity` and drops before return.
     let world = unsafe { world_cell.world_mut() };
@@ -1354,7 +1367,6 @@ pub(crate) unsafe fn execute_prepared_observer(
         if !cached.single_entity_enforced || cached.optional_single {
             continue;
         }
-        let this_run = world.change_tick();
         // SAFETY: exclusive &mut World during observer dispatch; the probe reads
         // only this cache's access and drops before any parameter borrows the World.
         let probe = unsafe {
@@ -1362,14 +1374,14 @@ pub(crate) unsafe fn execute_prepared_observer(
                 cached,
                 world.as_unsafe_world_cell(),
                 validity.clone(),
-                Tick::new(0),
-                this_run,
+                ticks.last_run,
+                ticks.this_run,
             )
         };
         let count = probe.matching_count()?;
         drop(probe);
         if count != 1 {
-            return Ok(());
+            return Ok(ObserverCall::Skipped);
         }
     }
     let mut query_cache_idx = 0usize;
@@ -1426,22 +1438,20 @@ pub(crate) unsafe fn execute_prepared_observer(
                 args_buffer.push(obj.into_any());
             }
             SystemParamType::Query { param: query_param } => {
-                let this_run = world.change_tick();
                 let cell = world.as_unsafe_world_cell();
                 let cached_ref: &CachedQuery = &transient_caches[query_cache_idx];
                 query_cache_idx += 1;
                 if query_param.single_entity_enforced {
                     // SAFETY: exclusive &mut World during observer dispatch; the cached
                     // state and cell reference this same World. `transient_caches` keeps
-                    // the box alive until after the Python call. No prior run for
-                    // observers, so last_run = Tick(0).
+                    // the box alive until after the Python call.
                     let single_query = unsafe {
                         PySingleQuery::new(
                             cached_ref,
                             cell,
                             validity.clone(),
-                            Tick::new(0),
-                            this_run,
+                            ticks.last_run,
+                            ticks.this_run,
                         )
                     };
                     if query_param.optional_single && single_query.matching_count(py)? != 1 {
@@ -1453,7 +1463,13 @@ pub(crate) unsafe fn execute_prepared_observer(
                 } else {
                     // SAFETY: see above.
                     let query_runtime = unsafe {
-                        PyQueryIter::new(cached_ref, cell, validity.clone(), Tick::new(0), this_run)
+                        PyQueryIter::new(
+                            cached_ref,
+                            cell,
+                            validity.clone(),
+                            ticks.last_run,
+                            ticks.this_run,
+                        )
                     };
                     let obj = Py::new(py, query_runtime).expect("Failed to create PyQueryIter");
                     args_buffer.push(obj.into_any());
@@ -1582,14 +1598,13 @@ pub(crate) unsafe fn execute_prepared_observer(
                 let cached =
                     unsafe { CachedPyView::build(world, param, custom_component_ids.as_ref(), py) }
                         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-                let this_run = world.change_tick();
                 // SAFETY: the cache and cell name this exclusive live World,
                 // while validity remains active through the observer call.
                 let py_view = unsafe {
                     PyView::new_cached(
                         cached,
-                        Tick::new(0),
-                        this_run,
+                        ticks.last_run,
+                        ticks.this_run,
                         world.as_unsafe_world_cell(),
                         validity.clone(),
                     )
@@ -1693,12 +1708,15 @@ pub(crate) unsafe fn execute_prepared_observer(
     }
 
     // Call the Python function
-    if args_buffer.is_empty() {
-        callable.call0()?;
+    let called = if args_buffer.is_empty() {
+        callable.call0()
     } else {
         let tuple = PyTuple::new(py, &args_buffer).expect("Failed to create PyTuple");
-        callable.call1(tuple)?;
-    }
+        callable.call1(tuple)
+    };
 
-    Ok(())
+    Ok(match called {
+        Ok(_) => ObserverCall::Ran,
+        Err(error) => ObserverCall::Raised(error),
+    })
 }

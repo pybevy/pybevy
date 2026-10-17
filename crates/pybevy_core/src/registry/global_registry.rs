@@ -46,8 +46,9 @@ struct GlobalBridgeRegistry {
     by_type_id: HashMap<TypeId, Arc<dyn ComponentBridge>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for GlobalBridgeRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for GlobalBridgeRegistry {}
 
 /// Get or initialize the global registry
@@ -139,8 +140,9 @@ struct GlobalResourceBridgeRegistry {
     by_type_id: HashMap<TypeId, Arc<dyn ResourceBridge>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for GlobalResourceBridgeRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for GlobalResourceBridgeRegistry {}
 
 /// Get or initialize the global resource registry
@@ -242,8 +244,9 @@ struct GlobalAssetBridgeRegistry {
     by_name: HashMap<&'static str, Arc<dyn AssetBridge>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for GlobalAssetBridgeRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for GlobalAssetBridgeRegistry {}
 
 /// Get or initialize the global asset registry
@@ -342,8 +345,9 @@ struct TypeIdRegistry {
     by_py_type: HashMap<*const PyTypeObject, TypeId>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for TypeIdRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for TypeIdRegistry {}
 
 /// Get or initialize the TypeId registry
@@ -395,8 +399,9 @@ struct GlobalMessageBridgeRegistry {
     by_type_id: HashMap<TypeId, Arc<dyn MessageBridge>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for GlobalMessageBridgeRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for GlobalMessageBridgeRegistry {}
 
 /// Get or initialize the global message registry
@@ -482,8 +487,9 @@ struct GlobalBatchBridgeRegistry {
     by_py_type: HashMap<*const PyTypeObject, Arc<dyn BatchComponent>>,
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Send for GlobalBatchBridgeRegistry {}
+// SAFETY: Pointer keys are never dereferenced here; access to registry maps is locked.
 unsafe impl Sync for GlobalBatchBridgeRegistry {}
 
 /// Get or initialize the global batch registry
@@ -543,6 +549,7 @@ pub struct ComponentBatchMeta {
 
 // SAFETY: ComponentBatchMeta contains only static references and function pointers
 unsafe impl Send for ComponentBatchMeta {}
+// SAFETY: Metadata contains static names and function pointers, with no owned Python state.
 unsafe impl Sync for ComponentBatchMeta {}
 
 /// Global registry for component batch metadata, keyed by Python type pointer (as usize).

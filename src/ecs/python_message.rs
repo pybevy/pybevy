@@ -221,9 +221,9 @@ pub(crate) unsafe fn resolve_from_cell(
     world: UnsafeWorldCell<'_>,
     type_ptr: *const PyTypeObject,
 ) -> PyResult<ResolvedPythonMessage> {
-    // SAFETY: upheld by the caller and restricted to the declared resources.
     let key = type_key(type_ptr);
     let (channel, qualified_name) = {
+        // SAFETY: the caller guarantees access to the live, declared message registry.
         let registry = unsafe { world.get_resource::<MessageRegistryCore>() }
             .ok_or_else(|| PyTypeError::new_err("Message registry is not initialized"))?;
         let (channel, metadata) = registry

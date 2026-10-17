@@ -413,6 +413,8 @@ pub enum BatchIntegerErrorKind {
     OutOfRange(IntegerColumn),
     /// Fractional, NaN, infinite or non-numeric; adapters raise `TypeError`.
     NotInteger,
+    /// Changed by the `f32` column a batch carries; adapters raise `ValueError`.
+    InexactFloat32,
 }
 
 /// An integer `batch` element the target column cannot hold exactly.
@@ -427,6 +429,11 @@ pub struct BatchIntegerError {
 impl BatchIntegerError {
     pub fn is_out_of_range(&self) -> bool {
         matches!(self.kind, BatchIntegerErrorKind::OutOfRange(_))
+    }
+
+    /// Whether adapters raise `ValueError` rather than `TypeError`.
+    pub fn is_value_error(&self) -> bool {
+        !matches!(self.kind, BatchIntegerErrorKind::NotInteger)
     }
 
     /// The same error reported at `row` of the column.
@@ -446,6 +453,10 @@ impl fmt::Display for BatchIntegerError {
                 write!(f, "{name} must be within the {} range", column.range_name())?
             }
             BatchIntegerErrorKind::NotInteger => write!(f, "{name} must be an integer")?,
+            BatchIntegerErrorKind::InexactFloat32 => write!(
+                f,
+                "{name} must be exactly representable as a 32-bit float in a batch column"
+            )?,
         }
         match row {
             Some(row) => write!(f, " (got {value} at row {row})"),
@@ -488,6 +499,37 @@ pub fn check_batch_integer(
         Some(integer) if (low..=high).contains(&integer) => Ok(()),
         _ => Err(error(value, BatchIntegerErrorKind::OutOfRange(column))),
     }
+}
+
+/// [`check_batch_integer`] for a column carried as `f32` and cast into the
+/// field, which must store the value exactly.
+pub fn check_batch_integer_f32(
+    name: &str,
+    column: IntegerColumn,
+    value: BatchScalar,
+) -> Result<(), BatchIntegerError> {
+    check_batch_integer(name, column, value.clone())?;
+    let integer = match value {
+        BatchScalar::Int(integer) => integer,
+        BatchScalar::Float(float) => float as i128,
+        BatchScalar::BigInt(_) | BatchScalar::Other(_) => return Ok(()),
+    };
+    let carried = integer as f32;
+    let stored = match column {
+        IntegerColumn::I32 => carried as i32 as i128,
+        IntegerColumn::I64 => carried as i64 as i128,
+        IntegerColumn::U32 => carried as u32 as i128,
+        IntegerColumn::U64 => carried as u64 as i128,
+    };
+    if stored == integer {
+        return Ok(());
+    }
+    Err(BatchIntegerError {
+        name: name.to_string(),
+        row: None,
+        value,
+        kind: BatchIntegerErrorKind::InexactFloat32,
+    })
 }
 
 /// Check values bound for a View field before any selected row is written.
@@ -1131,6 +1173,35 @@ mod tests {
             .as_f32()
             .is_none()
         );
+    }
+
+    #[test]
+    fn f32_integer_check_rejects_only_rounded_values() {
+        let check = |value| check_batch_integer_f32("C.f", IntegerColumn::U32, value);
+        for exact in [16_777_216, 33_554_432, i128::from(u32::MAX)] {
+            assert!(check(BatchScalar::Int(exact)).is_ok(), "{exact}");
+        }
+        assert!(check(BatchScalar::Float(16_777_216.0)).is_ok());
+
+        let rounded = check(BatchScalar::Int(16_777_217)).unwrap_err();
+        assert!(rounded.is_value_error());
+        assert!(!rounded.is_out_of_range());
+        assert_eq!(
+            rounded.at_row(1).to_string(),
+            "C.f must be exactly representable as a 32-bit float in a batch column \
+             (got 16777217 at row 1)"
+        );
+
+        let out_of_range = check(BatchScalar::Int(-1)).unwrap_err();
+        assert!(out_of_range.is_out_of_range());
+        let fraction = check(BatchScalar::Float(0.5)).unwrap_err();
+        assert!(!fraction.is_value_error());
+
+        let signed =
+            |value| check_batch_integer_f32("C.f", IntegerColumn::I32, BatchScalar::Int(value));
+        assert!(signed(i32::MAX.into()).is_ok());
+        assert!(signed(i32::MIN.into()).is_ok());
+        assert!(signed(-16_777_217).is_err());
     }
 
     #[test]

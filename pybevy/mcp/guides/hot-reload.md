@@ -291,6 +291,11 @@ set_component {"entity": "sun", "component": "PointLight", "fields": {"intensity
 
 ## Error Recovery
 
+Rejected component and resource schema edits leave the last successful layout
+and cached classes intact. Reverting to that schema keeps a subsequent Partial
+reload partial and preserves live state. A successfully loaded schema change
+still escalates to Full.
+
 If a reload introduces a Python error:
 1. Import and entrypoint failures keep the previous world running. A
    non-escalated Partial registration failure does too. Full reload clears the
@@ -376,6 +381,10 @@ the code of the Startup system that registers them: adding or removing a
 `world.add_observer(...)` call edits that system and escalates to Full on its
 own. Editing only the observer body is picked up without escalation, because
 observer callables are re-resolved by module and function name each generation.
+
+A re-registered observer starts with fresh change-detection history: its first
+run after the reload treats every matching entity as `Changed`/`Added`. Kept
+observers keep their history.
 
 Full reload clears the whole Python observer registry before Startup re-runs, so
 a `world.add_observer` registration is replaced rather than duplicated. Entity

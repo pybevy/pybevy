@@ -24,6 +24,7 @@ use super::{
     observer::{PyAdd, PyDespawn, PyDiscard, PyInsert, PyOn, PyRemove},
     observer_registry::{ObserverEntry, ObserverRegistry},
     resource::is_resource_entity,
+    world::PyWorld,
 };
 
 type NoStructuralInsert = fn(&mut World) -> bool;
@@ -319,14 +320,14 @@ pub(crate) fn despawn_recursive(world: &mut World, root: Entity) -> bool {
             continue;
         }
         let children = world
-            .get::<bevy::ecs::hierarchy::Children>(entity)
+            .get::<Children>(entity)
             .map(|children| children.iter().collect::<Vec<_>>())
             .unwrap_or_default();
         // Reverse the stack push so traversal follows Bevy's stored child order.
         pending.extend(children.into_iter().rev());
         snapshots.push(RecursiveDespawnSnapshot::new(
             entity,
-            super::world::PyWorld::get_entity_data_names(world, entity),
+            PyWorld::get_entity_data_names(world, entity),
         ));
     }
     if snapshots.is_empty() && !is_resource_entity(world, root) {

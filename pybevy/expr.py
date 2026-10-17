@@ -5,7 +5,7 @@ This module provides Python-side expression building that compiles to
 native Rust bytecode for high-performance batch operations.
 """
 
-from typing import Any, Union
+from typing import Any, Union, overload
 
 _READ_ONLY_VIEW_ASSIGNMENT = (
     "Cannot assign through a read-only View column; use column_mut() with View[Mut[T]]"
@@ -71,8 +71,18 @@ class Expr:
         """Right subtraction: other - self"""
         return Expr(op="sub", args=[other, self])
 
-    def __mul__(self, other: Union["Expr", float, int]) -> "Expr":
-        """Multiplication: self * other"""
+    @overload
+    def __mul__(self, other: "Expr | float | int") -> "Expr": ...
+
+    @overload
+    def __mul__(self, other: "Vec3Expr | Vec3Expression") -> "Vec3Expression": ...
+
+    def __mul__(
+        self, other: "Expr | float | int | Vec3Expr | Vec3Expression"
+    ) -> "Expr | Vec3Expression":
+        """Multiply scalars directly or distribute over a vector expression."""
+        if isinstance(other, Vec3Expr | Vec3Expression):
+            return other.__rmul__(self)
         return Expr(op="mul", args=[self, other])
 
     def __rmul__(self, other: Union["Expr", float, int]) -> "Expr":

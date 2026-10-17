@@ -46,6 +46,7 @@ class McpSession:
     bridge: McpBridge
     lock: threading.Lock = field(default_factory=threading.Lock)
     last_access: float = field(default_factory=time.monotonic)
+    closed: bool = False
 
 
 class SessionStore:
@@ -55,12 +56,15 @@ class SessionStore:
         self._sessions: dict[str, McpSession] = {}
         self._lock = threading.Lock()
         self._record = record
+        self._closed = False
 
     def create(self) -> McpSession:
-        session_id = uuid.uuid4().hex[:16]
-        bridge = McpBridge(protocol_version="2025-03-26", record=self._record)
-        session = McpSession(session_id=session_id, bridge=bridge)
         with self._lock:
+            if self._closed:
+                raise RuntimeError("MCP server is shutting down")
+            session_id = uuid.uuid4().hex[:16]
+            bridge = McpBridge(protocol_version="2025-03-26", record=self._record)
+            session = McpSession(session_id=session_id, bridge=bridge)
             self._sessions[session_id] = session
         logger.info("Created session %s", session_id)
         return session
@@ -77,9 +81,13 @@ class SessionStore:
             session = self._sessions.pop(session_id, None)
         if session is not None:
             logger.info("Removed session %s", session_id)
-            if session.bridge._recorder:
-                session.bridge._recorder.close()
-            session.bridge._stop_subprocess()
+            with session.lock:
+                session.closed = True
+                try:
+                    if session.bridge._recorder:
+                        session.bridge._recorder.close()
+                finally:
+                    session.bridge._stop_subprocess()
         return session
 
     def sweep_expired(self) -> None:
@@ -95,6 +103,7 @@ class SessionStore:
 
     def shutdown_all(self) -> None:
         with self._lock:
+            self._closed = True
             session_ids = list(self._sessions.keys())
         for sid in session_ids:
             self.remove(sid)
@@ -207,7 +216,11 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, ValueError, RecursionError) as e:
             self._json_response(
                 200,
-                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": f"Parse error: {e}"}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": f"Parse error: {e}"},
+                },
             )
             return
 
@@ -243,7 +256,11 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         )
 
         if is_initialize:
-            session = self.store.create()
+            try:
+                session = self.store.create()
+            except RuntimeError as error:
+                self._error(503, str(error))
+                return
         elif session_id is not None:
             session = self.store.get(session_id)
             if session is None:
@@ -257,6 +274,9 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         notifications: list[JsonDict] = []
 
         with session.lock:
+            if session.closed:
+                self._error(404, "Session expired or unknown")
+                return
             for msg in messages:
                 if not isinstance(msg, dict):
                     responses.append(_invalid_request())

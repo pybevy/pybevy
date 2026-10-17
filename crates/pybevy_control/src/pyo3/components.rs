@@ -50,6 +50,11 @@ use crate::{
 
 type RemoveComponentLifecycleHook = fn(&mut World, Entity, *const PyTypeObject);
 type DespawnEntityLifecycleHook = fn(&mut World, Entity);
+type NativeComponentMutation = (
+    Py<PyAny>,
+    Option<String>,
+    Option<serde_json::Map<String, serde_json::Value>>,
+);
 
 static REMOVE_COMPONENT_HOOK: OnceLock<RemoveComponentLifecycleHook> = OnceLock::new();
 
@@ -790,7 +795,7 @@ fn set_component_python(
     let optional_types = optional_field_types(world, bridge.bevy_type_id());
 
     let (owned, replacement_variant, echoes_dropped) = Python::attach(
-        |py| -> Result<(Py<PyAny>, Option<String>, Option<serde_json::Map<_, _>>), ControlError> {
+        |py| -> Result<NativeComponentMutation, ControlError> {
             let (_read_window, validity) = ValidityGuard::read();
             // SAFETY: `world` is live for this call, the wrapper is fenced by
             // `_read_window`, and only read access is requested before copying.

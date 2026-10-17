@@ -128,8 +128,7 @@ pub fn get_entity(
                         bridge.bevy_type_id(),
                         &name,
                         py_obj.bind(py),
-                        reflected_enum,
-                        reflected_variant,
+                        (reflected_enum, reflected_variant),
                     ))
                 })
                 .unwrap_or_else(|| serde_json::Value::String("<opaque>".to_string()));
@@ -262,8 +261,7 @@ fn native_value_fields(
     type_id: TypeId,
     component: &str,
     value: &Bound<'_, PyAny>,
-    reflected_enum: bool,
-    reflected_variant: Option<String>,
+    (reflected_enum, reflected_variant): (bool, Option<String>),
 ) -> serde_json::Map<String, serde_json::Value> {
     if let Some(serde_json::Value::Object(fields)) =
         reference_fields_for_value(world, entity, component, value)
@@ -304,8 +302,7 @@ pub(crate) fn native_component_fields(
         bridge.bevy_type_id(),
         bridge.name(),
         value,
-        reflected_enum,
-        reflected_variant,
+        (reflected_enum, reflected_variant),
     )
 }
 

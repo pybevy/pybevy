@@ -275,6 +275,10 @@ class Enemy(Component):
     pass
 ```
 
+`World.get()` and `World.get_mut()` reject changes to a registered custom
+component's storage mode or ordered field schema with `ValueError`. Preserve
+that schema for a live World; rebuild the scene when changing its layout.
+
 Field access works directly in queries:
 
 ```python
@@ -1026,6 +1030,12 @@ def setup(commands: Commands) -> None:
 `World.remove_resource(T)` returns an owned value or `None`;
 `Commands.remove_resource(T)` queues removal and returns nothing.
 
+`World.init_resource(T)` and `App.init_resource(T)` preserve a present value
+without running its constructor or marking it changed. They construct a default
+only when the resource is absent. Missing `AssetServer` lookups fail immediately;
+required `Res[AssetServer]` and `ResMut[AssetServer]` parameters fail before
+calling the system. Optional resource parameters still receive `None`.
+
 Custom resources from `World.resource(T)` are shallow read-only handles that
 expire after the World scope. Use `World.resource_mut(T)` for field writes in
 exclusive systems, `app.world(...)` callbacks, and `run_code`, or `copy.copy` /
@@ -1061,6 +1071,9 @@ custom resource retain the same shallow live-alias behavior as its other nested
 Python values. Merely choosing iteration does not change the existing custom
 resource tick policy: `Res[T]` does not mark, and `ResMut[T]` remains
 conservatively marked when the parameter is materialized.
+
+Custom resource property getters and setters may reenter the same valid
+`ResMut` proxy to read or assign fields.
 
 A native (engine) resource taken as `ResMut[T]` in a system is marked changed
 only when the system writes it, including nested writes such as
@@ -1161,8 +1174,26 @@ def track_removed(removed: RemovedComponents[Health]) -> None:
         print("Health removed from", entity)
 ```
 
-Read removals in a regular system or observer; run conditions reject
-`RemovedComponents` because consuming it advances its cursor.
+Run conditions may read removals too. A condition's `RemovedComponents` has its
+own cursor, so it does not consume removals that systems read:
+
+```python
+from pybevy.prelude import *
+
+@component
+class Health(Component):
+    value: int = 100
+
+@condition
+def any_health_removed(removed: RemovedComponents[Health]) -> bool:
+    return len(list(removed.read())) > 0
+
+@system
+def on_health_removed() -> None:
+    print("some Health was removed")
+
+app = App().add_systems(Update, on_health_removed.run_if(any_health_removed))
+```
 
 For a custom Python message system that must read, mutate, and write the same channel, use
 `MessageMutator[T]`. It combines the reader and writer methods above. Messages yielded from it are

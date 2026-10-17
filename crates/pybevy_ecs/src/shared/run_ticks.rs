@@ -3,8 +3,8 @@
 use bevy::ecs::change_detection::Tick;
 
 /// The change-detection window for one system run: `last_run` opens it and
-/// `this_run` is the freshly advanced world tick every query, view, and
-/// write-back observes.
+/// `this_run` is the run's own tick, which every query, view, and write-back
+/// observes.
 #[derive(Clone, Copy, Debug)]
 pub struct RunTicks {
     pub last_run: Tick,

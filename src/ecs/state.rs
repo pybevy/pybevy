@@ -32,7 +32,10 @@ use pybevy_core::{
     resource_initializer,
 };
 use pybevy_ecs::shared::{
-    schedule::{StateMachineId, StateScheduleKind, StateScheduleLabel, TransitionScheduleLabel},
+    schedule::{
+        StateMachineId, StateMemberKey, StateScheduleKind, StateScheduleLabel,
+        TransitionScheduleLabel,
+    },
     state_machine_registry::{
         StateMachineIdentityRegistry, StateMachineRegisterOutcome, StateResourceKind, StateTypeKey,
     },
@@ -510,10 +513,28 @@ fn state_type_qualified_name(state_type: &Bound<'_, PyType>) -> PyResult<String>
     })
 }
 
+/// Exact identity of one state member within its machine.
+fn state_member_key(state: &Bound<'_, PyAny>) -> PyResult<StateMemberKey> {
+    match state.getattr("_name_")?.extract::<Option<String>>()? {
+        Some(name) => Ok(StateMemberKey::Named(name)),
+        None => Ok(StateMemberKey::Unnamed(
+            state.getattr("_value_")?.repr()?.to_string(),
+        )),
+    }
+}
+
+/// Display text for one state member: its name, or its repr when unnamed.
+fn state_member_display(state: &Bound<'_, PyAny>) -> PyResult<String> {
+    match state.getattr("_name_")?.extract::<Option<String>>()? {
+        Some(name) => Ok(name),
+        None => Ok(state.repr()?.to_string()),
+    }
+}
+
 fn state_member_qualified_name(state: &Bound<'_, PyAny>) -> PyResult<String> {
     let state_type = state_member_type(state.py(), state)?;
     let qualified_type = state_type_qualified_name(state_type.bind(state.py()))?;
-    let member = state.getattr("name")?.extract::<String>()?;
+    let member = state_member_display(state)?;
     Ok(format!("{qualified_type}.{member}"))
 }
 
@@ -663,7 +684,16 @@ pub(crate) fn retained_state_member_missing(
     };
     let members = state_type.getattr("__members__")?;
     for value in [Some(current), pending].into_iter().flatten() {
-        let name = value.bind(py).getattr("name")?.extract::<String>()?;
+        let Some(name) = value
+            .bind(py)
+            .getattr("_name_")?
+            .extract::<Option<String>>()?
+        else {
+            if remap_state_value(py, &value, state_type).is_err() {
+                return Ok(true);
+            }
+            continue;
+        };
         if !members.contains(name)? {
             return Ok(true);
         }
@@ -676,8 +706,11 @@ fn remap_state_value(
     value: &Py<PyAny>,
     state_type: &Bound<'_, PyType>,
 ) -> PyResult<Py<PyAny>> {
-    let member_name = value.bind(py).getattr("name")?.extract::<String>()?;
-    Ok(state_type.get_item(member_name)?.unbind())
+    let value = value.bind(py);
+    match value.getattr("_name_")?.extract::<Option<String>>()? {
+        Some(name) => Ok(state_type.get_item(name)?.unbind()),
+        None => Ok(state_type.call1((value.getattr("_value_")?,))?.unbind()),
+    }
 }
 
 fn state_values_match(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -691,9 +724,7 @@ fn state_values_match(left: &Bound<'_, PyAny>, right: &Bound<'_, PyAny>) -> PyRe
         return Ok(false);
     }
 
-    let left_name = left.getattr("name")?.extract::<String>()?;
-    let right_name = right.getattr("name")?.extract::<String>()?;
-    Ok(left_name == right_name)
+    Ok(state_member_key(left)? == state_member_key(right)?)
 }
 
 pub(crate) fn untyped_state_resource_kind(
@@ -976,8 +1007,8 @@ pub(crate) fn canonicalize_state_schedule_label(
         .and_then(|registry| registry.canonical_id(label.machine_id().get()))
         .unwrap_or(label.machine_id());
     match label.kind() {
-        StateScheduleKind::Enter => StateScheduleLabel::on_enter(machine_id, label.state_hash()),
-        StateScheduleKind::Exit => StateScheduleLabel::on_exit(machine_id, label.state_hash()),
+        StateScheduleKind::Enter => StateScheduleLabel::on_enter(machine_id, label.member()),
+        StateScheduleKind::Exit => StateScheduleLabel::on_exit(machine_id, label.member()),
     }
 }
 
@@ -989,7 +1020,7 @@ pub(crate) fn canonicalize_transition_schedule_label(
         .get_resource::<PyStateMachineRegistry>()
         .and_then(|registry| registry.canonical_id(label.machine_id().get()))
         .unwrap_or(label.machine_id());
-    TransitionScheduleLabel::new(machine_id, label.exit_hash(), label.enter_hash())
+    TransitionScheduleLabel::new(machine_id, label.exit_member(), label.enter_member())
 }
 
 /// Helper methods for Python schedule types to get their Bevy labels
@@ -997,8 +1028,10 @@ impl PyOnEnterSchedule {
     pub fn to_bevy_label(&self, py: Python) -> PyResult<StateScheduleLabel> {
         let state_value = self.state_value.bind(py);
         let machine_id = state_machine_id(&state_value.get_type());
-        let hash = state_value.hash()? as u64;
-        Ok(StateScheduleLabel::on_enter(machine_id, hash))
+        Ok(StateScheduleLabel::on_enter(
+            machine_id,
+            state_member_key(state_value)?,
+        ))
     }
 
     pub(crate) fn display_name(&self, py: Python<'_>) -> PyResult<String> {
@@ -1013,8 +1046,10 @@ impl PyOnExitSchedule {
     pub fn to_bevy_label(&self, py: Python) -> PyResult<StateScheduleLabel> {
         let state_value = self.state_value.bind(py);
         let machine_id = state_machine_id(&state_value.get_type());
-        let hash = state_value.hash()? as u64;
-        Ok(StateScheduleLabel::on_exit(machine_id, hash))
+        Ok(StateScheduleLabel::on_exit(
+            machine_id,
+            state_member_key(state_value)?,
+        ))
     }
 
     pub(crate) fn display_name(&self, py: Python<'_>) -> PyResult<String> {
@@ -1029,10 +1064,10 @@ impl PyOnTransitionSchedule {
     pub fn to_bevy_label(&self, py: Python) -> PyResult<TransitionScheduleLabel> {
         let exited = self.exited.bind(py);
         let machine_id = state_machine_id(&exited.get_type());
-        let exit_hash = exited.hash()? as u64;
-        let enter_hash = self.entered.bind(py).hash()? as u64;
         Ok(TransitionScheduleLabel::new(
-            machine_id, exit_hash, enter_hash,
+            machine_id,
+            state_member_key(exited)?,
+            state_member_key(self.entered.bind(py))?,
         ))
     }
 
@@ -1289,11 +1324,11 @@ fn apply_transition_for_state(
             let state = state_py.bind(py).borrow();
             state.current_value(py)
         };
-        let hash = current_state.bind(py).hash()? as u64;
+        let member = state_member_key(current_state.bind(py))?;
         StateTransitionPlan::initial_enter().run(|step| {
             match step {
                 StateTransitionStep::RunEnter => {
-                    let enter_label = StateScheduleLabel::on_enter(machine_id, hash);
+                    let enter_label = StateScheduleLabel::on_enter(machine_id, &member);
                     if world.resource::<Schedules>().contains(enter_label.clone()) {
                         world.try_run_schedule(enter_label).ok();
                     }
@@ -1318,9 +1353,8 @@ fn apply_transition_for_state(
         let state = state_py.bind(py).borrow();
         state.current_value(py)
     };
-    // Get hash values for schedule lookup
-    let old_hash = current_state.bind(py).hash()? as u64;
-    let new_hash = pending_transition.bind(py).hash()? as u64;
+    let old_member = state_member_key(current_state.bind(py))?;
+    let new_member = state_member_key(pending_transition.bind(py))?;
     let conditional_identity = !allow_same_state_transitions
         && state_values_match(current_state.bind(py), pending_transition.bind(py))?;
     let plan = if conditional_identity {
@@ -1336,7 +1370,7 @@ fn apply_transition_for_state(
                 state.set_value(pending_transition.clone_ref(py));
             }
             StateTransitionStep::RunExit => {
-                let exit_label = StateScheduleLabel::on_exit(machine_id, old_hash);
+                let exit_label = StateScheduleLabel::on_exit(machine_id, &old_member);
                 if world.resource::<Schedules>().contains(exit_label.clone()) {
                     world.try_run_schedule(exit_label).ok();
                 }
@@ -1345,7 +1379,8 @@ fn apply_transition_for_state(
                 despawn_matching_entities(py, world, StateScopedMarker::Exit, &current_state)?;
             }
             StateTransitionStep::RunTransition => {
-                let transition_label = TransitionScheduleLabel::new(machine_id, old_hash, new_hash);
+                let transition_label =
+                    TransitionScheduleLabel::new(machine_id, &old_member, &new_member);
                 if world
                     .resource::<Schedules>()
                     .contains(transition_label.clone())
@@ -1354,7 +1389,7 @@ fn apply_transition_for_state(
                 }
             }
             StateTransitionStep::RunEnter => {
-                let enter_label = StateScheduleLabel::on_enter(machine_id, new_hash);
+                let enter_label = StateScheduleLabel::on_enter(machine_id, &new_member);
                 if world.resource::<Schedules>().contains(enter_label.clone()) {
                     world.try_run_schedule(enter_label).ok();
                 }

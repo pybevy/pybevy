@@ -1412,8 +1412,8 @@ mod tests {
                 StorageError::InvalidAccess
             )))
         ));
-        // SAFETY: invalidity is checked before the world cell is accessed.
         assert!(matches!(
+            // SAFETY: invalidity is checked before the world cell is accessed.
             unsafe { runtime.world_ptr() },
             Err(QueryRuntimeError::Storage(StorageError::InvalidAccess))
         ));

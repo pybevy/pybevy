@@ -30,6 +30,7 @@ pub struct PyAssetTypeParam {
 
 // SAFETY: the registry retains the native type; Py owns the redirect class.
 unsafe impl Send for PyAssetTypeParam {}
+// SAFETY: class access attaches to Python; the retained class keeps the pointer live.
 unsafe impl Sync for PyAssetTypeParam {}
 
 impl Clone for PyAssetTypeParam {

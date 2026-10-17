@@ -261,6 +261,11 @@ def batch_update(
     light.intensity = 500.0 + expr.cos(t) * 200.0
 ```
 
+For View Vec3 expressions, scalar multiplication accepts either operand order:
+`column.scale.set(column.translation.x * column.translation)` evaluates the
+factor separately for each entity. Compound scalar and vector expressions also
+work; assign the vector through `.set()`.
+
 Key View rules:
 - Vector subfields accept only their declared coordinates (`x`/`y` for Vec2,
   `x`/`y`/`z` for Vec3, and `x`/`y`/`z`/`w` for Quat); a typo raises

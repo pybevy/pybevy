@@ -1526,20 +1526,17 @@ holder = BoxHolder()
                 r#"
 import sys, types
 
-if "pybevy" not in sys.modules:
-    sys.modules["pybevy"] = types.ModuleType("pybevy")
-ui_mod = sys.modules.get("pybevy.ui")
-if ui_mod is None:
-    ui_mod = types.ModuleType("pybevy.ui")
-    sys.modules["pybevy.ui"] = ui_mod
+module_name = "pybevy._control_required_plane_fixture"
+fixture_module = types.ModuleType(module_name)
 
-class HalfSpace:
+class RequiredHalfSpace:
     normal_d = None
     def __init__(self, normal_d):
         self.normal_d = normal_d
 
-HalfSpace.__module__ = "pybevy.ui"
-ui_mod.HalfSpace = HalfSpace
+RequiredHalfSpace.__module__ = module_name
+fixture_module.RequiredHalfSpace = RequiredHalfSpace
+sys.modules[module_name] = fixture_module
 
 class FrustumHolder:
     def __init__(self):
@@ -1550,8 +1547,8 @@ class FrustumHolder:
     @half_spaces.setter
     def half_spaces(self, value):
         for item in value:
-            if not isinstance(item, HalfSpace):
-                raise TypeError("'dict' object is not an instance of 'HalfSpace'")
+            if not isinstance(item, RequiredHalfSpace):
+                raise TypeError("'dict' object is not an instance of 'RequiredHalfSpace'")
         self._half_spaces = list(value)
 
 frustum = FrustumHolder()
@@ -1565,7 +1562,10 @@ frustum = FrustumHolder()
 
             let error = convert_field_value(py, &frustum, "half_spaces", &serde_json::json!([{}]))
                 .unwrap_err();
-            assert_eq!(error, "element 0: HalfSpace requires field 'normal_d'");
+            assert_eq!(
+                error,
+                "element 0: RequiredHalfSpace requires field 'normal_d'"
+            );
 
             let field_value = serde_json::json!([{"normal_d": [1.0, 2.0, 3.0, 4.0]}]);
             let result = convert_field_value(py, &frustum, "half_spaces", &field_value).unwrap();
@@ -1574,10 +1574,12 @@ frustum = FrustumHolder()
             let element = list.get_item(0).unwrap();
             assert_eq!(
                 element.get_type().name().unwrap().to_string_lossy(),
-                "HalfSpace"
+                "RequiredHalfSpace"
             );
             let normal_d = element.getattr("normal_d").unwrap();
             assert_eq!(normal_d.get_item(0).unwrap().extract::<f64>().unwrap(), 1.0);
+            py.run(c"sys.modules.pop(module_name)", Some(&globals), None)
+                .unwrap();
         });
     }
 

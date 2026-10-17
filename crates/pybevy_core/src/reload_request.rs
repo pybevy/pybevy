@@ -181,7 +181,7 @@ impl CustomComponentInfo {
 /// Metadata for a registered custom Python resource.
 #[derive(Debug)]
 pub struct CustomResourceEntry {
-    /// Python type pointer (stable for interpreter lifetime)
+    /// Python class address, retained by `type_object` when dereferenced.
     pub type_ptr: *const PyTypeObject,
     /// Owned reference to the same class. User `@resource` classes are heap
     /// types, so a full reload can free them while `type_ptr` still points at
@@ -203,8 +203,9 @@ impl Clone for CustomResourceEntry {
     }
 }
 
-// SAFETY: PyTypeObject pointers are stable for the lifetime of the Python interpreter
+// SAFETY: The optional Py handle retains the class; pointers are read only while attached.
 unsafe impl Send for CustomResourceEntry {}
+// SAFETY: The optional Py handle retains the class; pointers are read only while attached.
 unsafe impl Sync for CustomResourceEntry {}
 
 /// Registry of custom Python resources, accessible from MCP handlers.

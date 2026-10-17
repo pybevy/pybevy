@@ -45,6 +45,7 @@ fn bench_vm_alloc_per_entity(c: &mut Criterion) {
                         // Direct allocation per entity (old pattern)
                         let mut vm = VM::new();
                         let ptr = value as *mut f32 as *mut u8;
+                        // SAFETY: The pointer is to this live exclusive f32; bytecode reads and writes only it.
                         unsafe {
                             vm.execute(&bytecode, &[ptr], i as u64);
                         }
@@ -78,6 +79,7 @@ fn bench_vm_pooled(c: &mut Criterion) {
                         let vm = pooled.get_mut();
                         vm.reset();
                         let ptr = value as *mut f32 as *mut u8;
+                        // SAFETY: The pointer is to this live exclusive f32; bytecode reads and writes only it.
                         unsafe {
                             vm.execute(&bytecode, &[ptr], i as u64);
                         }
@@ -110,6 +112,7 @@ fn bench_vm_single_reuse(c: &mut Criterion) {
                     for (i, value) in values.iter_mut().enumerate() {
                         vm.reset();
                         let ptr = value as *mut f32 as *mut u8;
+                        // SAFETY: The pointer is to this live exclusive f32; bytecode reads and writes only it.
                         unsafe {
                             vm.execute(&bytecode, &[ptr], i as u64);
                         }
@@ -172,6 +175,7 @@ fn bench_comparison(c: &mut Criterion) {
             for (i, value) in values.iter_mut().enumerate() {
                 let mut vm = VM::new();
                 let ptr = value as *mut f32 as *mut u8;
+                // SAFETY: The pointer is to this live exclusive f32; bytecode reads and writes only it.
                 unsafe {
                     vm.execute(&bytecode, &[ptr], i as u64);
                 }
@@ -187,6 +191,7 @@ fn bench_comparison(c: &mut Criterion) {
                 let vm = pooled.get_mut();
                 vm.reset();
                 let ptr = value as *mut f32 as *mut u8;
+                // SAFETY: The pointer is to this live exclusive f32; bytecode reads and writes only it.
                 unsafe {
                     vm.execute(&bytecode, &[ptr], i as u64);
                 }
@@ -201,6 +206,7 @@ fn bench_comparison(c: &mut Criterion) {
             for (i, value) in values.iter_mut().enumerate() {
                 vm.reset();
                 let ptr = value as *mut f32 as *mut u8;
+                // SAFETY: The pointer is to this live exclusive f32; bytecode reads and writes only it.
                 unsafe {
                     vm.execute(&bytecode, &[ptr], i as u64);
                 }

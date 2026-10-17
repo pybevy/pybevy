@@ -5,6 +5,11 @@ use `jsonrpc: "2.0"`, a string method and a string, number or null ID.
 Boolean, array and object IDs are rejected with Invalid Request (-32600).
 Omit the ID for a notification; valid notifications receive no reply.
 
+HTTP bridge session closure (DELETE or idle expiry) stops its scene after the
+active request finishes. Queued requests for a closed session receive HTTP 404;
+initialize a new session to continue. Server shutdown rejects initialization
+with HTTP 503.
+
 ## Workflow
 
 **Guide URIs are MCP resources, not files.** Call `get_guide("patterns")` (or another name returned by `get_guide("index")`) in every client. You may instead read `guide://...` through the client's MCP resource capability. Some clients also generate resource aliases such as `get_guide_patterns`, but those aliases are optional. Never pass a `guide://` URI to a filesystem `read`, `open`, or shell command.
@@ -59,6 +64,8 @@ is `KeyboardInterrupt` or `SystemExit`.
 - **Entities** have numeric IDs that may change across hot reloads. Prefer Name-based addressing when possible.
 - **Components** are data attached to entities (Transform, PointLight, etc.)
 - **Resources** are global singletons (Time, AssetServer, etc.)
+- `init_resource(T)` preserves an existing resource without constructing it again.
+  Required `AssetServer` access fails immediately when the resource is absent.
 - **Single** uses `into_inner()` for typed component access and tuple unpacking. Use `Mut[T]` for writes.
 - **Systems** are functions that run each frame, organized by Stage (Startup, Update, Last, etc.)
 - **Messages** are App-local buffered channels registered with `app.add_message(T)`. Ordered readers can observe same-pass writes. Two native `MessageReader[T]` parameters may coexist in one system; two readers of one custom Python message channel conflict and need separate systems. A writer or mutator cannot share its channel with another reader, writer, or mutator in one system.
