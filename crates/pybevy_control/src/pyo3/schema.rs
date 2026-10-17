@@ -133,7 +133,14 @@ pub fn get_component_schema(
                         .get_mut("fields")
                         .and_then(serde_json::Value::as_object_mut)
                     {
-                        fields.extend(field_types.clone());
+                        // `fields` lists what get_component and set_component
+                        // address: the synthetic enum `variant` and reflect
+                        // fields with a Python attribute behind them.
+                        fields.extend(field_types.iter().filter_map(|(field, ty)| {
+                            let addressable = field == "variant"
+                                || py_type.hasattr(field.as_str()).unwrap_or(false);
+                            addressable.then(|| (field.clone(), ty.clone()))
+                        }));
                     }
                     obj.insert(
                         "field_types".into(),

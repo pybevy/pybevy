@@ -117,7 +117,7 @@ pub(crate) fn reject_enum_constant(owner: &Bound<'_, PyType>, name: &str) -> Res
     ))
 }
 
-fn inline_json(value: &serde_json::Value) -> String {
+pub(crate) fn inline_json(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Object(fields) => {
             let entries = fields
@@ -323,10 +323,10 @@ pub(crate) fn construct_enum_variant_for_owner(
                 valid_variants.join(", ")
             ));
         }
-        return Err(format!(
-            "unknown variant '{variant_name}' for {}. Valid variants: {}",
-            owner_name,
-            valid_variants.join(", ")
+        return Err(public_error::mcp_unknown_variant(
+            variant_name,
+            &owner_name,
+            &valid_variants,
         ));
     };
 

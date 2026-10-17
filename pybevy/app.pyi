@@ -1,5 +1,6 @@
 from collections.abc import Callable
-from typing import Any, ClassVar, Final, Literal, TypeVar
+from enum import Enum
+from typing import ClassVar, Final, Literal, TypeVar
 
 from pybevy.ecs import (
     ConditionalSystem,
@@ -54,7 +55,7 @@ def _test_force_cleanup() -> None:
 class Stage:
     """Schedule labels for system execution ordering.
 
-    PyBevy provides 14 schedules that run in a specific order each frame:
+    PyBevy provides 15 schedules that run in a specific order each frame:
 
     **Startup Schedules** (run once):
     - PreStartup: Before main startup
@@ -478,8 +479,10 @@ class App:
         """Run multiple system functions once immediately (PyBevy-specific)."""
     def init_resource(self, resource: type[ResourceType]) -> App: ...
     def insert_resource(self, resource: Resource) -> App: ...
-    def init_state(self, state_type: type) -> App:
-        """Initialize a state machine with the first enum variant as default.
+    def init_state(self, state_type: type[Enum]) -> App:
+        """Initialize an absent state machine with the first enum variant.
+
+        Existing current state and pending transitions are preserved.
 
         Args:
             state_type: An Enum class decorated with @state
@@ -495,7 +498,7 @@ class App:
 
             app.init_state(GameState)  # Starts in MENU
         """
-    def insert_state(self, initial_state: Any) -> App:
+    def insert_state(self, initial_state: Enum) -> App:
         """Initialize a state machine with a specific initial state.
 
         Args:
@@ -515,8 +518,8 @@ class App:
         Re-adding an unkeyed custom Python plugin raises RuntimeError instead
         of discarding the new instance's configuration. Distinct string
         ``__pybevy_plugin_key__`` values allow multiple custom instances;
-        reusing a key raises. Already-installed native plugins are normally
-        skipped, while repeating a full DefaultPlugins seed can raise.
+        reusing a key raises. Re-adding a unique native plugin raises
+        RuntimeError, including duplicates introduced through plugin groups.
         """
     def add_message(self, message_type: type[MessageTypeVar]) -> App: ...
     def add_observer(self, observer: ObserverFn) -> App:

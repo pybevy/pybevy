@@ -11,6 +11,8 @@ use pyo3::{
 /// position even when a subclass re-annotates it.
 pub fn declared_annotations<'py>(cls: &Bound<'py, PyType>) -> PyResult<Bound<'py, PyDict>> {
     let merged = PyDict::new(cls.py());
+    // Annotations of dataclass classes only: a plain mixin's are not fields.
+    let dataclass_merged = PyDict::new(cls.py());
     let mro = cls.getattr("__mro__")?;
     let mut classes: Vec<Bound<'py, PyAny>> = mro.try_iter()?.collect::<PyResult<_>>()?;
     classes.reverse();
@@ -20,8 +22,14 @@ pub fn declared_annotations<'py>(cls: &Bound<'py, PyType>) -> PyResult<Bound<'py
             continue;
         };
         let annotations = annotations.cast_into::<PyDict>()?;
+        let is_dataclass = class
+            .getattr("__dict__")?
+            .contains("__dataclass_fields__")?;
         for (name, hint) in annotations.iter() {
-            merged.set_item(name, hint)?;
+            merged.set_item(&name, &hint)?;
+            if is_dataclass {
+                dataclass_merged.set_item(name, hint)?;
+            }
         }
     }
 
@@ -41,7 +49,7 @@ pub fn declared_annotations<'py>(cls: &Bound<'py, PyType>) -> PyResult<Bound<'py
         }
     }
     let dataclass_fields = cls.getattr("__dataclass_fields__")?;
-    for (name, annotation) in merged.iter() {
+    for (name, annotation) in dataclass_merged.iter() {
         if !dataclass_fields.contains(&name)? {
             fields.set_item(name, annotation)?;
         }
@@ -113,6 +121,26 @@ mod tests {
                 hp.getattr("__name__").unwrap().extract::<String>().unwrap(),
                 "int"
             );
+        });
+    }
+
+    #[test]
+    fn a_dataclass_ignores_annotations_of_a_plain_mixin() {
+        Python::attach(|py| {
+            let component = class(
+                py,
+                r#"from dataclasses import dataclass
+
+class Tuning:
+    speed: float
+
+@dataclass
+class Unit(Tuning):
+    hp: float = 1.0
+"#,
+                "Unit",
+            );
+            assert_eq!(names(&declared_annotations(&component).unwrap()), ["hp"]);
         });
     }
 

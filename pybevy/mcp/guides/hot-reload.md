@@ -2,6 +2,10 @@
 
 Full vs partial reload, what persists across reloads, error recovery, and diagnostics.
 
+Explicitly adding `HotReloadPlugin()` uses the App's reload state. A loader
+attached afterward enables that same state, so watcher requests and
+`HotReloadControl` requests advance the same generation counter.
+
 The file watcher ignores build/cache directories by exact directory name below
 the watch root, including `target`, `__pycache__`, and `node_modules`, every
 directory whose name starts with `.` (`.git`, `.venv`, `.cache`, nested
@@ -116,9 +120,21 @@ get_reload_status                  - Check if reload is pending/complete
 get_last_error                     - Get Python error traceback if reload failed, plus wgpu_validation GPU errors, shader_errors, and asset_load_failures
 ```
 
+`reload` and `reload_and_capture` answer after the reload they requested has run:
+`mode` repeats the request, while `actual_mode`, `escalated` and `generation` describe
+the reload that ran, as `get_reload_status` does. A Partial request that escalated
+reports `actual_mode: "full"`. When the reload does not run within 60 frames,
+the response has `status: "reload_requested"` and a `note`; read `get_reload_status`
+for its outcome.
+
 `get_last_error.shader_errors` is `null` or lists the compile errors of shaders
-whose pipelines currently fail, such as a WGSL syntax error. It clears when the
-fixed shader recompiles; a `.wgsl` edit applies without a Python reload.
+whose pipelines currently fail, such as a WGSL syntax error. An error in an
+`@material` shader starts with its owner, for example
+`@material GlowMaterial fragment shader shaders/glow.wgsl (entities 12v0): `,
+naming the class, the stages that use the file, and the entities drawing it.
+It clears when the fixed shader recompiles, and the log then reports
+`@material GlowMaterial shader shaders/glow.wgsl compiles again`; a `.wgsl`
+edit applies without a Python reload.
 
 `get_last_error.wgpu_validation` is `null` or reports GPU validation errors
 recorded since the last successful reload: `count`, `first` and `last`

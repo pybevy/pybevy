@@ -71,12 +71,13 @@ fn process_const(const_item: &syn::ImplItemConst, class: &mut PyClassDef, file_p
     });
 }
 
-/// Check if a method body uses borrow_field, borrow_field_as, or borrow_optional_field pattern
+/// Check if a method body borrows a live field through a shared storage helper
 fn uses_borrow_field_pattern(method: &syn::ImplItemFn) -> bool {
     let body = quote::quote!(#method).to_string();
     body.contains("borrow_field")
         || body.contains("borrow_field_as")
         || body.contains("borrow_optional_field")
+        || body.contains("borrow_read_only_accessor")
         || body.contains("borrow_resolved")
         || body.contains("borrow_validated_field")
         || body.contains("borrow_asset_field")

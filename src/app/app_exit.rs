@@ -3,9 +3,46 @@ use std::num::NonZero;
 use bevy::app::AppExit;
 use pybevy_core::domain::{FieldDomain, IntegerInput, check_for};
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyInt};
 
 const EXIT_CODE_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 0.0, hi: 255.0 }];
+const ERROR_CODE_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive { lo: 1.0, hi: 255.0 }];
+
+pub struct AppExitCode(NonZero<u8>);
+
+impl FromPyObject<'_, '_> for AppExitCode {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+        let code = value.extract::<IntegerInput<u32>>()?;
+        let code = check_for::<PyAppExit, _>("Error.code", code, ERROR_CODE_DOMAIN)?.stored() as u8;
+        Ok(Self(
+            NonZero::new(code).expect("validated nonzero exit code"),
+        ))
+    }
+}
+
+impl From<NonZero<u8>> for AppExitCode {
+    fn from(code: NonZero<u8>) -> Self {
+        Self(code)
+    }
+}
+
+impl From<AppExitCode> for NonZero<u8> {
+    fn from(code: AppExitCode) -> Self {
+        code.0
+    }
+}
+
+impl<'py> IntoPyObject<'py> for AppExitCode {
+    type Target = PyInt;
+    type Output = Bound<'py, PyInt>;
+    type Error = <u8 as IntoPyObject<'py>>::Error;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        self.0.get().into_pyobject(py)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum AppExitValue {
@@ -37,6 +74,7 @@ pub enum PyAppExit {
     Success(),
     #[py_bevy(tuple)]
     Error {
+        #[py_type(AppExitCode)]
         code: NonZero<u8>,
     },
 }

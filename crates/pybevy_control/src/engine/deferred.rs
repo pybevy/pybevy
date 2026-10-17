@@ -36,7 +36,7 @@ use crate::{
         CaptureTurnaroundParams, ControlError, ControlOperation, ReloadAndCaptureParams,
         ReloadParams,
     },
-    reload::{self, PendingReload, PendingReloads, ReloadCapture, ReloadCompletion},
+    reload::{self, PendingReload, PendingReloads, ReloadCapture, ReloadCompletion, ReloadMark},
     schedule::{
         ActiveSchedule, ActiveSchedules, ScheduleMode, ScheduleRequest,
         SharedScheduleRegistryResource, SharedScheduleState,
@@ -264,11 +264,13 @@ pub fn push_pending_reload(
         return;
     }
 
+    let since = ReloadMark::read(world);
     let mut pending = world.get_resource_or_insert_with(PendingReloads::default);
     pending.pending.push(PendingReload::new(
         response_tx,
         params.mode,
         ReloadCompletion::Respond,
+        since,
     ));
 }
 
@@ -294,11 +296,13 @@ pub fn push_pending_reload_and_capture(
         look_at: params.look_at,
         hide_ui: params.hide_ui.unwrap_or(true),
     };
+    let since = ReloadMark::read(world);
     let mut pending = world.get_resource_or_insert_with(PendingReloads::default);
     pending.pending.push(PendingReload::new(
         response_tx,
         params.mode,
         ReloadCompletion::Capture(capture),
+        since,
     ));
 }
 

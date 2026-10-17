@@ -40,6 +40,10 @@ app.init_state(GamePhase)
 
 `OnEnter` fires for the initial state on the first frame - no need for a separate Startup system.
 
+`init_state()` only initializes an absent state machine. Calling it again
+preserves the current state and any queued `NextState` transition.
+`insert_state()` replaces the current state and clears its pending transition.
+
 ## OnEnter / OnExit / OnTransition Schedules
 
 Systems registered with `OnEnter(state_value)` run once when transitioning **into** that state. `OnExit` runs once when **leaving**.

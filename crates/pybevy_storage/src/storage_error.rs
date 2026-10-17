@@ -102,6 +102,12 @@ pub enum StorageError {
 
     /// A validated field was resolved for an unchecked write (`RuntimeError`).
     ValidatedFieldWrite,
+
+    /// A write through a getter-only upstream accessor (`RuntimeError`).
+    ReadOnlyAccessor {
+        accessor: &'static str,
+        setter: &'static str,
+    },
 }
 
 /// Deepest expression tree the Python-to-Rust conversion accepts.
@@ -188,6 +194,10 @@ impl fmt::Display for StorageError {
             StorageError::ValidatedFieldWrite => f.write_str(
                 "This field is validated; its wrapper must write through a checked update.",
             ),
+            StorageError::ReadOnlyAccessor { accessor, setter } => write!(
+                f,
+                "{accessor} returns a read-only view; replace the value with {setter}"
+            ),
         }
     }
 }
@@ -213,7 +223,8 @@ impl From<StorageError> for PyErr {
             | StorageError::AssetAccessConflict
             | StorageError::BorrowedAccessConflict
             | StorageError::VariantChanged(_)
-            | StorageError::ValidatedFieldWrite => PyRuntimeError::new_err(err.to_string()),
+            | StorageError::ValidatedFieldWrite
+            | StorageError::ReadOnlyAccessor { .. } => PyRuntimeError::new_err(err.to_string()),
             StorageError::InvalidValue(message) => PyValueError::new_err(message),
             StorageError::IndexOutOfRange | StorageError::EmptyList => {
                 PyIndexError::new_err(err.to_string())

@@ -8,7 +8,7 @@ use bevy::{
 
 use crate::{
     ShaderMaterialExtension, ShaderStage, expected_generated_material_import, get_shader_handle,
-    hash_shader_path,
+    hash_shader_path, registered_path_id,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +70,17 @@ fn stable_handle(namespace: u64, value: u64) -> Handle<Shader> {
         Uuid::from_u128((u128::from(namespace) << 64) | u128::from(value)),
         Default::default(),
     )
+}
+
+/// The `hash_shader_path` id of the `@material` shader file a pipeline handle
+/// compiles: a per-layout variant carries it in its high half, and the plain
+/// file handle is the one registered under it.
+pub fn material_shader_path_id(handle: &Handle<Shader>) -> Option<u64> {
+    if let Handle::Uuid(uuid, _) = handle {
+        let path_id = (uuid.as_u128() >> 64) as u64;
+        return get_shader_handle(path_id).map(|_| path_id);
+    }
+    registered_path_id(handle.id())
 }
 
 pub(crate) fn material_shader_handle(path: u64, bindings: Option<u64>) -> Option<Handle<Shader>> {

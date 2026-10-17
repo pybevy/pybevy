@@ -6,7 +6,10 @@ use pyo3::{
 
 use crate::{
     codec::value::{LINEAR_RGBA_CHANNELS, json_f32, json_kind_name},
-    pyo3::from_json::{enums::reject_enum_constant, field::json_to_py},
+    pyo3::from_json::{
+        enums::{enum_variant_names, inline_json, reject_enum_constant},
+        field::json_to_py,
+    },
 };
 
 /// `Color.srgba(r, g, b, a)` from a four-element JSON array.
@@ -45,10 +48,18 @@ pub(crate) fn construct_color_variant(
         .map_err(|error| error.to_string())?;
     if let Ok(color_type) = color.cast::<PyType>() {
         reject_enum_constant(color_type, variant_name)?;
+        let variants = enum_variant_names(color_type);
+        if !variants.iter().any(|variant| variant == variant_name) {
+            return Err(public_error::mcp_unknown_variant(
+                variant_name,
+                "Color",
+                &variants,
+            ));
+        }
     }
     let variant = color
         .getattr(variant_name)
-        .map_err(|_| format!("unknown Color variant '{variant_name}'"))?;
+        .map_err(|error| error.to_string())?;
     let payload_type = color_module
         .getattr(variant_name)
         .map_err(|_| format!("Color variant '{variant_name}' has no payload type"))?;
@@ -86,6 +97,17 @@ pub(crate) fn construct_color_variant(
         .call1((payload,))
         .map(Bound::unbind)
         .map_err(|error| format!("invalid payload for Color.{variant_name}: {error}"))
+}
+
+/// Names the accepted Color JSON shapes and its variants.
+pub(crate) fn color_shape_error(py: Python<'_>, got: &serde_json::Value) -> String {
+    let variants = PyModule::import(py, "pybevy.color")
+        .and_then(|module| module.getattr("Color"))
+        .ok()
+        .and_then(|color| color.cast_into::<PyType>().ok())
+        .map(|color| enum_variant_names(&color))
+        .unwrap_or_default();
+    public_error::mcp_color_shape(&inline_json(got), &variants)
 }
 
 pub(crate) fn linear_rgba_from_json(

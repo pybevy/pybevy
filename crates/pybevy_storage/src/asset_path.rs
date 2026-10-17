@@ -53,6 +53,12 @@ trait ErasedPathStep: fmt::Debug + Send + Sync {
         false
     }
 
+    /// The error every write through this step reports, checked after the
+    /// root's write authority and before any value is resolved mutably.
+    fn write_rejection(&self) -> Option<StorageError> {
+        None
+    }
+
     /// Apply `mutate` to a copy of `value` reached through `suffix`, then
     /// validate the copy. The live value is never touched.
     ///
@@ -310,6 +316,69 @@ impl<Parent: 'static, Field: 'static> ErasedPathStep for EnumVariantStep<Parent,
     }
 }
 
+/// A projection through a getter-only upstream accessor such as
+/// `Mesh::skinned_mesh_bounds`, which offers no mutable counterpart.
+struct ReadOnlyAccessorStep<Parent: 'static, Field: 'static> {
+    accessor: &'static str,
+    setter: &'static str,
+    read: ReadVariant<Parent, Field>,
+}
+
+impl<Parent: 'static, Field: 'static> fmt::Debug for ReadOnlyAccessorStep<Parent, Field> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadOnlyAccessorStep")
+            .field("parent", &type_name::<Parent>())
+            .field("field", &type_name::<Field>())
+            .field("accessor", &self.accessor)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<Parent: 'static, Field: 'static> ErasedPathStep for ReadOnlyAccessorStep<Parent, Field> {
+    fn input_type(&self) -> TypeId {
+        TypeId::of::<Parent>()
+    }
+
+    fn output_type(&self) -> TypeId {
+        TypeId::of::<Field>()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same_identity(&self, other: &dyn ErasedPathStep) -> bool {
+        other.as_any().downcast_ref::<Self>().is_some_and(|other| {
+            self.accessor == other.accessor && self.read as usize == other.read as usize
+        })
+    }
+
+    unsafe fn project_ref(&self, parent: *const u8) -> Result<*const u8, StorageError> {
+        // SAFETY: forwarded from the erased step contract.
+        let parent = unsafe { &*parent.cast::<Parent>() };
+        (self.read)(parent)
+            .map(|value| value as *const Field as *const u8)
+            .ok_or(StorageError::VariantChanged(self.accessor))
+    }
+
+    unsafe fn project_mut(&self, _parent: *mut u8) -> Result<*mut u8, StorageError> {
+        Err(self.rejection())
+    }
+
+    fn write_rejection(&self) -> Option<StorageError> {
+        Some(self.rejection())
+    }
+}
+
+impl<Parent: 'static, Field: 'static> ReadOnlyAccessorStep<Parent, Field> {
+    fn rejection(&self) -> StorageError {
+        StorageError::ReadOnlyAccessor {
+            accessor: self.accessor,
+            setter: self.setter,
+        }
+    }
+}
+
 struct IndexedStep<Parent: 'static, Field: 'static> {
     index: usize,
     read: ReadIndex<Parent, Field>,
@@ -485,6 +554,14 @@ impl AssetPath {
         Ok(current)
     }
 
+    /// Reject a write through any step that forbids one.
+    pub(crate) fn check_writable(&self) -> Result<(), StorageError> {
+        match self.steps.iter().find_map(|step| step.write_rejection()) {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
     /// Stage a write through the outermost validated step on a copy.
     ///
     /// Without a staged mutation, a path containing a validator rejects the
@@ -497,6 +574,7 @@ impl AssetPath {
         root: *const u8,
         mutate: Option<&mut dyn FnMut(*mut u8)>,
     ) -> Result<(), StorageError> {
+        self.check_writable()?;
         let mut current = root;
         for (index, step) in self.steps.iter().enumerate() {
             if step.validates() {
@@ -735,7 +813,7 @@ impl<T: Send + Sync + 'static> ErasedRevalidatingSource for BorrowedSource<T> {
         let root = self.shared.root.read()? as *const T as *const u8;
         // SAFETY: the root remains live under the retained path guard.
         unsafe { self.path.project_ref(root)? };
-        Ok(())
+        self.path.check_writable()
     }
 
     fn resolve_mut(
@@ -849,6 +927,15 @@ impl<T: Send + Sync + 'static> BorrowedRootSource<T> {
     ) -> RevalidatingSource<Field> {
         self.extend(&[optional_step(name, read, write)])
     }
+
+    pub(crate) fn read_only_accessor<Field: 'static>(
+        &self,
+        accessor: &'static str,
+        setter: &'static str,
+        read: ReadVariant<T, Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[read_only_accessor_step(accessor, setter, read)])
+    }
 }
 
 fn field_step<Parent: 'static, Field: 'static>(
@@ -878,6 +965,18 @@ fn optional_step<Parent: 'static, Field: 'static>(
     write: WriteField<Parent, Option<Field>>,
 ) -> Arc<dyn ErasedPathStep> {
     Arc::new(OptionalFieldStep { name, read, write })
+}
+
+fn read_only_accessor_step<Parent: 'static, Field: 'static>(
+    accessor: &'static str,
+    setter: &'static str,
+    read: ReadVariant<Parent, Field>,
+) -> Arc<dyn ErasedPathStep> {
+    Arc::new(ReadOnlyAccessorStep {
+        accessor,
+        setter,
+        read,
+    })
 }
 
 fn index_step<Parent: 'static, Field: 'static>(
@@ -997,6 +1096,18 @@ impl<T: 'static> RevalidatingSource<T> {
         write: WriteField<T, Option<Field>>,
     ) -> RevalidatingSource<Field> {
         self.extend(&[optional_step(name, read, write)])
+    }
+
+    /// Project through a getter-only accessor returning `Option<&Field>`.
+    /// Every write through the result reports `ReadOnlyAccessor`, naming
+    /// `setter` as the way to replace the value.
+    pub fn read_only_accessor<Field: 'static>(
+        &self,
+        accessor: &'static str,
+        setter: &'static str,
+        read: ReadVariant<T, Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[read_only_accessor_step(accessor, setter, read)])
     }
 
     pub fn index<Field: 'static>(

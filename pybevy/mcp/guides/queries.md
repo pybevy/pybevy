@@ -176,9 +176,9 @@ with `Query[Mut[T]]` unless the query excludes resource entities with
 Custom resource handles returned by queries expire when their system finishes,
 just like `Res[T]` and `ResMut[T]`; later reads or writes raise `RuntimeError`.
 
-`Single[T]` skips its system before the body runs unless exactly one entity
-matches. This is checked on each run, including when the body never accesses
-the parameter. `Query.single()` is an explicit lookup inside a running system
+`Single[T]` skips its system or observer before the body runs unless exactly
+one entity matches. This is checked on each run or trigger, including when the
+body never accesses the parameter. `Query.single()` is an explicit lookup inside a running system
 and raises `RuntimeError` for zero or multiple matches.
 
 The silent skip applies to scheduled systems. An explicit

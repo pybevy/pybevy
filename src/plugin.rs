@@ -340,7 +340,25 @@ def _make_native_loader(module_name, systems, plugins=()):
 
 #[cfg(feature = "native-hot-reload")]
 #[derive(Resource)]
-struct NativeFileWatcher(FileWatcher);
+struct NativeFileWatcher {
+    watcher: FileWatcher,
+    /// Import graph of the plugin's module; `None` reloads on every edit.
+    graph: Option<Py<PyAny>>,
+}
+
+/// Keep only the changed paths that can affect the plugin's module.
+#[cfg(feature = "native-hot-reload")]
+fn relevant_changed_paths(graph: &Py<PyAny>, changed: &[PathBuf]) -> PyResult<Vec<String>> {
+    Python::attach(|py| {
+        let paths: Vec<String> = changed
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        py.import("pybevy._internal.native_watch")?
+            .call_method1("relevant_changes", (graph.bind(py), paths))?
+            .extract()
+    })
+}
 
 #[cfg(feature = "native-hot-reload")]
 fn poll_native_file_watcher(
@@ -352,7 +370,7 @@ fn poll_native_file_watcher(
     };
     let mut changed_paths = Vec::new();
     loop {
-        match watcher.0.try_recv() {
+        match watcher.watcher.try_recv() {
             Ok(Some(batch)) => changed_paths.extend_from_slice(batch.paths()),
             Ok(None) => break,
             Err(error) => {
@@ -364,12 +382,24 @@ fn poll_native_file_watcher(
     if changed_paths.is_empty() {
         return;
     }
+    let changed_count = match &watcher.graph {
+        Some(graph) => match relevant_changed_paths(graph, &changed_paths) {
+            Ok(relevant) => relevant.len(),
+            Err(error) => {
+                eprintln!("[Hot Reload] Import graph check failed, reloading anyway: {error}");
+                changed_paths.len()
+            }
+        },
+        None => changed_paths.len(),
+    };
+    if changed_count == 0 {
+        return;
+    }
 
     let mode = reload.state.get_default_mode();
     eprintln!(
-        "[Hot Reload] File changes detected in {} Python file(s), requesting {:?} reload",
-        changed_paths.len(),
-        mode
+        "[Hot Reload] File changes detected in {changed_count} Python file(s), requesting \
+         {mode:?} reload"
     );
     reload.state.request_reload(mode);
 }
@@ -506,7 +536,7 @@ impl PyBevyPlugin {
     /// - **F5** triggers a full reload (re-imports Python module, re-runs Startup systems)
     /// - **F6** toggles the default reload mode between Full and Partial
     /// - With the `native-hot-reload` feature, `.py` file changes in `python_paths`
-    ///   directories automatically trigger a reload
+    ///   directories that the module imports automatically trigger a reload
     ///
     /// # Example
     ///
@@ -692,7 +722,20 @@ impl PyBevyPlugin {
         let paths = self.python_paths.iter().map(PathBuf::from).collect();
         match FileWatcher::with_defaults(paths) {
             Ok(watcher) => {
-                app.insert_resource(NativeFileWatcher(watcher));
+                let graph = Python::attach(|py| {
+                    let graph = py
+                        .import("pybevy._internal.native_watch")?
+                        .call_method1("module_import_graph", (&self.module_name,))?;
+                    Ok::<_, PyErr>((!graph.is_none()).then(|| graph.unbind()))
+                })
+                .unwrap_or_else(|error| {
+                    eprintln!(
+                        "[Hot Reload] Warning: import graph unavailable, every edit reloads: \
+                         {error}"
+                    );
+                    None
+                });
+                app.insert_resource(NativeFileWatcher { watcher, graph });
                 app.add_systems(
                     Last,
                     poll_native_file_watcher.before(handle_f5_reload_system),

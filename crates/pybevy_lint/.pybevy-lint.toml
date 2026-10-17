@@ -3040,6 +3040,18 @@ reason = "private generated indexed adapter structurally implements the public L
 
 [[validation.exceptions]]
 code = "E006"
+path = "mesh.SkinnedMeshBounds"
+message = "property 'SkinnedMeshBounds::aabbs' type mismatch: Rust='PyResult < PyJointAabbs >' vs Python='LiveList[JointAabb]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[JointAabb] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "mesh.SkinnedMeshBounds"
+message = "property 'SkinnedMeshBounds::aabb_index_to_joint_index' type mismatch: Rust='PyResult < PyJointIndices >' vs Python='LiveList[JointIndex]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[JointIndex] protocol"
+
+[[validation.exceptions]]
+code = "E006"
 path = "gltf.GltfMesh"
 reason = "private generated indexed adapter structurally implements the public LiveSequence[GltfPrimitive] protocol"
 

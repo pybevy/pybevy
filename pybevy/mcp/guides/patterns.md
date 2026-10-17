@@ -1046,6 +1046,12 @@ reloads and unaffected by later class metadata edits. Native types use Bevy's ty
 identity. IDs do not retain the Python class or message payload.
 `MessageReader` methods: iteration via `for msg in reader`, `read()`, reader-local `clear()`, `is_empty()`, `len()`. Each reader parameter has an independent cursor, and iteration consumes only values actually yielded.
 
+In an exclusive system, `world.resource(Messages[T])` returns Bevy's `Messages<T>` buffer for a native
+message type, with `len()` and `is_empty()`; `world.resource_mut(Messages[T]).clear()` empties it.
+`world.contains_resource(Messages[T])` and `world.resource_entity(Messages[T])` work as for other
+resources. Custom Python messages live in PyBevy's message store rather than a `Messages<T>` resource,
+so read them with `MessageReader[T]`.
+
 For a custom Python message system that must read, mutate, and write the same channel, use
 `MessageMutator[T]`. It combines the reader and writer methods above. Messages yielded from it are
 the retained Python objects, so changing their fields is visible to later readers. A write before

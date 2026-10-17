@@ -11,6 +11,7 @@ pub mod shader_def_registry;
 pub mod storage_element;
 pub mod storage_material;
 pub mod texture_binding;
+pub use material_shader_variants::material_shader_path_id;
 use material_shader_variants::{
     MaterialShaderLifetimes, MaterialShaderSources, MaterialShaderVariants, material_shader_handle,
 };
@@ -110,6 +111,14 @@ pub fn hash_shader_path(path: &str) -> u64 {
 
 fn get_shader_handle(id: u64) -> Option<Handle<Shader>> {
     registry().read().ok()?.get(&id).cloned()
+}
+
+fn registered_path_id(id: AssetId<Shader>) -> Option<u64> {
+    registry()
+        .read()
+        .ok()?
+        .iter()
+        .find_map(|(path_id, handle)| (handle.id() == id).then_some(*path_id))
 }
 
 fn register_shader_handle(id: u64, handle: Handle<Shader>) {
@@ -370,6 +379,22 @@ pub struct ShaderMaterialExtension {
 }
 
 impl ShaderMaterialExtension {
+    /// The `@material` class name carried by the generated bindings module.
+    pub fn material_class_name(&self) -> Option<&str> {
+        self.bindings_wgsl
+            .as_deref()
+            .and_then(expected_generated_material_import)
+            .and_then(|path| path.strip_prefix(GENERATED_MATERIAL_IMPORT_PREFIX))
+    }
+
+    /// Each custom shader stage label ("fragment", "prepass vertex", ...) and
+    /// its asset path.
+    pub fn shader_stage_paths(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        ShaderStage::ALL
+            .into_iter()
+            .filter_map(|stage| stage.path(self).map(|path| (stage.label(), path)))
+    }
+
     /// The texture slot at `slot`, or `None` past [`MAX_TEXTURE_SLOTS`].
     pub fn texture_slot(&self, slot: usize) -> Option<&Option<Handle<Image>>> {
         match slot {

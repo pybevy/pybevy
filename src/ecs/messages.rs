@@ -16,6 +16,7 @@ use pybevy_core::{
     ReaderCursorOp, apply_reader_cursor,
     public_error::{
         ASSET_BRIDGE_NOT_FOUND, ASSET_EVENT_TYPE_REQUIRED, ASSET_LOAD_FAILED_TYPE_REQUIRED,
+        MESSAGES_RESOURCE_READ_ONLY,
     },
     registry::global_registry,
 };
@@ -23,7 +24,7 @@ use pybevy_ecs::shared::message_resources::ensure_message_resource;
 use pybevy_world_serialization::WorldInstanceReadyMessage;
 use pyo3::{
     IntoPyObjectExt, PyTraverseError, PyVisit,
-    exceptions::PyTypeError,
+    exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyTuple, PyType},
 };
@@ -104,6 +105,8 @@ pub struct PyMessages {
     /// When Some, iter_to_python uses the stored cursor to avoid re-reading messages.
     /// When None, creates a fresh cursor each time (legacy behavior).
     pub(crate) cursor_storage: Option<CursorStorage>,
+    /// Set for `World.resource()`, whose `&Messages<T>` cannot be cleared.
+    pub(crate) read_only: bool,
 }
 
 impl PyMessages {
@@ -363,6 +366,9 @@ impl PyMessages {
     }
 
     pub fn clear(&self) -> PyResult<()> {
+        if self.read_only {
+            return Err(PyRuntimeError::new_err(MESSAGES_RESOURCE_READ_ONLY));
+        }
         if let MessageType::AssetEvent(type_ptr) = &self.message_type {
             let bridge = global_registry::get_asset_bridge_by_py_type(*type_ptr)
                 .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?;
@@ -546,6 +552,14 @@ impl MessageType {
                 (format!("dynamic:{type_ptr:p}"), format!("Message<{name}>"))
             }
         }
+    }
+
+    /// Display name of the `Messages<T>` resource for this message type.
+    pub(crate) fn resource_name(&self) -> String {
+        let (_, label) = self.validation_identity();
+        label
+            .strip_prefix("Message<")
+            .map_or(label.clone(), |inner| format!("Messages<{inner}"))
     }
 
     /// Register (get-or-create) the ComponentId for a native `Messages<T>` resource.

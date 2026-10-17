@@ -465,6 +465,10 @@ set_asset {"entity": "table", "component": "MeshMaterial3d",
     "asset_type": "StandardMaterial", "fields": {"emissive": [6.5,3,1,1]}}
 ```
 
+`component` names the component holding the handle and `asset_type` the asset
+it points at; `set_asset` follows the component's field that holds a handle of
+that type, such as `AudioPlayer.source` for `AudioSource`.
+
 `base_color` is `Color`, so its array shorthand is sRGBA. `emissive` is
 `LinearRgba`, so its array channels are linear and may exceed 1 for HDR. The
 complete object form `{"red": 6.5, "green": 3, "blue": 1, "alpha": 1}` is

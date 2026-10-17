@@ -80,9 +80,37 @@ class Mesh(Asset):
 
     def compute_custom_smooth_normals(
         self,
-        per_triangle: Callable[[tuple[int, int, int], list[tuple[float, float, float]], list[tuple[float, float, float]]], None],
+        per_triangle: Callable[
+            [
+                tuple[int, int, int],
+                tuple[tuple[float, float, float], ...],
+                list[tuple[float, float, float]],
+            ],
+            None,
+        ],
     ) -> None:
-        """Smooth normals with a per-triangle callback mutating the normals list."""
+        """Smooth normals with a per-triangle callback adding to the normal sums.
+
+        Every call receives the same positions tuple and the same normals list.
+        """
+    def skinned_mesh_bounds(self) -> SkinnedMeshBounds | None:
+        """This mesh's skinned bounds as a read-only view, or None.
+
+        A stored mesh's view follows the asset and expires with the system;
+        replace the bounds with `set_skinned_mesh_bounds`."""
+
+    def set_skinned_mesh_bounds(
+        self, skinned_mesh_bounds: SkinnedMeshBounds | None
+    ) -> None: ...
+    def with_skinned_mesh_bounds(
+        self, skinned_mesh_bounds: SkinnedMeshBounds | None
+    ) -> Mesh: ...
+    def generate_skinned_mesh_bounds(self) -> None:
+        """Compute the bounds from the position, joint index and joint weight
+        attributes; raises ValueError when they are missing or no joint is
+        skinned to a vertex."""
+
+    def with_generated_skinned_mesh_bounds(self) -> Mesh: ...
     def contains_attribute(self, attribute: MeshVertexAttribute) -> bool: ...
     def remove_attribute(
         self, attribute: MeshVertexAttribute
@@ -806,6 +834,62 @@ class SkinnedMeshInverseBindposes(Asset):
     def __getitem__(self, index: int) -> Mat4: ...
     def __iter__(self) -> Iterator[Mat4]: ...
     def __len__(self) -> int: ...
+
+class JointIndex:
+    """An index into `Mesh.ATTRIBUTE_JOINT_INDEX` and `SkinnedMesh.joints`."""
+
+    def __init__(self, value: int) -> None: ...
+    @property
+    def value(self) -> int: ...
+    @value.setter
+    def value(self, value: int) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+
+class JointAabb:
+    """The model-space box around the vertices skinned to one joint."""
+
+    def __init__(self, *, center: Vec3, half_size: Vec3) -> None: ...
+    @property
+    def center(self) -> Vec3: ...
+    @center.setter
+    def center(self, value: Vec3) -> None: ...
+    @property
+    def half_size(self) -> Vec3: ...
+    @half_size.setter
+    def half_size(self, value: Vec3) -> None: ...
+    def __eq__(self, other: object) -> bool: ...
+
+class SkinnedMeshBounds:
+    """Per-joint boxes from which Bevy computes a skinned mesh's AABB.
+
+    `aabbs[i]` encloses the vertices skinned to joint
+    `aabb_index_to_joint_index[i]`; joints with no skinned vertices have no box.
+    """
+
+    def __init__(
+        self,
+        *,
+        aabbs: list[JointAabb] = ...,
+        aabb_index_to_joint_index: list[JointIndex] = ...,
+    ) -> None: ...
+    @staticmethod
+    def from_mesh(mesh: Mesh) -> SkinnedMeshBounds:
+        """Compute the bounds from a mesh's position, joint index and joint
+        weight attributes; raises ValueError like
+        `Mesh.generate_skinned_mesh_bounds`."""
+
+    @property
+    def aabbs(self) -> LiveList[JointAabb]: ...
+    @aabbs.setter
+    def aabbs(self, value: list[JointAabb]) -> None: ...
+    @property
+    def aabb_index_to_joint_index(self) -> LiveList[JointIndex]: ...
+    @aabb_index_to_joint_index.setter
+    def aabb_index_to_joint_index(self, value: list[JointIndex]) -> None: ...
+    def iter(self) -> Iterator[tuple[JointIndex, JointAabb]]:
+        """Each joint index paired with its box, borrowed like the fields."""
+
+    def __eq__(self, other: object) -> bool: ...
 
 class SkinnedMesh(Component):
     """Component that defines a skinned mesh for skeletal animation.

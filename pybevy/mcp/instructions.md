@@ -44,6 +44,13 @@ intact. Fix the source and reload again to apply the new definitions.
 
 ## Key Concepts
 
+`App.init_state()` preserves an already initialized state's current value and
+pending transition. Use `insert_state()` to replace it. Explicit
+`HotReloadPlugin()` installation shares the App's loader and reload controls.
+Outside hot reload, scheduled failures propagate through `update()`/`run()`;
+multiple failures use `ExceptionGroup`, or `BaseExceptionGroup` when a failure
+is `KeyboardInterrupt` or `SystemExit`.
+
 - **Entities** have numeric IDs that may change across hot reloads. Prefer Name-based addressing when possible.
 - **Components** are data attached to entities (Transform, PointLight, etc.)
 - **Resources** are global singletons (Time, AssetServer, etc.)

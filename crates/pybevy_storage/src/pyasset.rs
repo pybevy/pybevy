@@ -47,9 +47,9 @@ use bevy::{
 use crate::{
     AssetAccessRegistry, AssetAccessScope, AssetPath, AssetResourceReadGuard, AssetResourceState,
     AssetResourceWriteGuard, BorrowableStorage, ErasedResolvedMut, ErasedResolvedRef,
-    ErasedRevalidatingSource, FromBorrowedStorage, PendingViewClaim, ReadField, ReadViewClaim,
-    RevalidatingSource, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ViewCounters,
-    WriteField,
+    ErasedRevalidatingSource, FromBorrowedStorage, PendingViewClaim, ReadField, ReadVariant,
+    ReadViewClaim, RevalidatingSource, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode,
+    ViewCounters, WriteField,
     asset_path::{SourceIdentity, SourceReadGuard, SourceWriteGuard},
     borrowed::{BorrowedMut, BorrowedRef, checked_field_offset},
     storage_error::StorageError,
@@ -341,7 +341,7 @@ impl<A: Asset> ErasedRevalidatingSource for AssetResolverSource<A> {
         let root = self.resolver.resolve_read_under_write(&guard)?;
         // SAFETY: the root remains live under the retained asset writer.
         unsafe { self.path.project_ref(root.cast::<u8>())? };
-        Ok(())
+        self.path.check_writable()
     }
 
     fn resolve_mut(
@@ -959,6 +959,52 @@ impl<T: Asset> AssetStorage<T> {
         Ok(Some(S::revalidating_source(child)))
     }
 
+    /// Borrow the value behind a getter-only accessor that returns
+    /// `Option<&F>`, such as `Mesh::skinned_mesh_bounds`.
+    ///
+    /// Tracked and pointer-backed assets yield a checked path that re-runs
+    /// `read` on every access, errors once it returns `None`, and rejects
+    /// every write with `ReadOnlyAccessor` naming `setter`. Owned assets yield
+    /// a read-only snapshot.
+    pub fn borrow_read_only_accessor<F: Clone + 'static, S>(
+        &self,
+        accessor: &'static str,
+        setter: &'static str,
+        read: ReadVariant<T, F>,
+    ) -> Result<Option<S>, StorageError>
+    where
+        S: BorrowableStorage<F>,
+    {
+        let source = if self.resolver.is_some() {
+            if read(&*self.as_ref()?).is_none() {
+                return Ok(None);
+            }
+            self.root_source()?
+                .read_only_accessor(accessor, setter, read)
+        } else {
+            match &self.inner {
+                AssetStorageInner::Owned(Some(asset)) => return Ok(read(asset).map(S::snapshot)),
+                AssetStorageInner::Owned(None) => return Err(StorageError::AssetConsumed),
+                AssetStorageInner::OwnedReadOnly(asset) => return Ok(read(asset).map(S::snapshot)),
+                AssetStorageInner::Source(source) => {
+                    if read(&*source.resolve_ref()?).is_none() {
+                        return Ok(None);
+                    }
+                    source.read_only_accessor(accessor, setter, read)
+                }
+                AssetStorageInner::BorrowedRef { .. } | AssetStorageInner::BorrowedMut { .. } => {
+                    if read(&*self.as_ref()?).is_none() {
+                        return Ok(None);
+                    }
+                    RevalidatingSource::from_borrowed_asset(self)
+                        .ok_or(StorageError::InvalidAccess)?
+                        .read_only_accessor(accessor, setter, read)
+                }
+            }
+        };
+        Ok(Some(S::revalidating_source(source)))
+    }
+
     /// Borrow an asset-shaped inline field from this asset.
     pub fn borrow_asset_field<F: Asset + Clone + 'static>(
         &self,
@@ -1524,6 +1570,101 @@ mod tests {
                 .value,
             TestVariant::Second(7)
         );
+    }
+
+    fn first_payload(asset: &VariantAsset) -> Option<&i32> {
+        match &asset.value {
+            TestVariant::First(payload) => Some(payload),
+            TestVariant::Second(_) => None,
+        }
+    }
+
+    #[test]
+    fn read_only_accessor_follows_the_asset_and_rejects_writes() {
+        let mut world = Box::new(World::new());
+        let mut assets = Assets::<VariantAsset>::default();
+        let asset_id = assets
+            .add(VariantAsset {
+                value: TestVariant::First(3),
+            })
+            .id();
+        world.insert_resource(assets);
+        let validity = ValidityFlag::new_write();
+        let registry = AssetAccessRegistry::default();
+        let counter = AssetBorrowCounter::from_scope(registry.new_scope(
+            TypeId::of::<VariantAsset>(),
+            "VariantAsset",
+            validity.clone(),
+            "system:test",
+        ));
+        let _guard = ValidityGuard::new(validity.clone());
+        let storage = tracked_storage(&mut world, asset_id, &validity, &counter);
+        let mut payload: ValueStorage<i32> = storage
+            .borrow_read_only_accessor(
+                "TestVariant.first()",
+                "TestVariant.set_first()",
+                first_payload,
+            )
+            .expect("accessor")
+            .expect("payload present");
+
+        let write = payload.as_mut().map(|_| ());
+        assert!(
+            matches!(
+                write,
+                Err(StorageError::ReadOnlyAccessor {
+                    accessor: "TestVariant.first()",
+                    setter: "TestVariant.set_first()",
+                })
+            ),
+            "{write:?}"
+        );
+        assert_eq!(
+            world
+                .resource::<Assets<VariantAsset>>()
+                .get(asset_id)
+                .expect("asset present")
+                .value,
+            TestVariant::First(3)
+        );
+
+        let mut sibling = tracked_storage(&mut world, asset_id, &validity, &counter);
+        sibling.as_mut().expect("root write").value = TestVariant::First(9);
+        assert_eq!(*payload.as_ref().expect("payload read"), 9);
+
+        sibling.as_mut().expect("variant replacement").value = TestVariant::Second(7);
+        assert!(matches!(
+            payload.as_ref(),
+            Err(StorageError::VariantChanged("TestVariant.first()"))
+        ));
+        assert!(
+            sibling
+                .borrow_read_only_accessor::<i32, ValueStorage<i32>>(
+                    "TestVariant.first()",
+                    "TestVariant.set_first()",
+                    first_payload
+                )
+                .expect("accessor")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn read_only_accessor_on_an_owned_asset_is_a_snapshot() {
+        let storage = AssetStorage::owned(VariantAsset {
+            value: TestVariant::First(4),
+        });
+        let mut payload: ValueStorage<i32> = storage
+            .borrow_read_only_accessor(
+                "TestVariant.first()",
+                "TestVariant.set_first()",
+                first_payload,
+            )
+            .expect("accessor")
+            .expect("payload present");
+
+        assert_eq!(*payload.as_ref().expect("snapshot read"), 4);
+        assert!(payload.as_mut().is_err());
     }
 
     #[test]
