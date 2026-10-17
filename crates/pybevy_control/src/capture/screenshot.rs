@@ -15,10 +15,11 @@ use tokio::sync::oneshot;
 
 use super::{
     camera::{
-        has_primary_window, selected_camera_screenshot_target, setup_debug_camera_for_entity,
-        validate_capture_camera,
+        has_primary_window, oversized_target_error, selected_camera_screenshot_target,
+        setup_debug_camera_for_entity, validate_capture_camera,
     },
     compose::composite_contact_sheet,
+    convert::capture_to_dynamic,
     headless::{capture_headless_frame, headless_frame_sequence},
     hold::{CaptureHold, hide_ui_nodes, prepare_pending_screenshot_gizmos, set_gizmos_enabled},
     isolation::{ENTITY_ISOLATION_SETTLE_FRAMES, begin_entity_capture_isolation},
@@ -393,6 +394,14 @@ pub fn process_pending_screenshots(world: &mut World) {
                     continue;
                 }
 
+                if let Some(Screenshot(target)) = screenshot_target.as_ref()
+                    && let Some(error) =
+                        oversized_target_error(world, target, s.response_kind.operation_name())
+                {
+                    fail_staged_screenshot_with_error(world, s, error);
+                    continue;
+                }
+
                 if let Some(screenshot) = screenshot_target {
                     if s.hold.gizmo_restore.is_empty() && !s.with_gizmos {
                         s.hold.gizmo_restore = set_gizmos_enabled(world, false);
@@ -514,10 +523,10 @@ pub fn screenshot_captured_observer(
     // Check if this is a timeline capture
     if let Some((timeline_id, capture_index)) = timeline_captures.map.remove(&entity) {
         let img = trigger.image.clone();
-        let dyn_img = match img.try_into_dynamic() {
+        let dyn_img = match capture_to_dynamic(img) {
             Ok(d) => d,
             Err(e) => {
-                error!("[MCP] Timeline capture failed to convert image: {e:?}");
+                error!("[MCP] Timeline capture failed to convert image: {e}");
                 return;
             }
         };
@@ -616,8 +625,8 @@ fn encode_screenshot(
     img: Image,
     max_width: Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
-    let dyn_img = img.try_into_dynamic().map_err(|e| {
-        ControlError::internal(format!("Failed to convert screenshot image: {e:?}"))
+    let dyn_img = capture_to_dynamic(img).map_err(|error| {
+        ControlError::internal(format!("Failed to convert screenshot image: {error}"))
     })?;
 
     // Discard alpha (stores HDR brightness) to get a clean RGB image
@@ -633,8 +642,8 @@ fn complete_screenshot_capture(
     captured_frames: &mut CapturedFrames,
     hot_reload_generation: Option<u32>,
 ) -> Result<serde_json::Value, ControlError> {
-    let dyn_img = img.try_into_dynamic().map_err(|error| {
-        ControlError::internal(format!("Failed to convert screenshot image: {error:?}"))
+    let dyn_img = capture_to_dynamic(img).map_err(|error| {
+        ControlError::internal(format!("Failed to convert screenshot image: {error}"))
     })?;
     let rgb = crop_capture_viewport(dyn_img.to_rgb8(), capture_viewport)?;
     complete_rgb_capture(

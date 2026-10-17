@@ -52,63 +52,13 @@ impl ApiIndex {
         let mut py_fallbacks: Vec<(String, PathBuf)> = Vec::new();
         let mut package_init_files: Vec<(String, PathBuf)> = Vec::new();
 
-        if let Ok(read_dir) = fs::read_dir(pybevy_dir) {
-            let mut dir_entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
-            dir_entries.sort_by_key(|e| e.file_name());
-
-            for entry in dir_entries {
-                let path = entry.path();
-                if path.is_file() {
-                    let ext = path.extension().and_then(|e| e.to_str());
-                    let stem = path.file_stem().and_then(|s| s.to_str());
-                    match (ext, stem) {
-                        (Some("pyi"), Some(name)) => {
-                            pyi_files.push((name.to_string(), path));
-                        }
-                        (Some("py"), Some(name)) if name != "__init__" => {
-                            py_fallbacks.push((name.to_string(), path));
-                        }
-                        _ => {}
-                    }
-                } else if path.is_dir() {
-                    // Scan one level of subdirectory (e.g. particle/, physics/, contrib/)
-                    let subdir_name = entry.file_name();
-                    let Some(subdir_str) = subdir_name.to_str() else {
-                        continue;
-                    };
-                    if let Ok(sub_read) = fs::read_dir(&path) {
-                        let mut sub_entries: Vec<_> = sub_read.filter_map(|e| e.ok()).collect();
-                        sub_entries.sort_by_key(|e| e.file_name());
-                        for sub_entry in sub_entries {
-                            let sub_path = sub_entry.path();
-                            if sub_path.is_file() {
-                                let ext = sub_path.extension().and_then(|e| e.to_str());
-                                let stem = sub_path.file_stem().and_then(|s| s.to_str());
-                                match (ext, stem) {
-                                    (Some("pyi"), Some("__init__")) => {
-                                        package_init_files
-                                            .push((subdir_str.to_string(), sub_path.clone()));
-                                        pyi_files.push((subdir_str.to_string(), sub_path));
-                                    }
-                                    (Some("pyi"), Some(name)) => {
-                                        let module_name = format!("{subdir_str}.{name}");
-                                        pyi_files.push((module_name, sub_path));
-                                    }
-                                    (Some("py"), Some("__init__")) => {
-                                        package_init_files.push((subdir_str.to_string(), sub_path));
-                                    }
-                                    (Some("py"), Some(name)) => {
-                                        let module_name = format!("{subdir_str}.{name}");
-                                        py_fallbacks.push((module_name, sub_path));
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        collect_stub_sources(
+            pybevy_dir,
+            None,
+            &mut pyi_files,
+            &mut py_fallbacks,
+            &mut package_init_files,
+        );
 
         pyi_files.retain(|(module, _)| is_public_module_name(module));
         py_fallbacks.retain(|(module, _)| is_public_module_name(module));
@@ -401,6 +351,60 @@ impl ApiIndex {
             }
         }
         None
+    }
+}
+
+/// Walk `dir` for stub and Python sources at any package depth.
+fn collect_stub_sources(
+    dir: &Path,
+    package: Option<&str>,
+    pyi_files: &mut Vec<(String, PathBuf)>,
+    py_fallbacks: &mut Vec<(String, PathBuf)>,
+    package_init_files: &mut Vec<(String, PathBuf)>,
+) {
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut dir_entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
+    dir_entries.sort_by_key(|e| e.file_name());
+    let qualify = |name: &str| match package {
+        Some(package) => format!("{package}.{name}"),
+        None => name.to_string(),
+    };
+    for entry in dir_entries {
+        let path = entry.path();
+        if path.is_dir() {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name == "__pycache__" {
+                continue;
+            }
+            let subpackage = qualify(name);
+            collect_stub_sources(
+                &path,
+                Some(&subpackage),
+                pyi_files,
+                py_fallbacks,
+                package_init_files,
+            );
+            continue;
+        }
+        let ext = path.extension().and_then(|e| e.to_str());
+        let stem = path.file_stem().and_then(|s| s.to_str());
+        match (ext, stem, package) {
+            (Some("pyi"), Some("__init__"), Some(package)) => {
+                package_init_files.push((package.to_string(), path.clone()));
+                pyi_files.push((package.to_string(), path));
+            }
+            (Some("py"), Some("__init__"), Some(package)) => {
+                package_init_files.push((package.to_string(), path));
+            }
+            (_, Some("__init__"), None) => {}
+            (Some("pyi"), Some(name), _) => pyi_files.push((qualify(name), path)),
+            (Some("py"), Some(name), _) => py_fallbacks.push((qualify(name), path)),
+            _ => {}
+        }
     }
 }
 
@@ -1796,6 +1800,41 @@ class Bloom(Component):
         assert!(index.contents.contains_key("math"));
         assert!(index.contents.contains_key("ecs"));
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_package_stubs_are_indexed_and_searchable() {
+        let dir = scratch_dir("pybevy_test_api_nested_index");
+        let _ = fs::remove_dir_all(&dir);
+        let agents = dir.join("ai").join("alpha").join("agents");
+        fs::create_dir_all(&agents).unwrap();
+        fs::create_dir_all(dir.join("ai").join("_private")).unwrap();
+        fs::write(
+            agents.join("__init__.pyi"),
+            "class AgentPlugin:\n    pass\n",
+        )
+        .unwrap();
+        fs::write(agents.join("tools.pyi"), "def agent_tool() -> None: ...\n").unwrap();
+        fs::write(
+            dir.join("ai").join("_private").join("hidden.pyi"),
+            "class Hidden: ...\n",
+        )
+        .unwrap();
+
+        let index = ApiIndex::build(&dir);
+        let (results, total) = index.search("AgentPlugin", None);
+        let (tools, _) = index.search("agent_tool", None);
+
+        assert_eq!(total, 1);
+        assert_eq!(results[0].module, "ai.alpha.agents");
+        assert_eq!(tools[0].module, "ai.alpha.agents.tools");
+        assert!(
+            index
+                .contents
+                .keys()
+                .all(|module| !module.contains("_private"))
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -80,10 +80,10 @@ commands.spawn(Camera3d(), Bloom.NATURAL)
 - `intensity` - Overall bloom strength (0.0–1.0, default ~0.15)
 - `low_frequency_boost` - Enhances large soft glow (0.0–1.0). `0.0–0.2` = sharp point-source glow (neon). `0.4–0.6` = soft atmospheric haze (fog, dreamy).
 - `low_frequency_boost_curvature` - Controls how broadly the low-frequency boost affects neighboring frequencies (0.0–1.0, default 0.95)
-- `high_pass_frequency` - Controls the maximum scattering angle (0.0–1.0, default 1.0)
+- `high_pass_frequency` - Controls the maximum scattering angle (above 0.0 up to 1.0, default 1.0); `0.0` raises `ValueError` because Bevy's blend factor divides by it and renders the camera black
 - `prefilter` - `BloomPrefilter(threshold=threshold, threshold_softness=threshold_softness)` limits bloom to bright regions
 - `composite_mode` - `BloomCompositeMode.EnergyConserving` by default; use `Additive` with a non-default prefilter
-- `max_mip_dimension` - Largest bloom mip dimension (default 512, at least 1); the constructor, setter, and `Bloom.batch()` reject zero with `ValueError`. Raise only to reduce sampling artifacts at large scales
+- `max_mip_dimension` - Largest bloom mip dimension (default 512, 8 to 16384); the constructor, setter, and `Bloom.batch()` raise `ValueError` outside that range, because Bevy renders the camera black below 8 and the mip texture exceeds GPU limits far above it. Raise only to reduce sampling artifacts at large scales
 - `scale` - `Vec2` stretch per axis; values greater than 1 widen bloom on that axis
 
 **Bloom presets by scene style:**
@@ -136,8 +136,10 @@ commands.spawn(Camera3d(), Tonemapping.TonyMcMapface)
 Common options: `Tonemapping.TonyMcMapface` (cinematic), `Tonemapping.AcesFitted` (film), `Tonemapping.BlenderFilmic` (matches Blender renders).
 
 `Camera3d` also requires `DebandDither.Enabled` (from `pybevy.render`), which the
-tonemapping pass applies. With `Tonemapping.None_` that pass does not run, and
-Bevy logs a warning until the camera gets `DebandDither.Disabled`:
+tonemapping step applies to 3D meshes and to the separate pass of an `Hdr()`
+camera. 2D sprite and mesh shaders do not dither, so a `Camera2d` without `Hdr()`
+ignores it. With `Tonemapping.None_` no tonemapping runs, and Bevy logs a warning
+until the camera gets `DebandDither.Disabled`:
 
 ```python
 from pybevy.render import DebandDither, Tonemapping
@@ -230,7 +232,9 @@ finite.
 
 **SSAO** darkens crevices between nearby geometry. **Requires `Msaa.Off`** on
 the camera. With MSAA enabled, SSAO does not activate and Bevy logs an error
-naming the incompatible `Msaa` value.
+naming the incompatible `Msaa` value. The camera's target must be at least
+16 px on each side: SSAO's depth mip chain fails below that and renders the
+camera black with wgpu validation errors.
 
 ```python
 from pybevy.pbr import ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel, ScreenSpaceReflections
@@ -358,7 +362,8 @@ def setup(commands: Commands) -> None:
 `aperture_f_stops` blurs more; `sensor_height` and the FOV set the focal
 length. Set a finite `max_depth` when a skybox or clear color is visible,
 since the default infinite depth blurs the background up to
-`max_circle_of_confusion_diameter` pixels. `DepthOfField.from_physical_camera(params)`
+`max_circle_of_confusion_diameter` pixels (0 to 16384; keep it near the default 64,
+since the blur cost grows with it). `DepthOfField.from_physical_camera(params)`
 copies `sensor_height` and `aperture_f_stops` from `PhysicalCameraParameters`,
 so pairing it with `Exposure.from_physical_camera(params)` keeps blur and
 exposure consistent.

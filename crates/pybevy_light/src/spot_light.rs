@@ -16,7 +16,7 @@ use pyo3::prelude::*;
     shadow_maps_enabled,
     contact_shadows_enabled,
     affects_lightmapped_mesh_diffuse
-], batch_only_fields = [color], domains = [intensity => [finite], range => [finite], radius => [finite], shadow_depth_bias => [finite], shadow_normal_bias => [finite], shadow_map_near_z => [finite], outer_angle => [finite], inner_angle => [finite]])]
+], batch_only_fields = [color], domains = [intensity => [finite], range => [finite], radius => [finite, non_negative], shadow_depth_bias => [finite], shadow_normal_bias => [finite], shadow_map_near_z => [finite], outer_angle => [finite], inner_angle => [finite]])]
 #[pyclass(name = "SpotLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySpotLight {

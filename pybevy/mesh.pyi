@@ -632,7 +632,10 @@ class SphereMeshBuilder(MeshBuilder):
     def uv(self, sectors: int, stacks: int) -> Mesh: ...
 
 class PlaneMeshBuilder(MeshBuilder):
-    """Raises ValueError for a negative, NaN, or infinite size; zero is allowed."""
+    """Raises ValueError for a negative, NaN, or infinite size; zero is allowed.
+
+    Subdivision counts outside 0 to 4294967295 raise ValueError.
+    """
 
     def __init__(self, normal: Dir3 = ..., size: Vec2 = ...) -> None: ...
     @staticmethod
@@ -658,7 +661,10 @@ class TorusMeshBuilder(MeshBuilder):
     def build(self) -> Mesh: ...
 
 class Capsule3dMeshBuilder(MeshBuilder):
-    """Mesh builder for 3D Capsule primitive."""
+    """Mesh builder for 3D Capsule primitive.
+
+    Ring counts outside 0 to 4294967295 raise ValueError.
+    """
     def rings(self, rings: int) -> Capsule3dMeshBuilder: ...
     def longitudes(self, longitudes: int) -> Capsule3dMeshBuilder: ...
     def latitudes(self, latitudes: int) -> Capsule3dMeshBuilder: ...

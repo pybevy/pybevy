@@ -111,6 +111,13 @@ pub fn get_bridge_by_py_type(ptr: *const PyTypeObject) -> Option<Arc<dyn Compone
     guard.by_py_type.get(&ptr).cloned()
 }
 
+/// Resolve the canonical Python bridge for a native component identity.
+pub fn get_component_bridge_by_type_id(type_id: TypeId) -> Option<Arc<dyn ComponentBridge>> {
+    let registry = get_global_registry();
+    let guard = registry.read().expect("Global registry lock poisoned");
+    guard.by_type_id.get(&type_id).cloned()
+}
+
 /// Check if a Python type pointer is registered (without returning the bridge)
 pub fn contains_py_type(ptr: *const PyTypeObject) -> bool {
     let registry = get_global_registry();
@@ -1481,6 +1488,8 @@ mod tests {
     // against a second registered type, never against the key's own value.
     struct RoutingCompA;
     struct RoutingCompB;
+    struct RoutingAliasCanonical;
+    struct RoutingAliasSecondCanonical;
     struct RoutingCompOld;
     struct RoutingCompNew;
     struct RoutingAssetA;
@@ -1558,7 +1567,7 @@ mod tests {
         let other: *const PyTypeObject = 0x8203_usize as *const PyTypeObject;
 
         register_component_bridge(routing_component_bridge(
-            TypeId::of::<RoutingCompA>(),
+            TypeId::of::<RoutingAliasCanonical>(),
             0x8201,
             "RoutingAliasCanonical",
         ));
@@ -1578,6 +1587,9 @@ mod tests {
         let by_alias = get_bridge_by_py_type(alias).unwrap();
         let by_canonical = get_bridge_by_py_type(canonical).unwrap();
         assert!(Arc::ptr_eq(&by_alias, &by_canonical));
+        let by_native =
+            get_component_bridge_by_type_id(TypeId::of::<RoutingAliasCanonical>()).unwrap();
+        assert!(Arc::ptr_eq(&by_native, &by_canonical));
         let after: Vec<&str> = all_component_bridges()
             .iter()
             .map(|bridge| bridge.name())
@@ -1592,11 +1604,17 @@ mod tests {
         );
 
         register_component_bridge(routing_component_bridge(
-            TypeId::of::<RoutingCompB>(),
+            TypeId::of::<RoutingAliasSecondCanonical>(),
             0x8203,
             "RoutingAliasSecondCanonical",
         ));
         assert!(register_component_bridge_alias(alias, other));
+        let by_native =
+            get_component_bridge_by_type_id(TypeId::of::<RoutingAliasSecondCanonical>()).unwrap();
+        assert!(Arc::ptr_eq(
+            &by_native,
+            &get_bridge_by_py_type(alias).unwrap()
+        ));
         assert_eq!(
             get_bridge_by_py_type(alias).unwrap().name(),
             "RoutingAliasSecondCanonical",

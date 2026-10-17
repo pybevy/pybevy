@@ -10,14 +10,14 @@ from collections.abc import Callable, Sequence
 from importlib.abc import InspectLoader
 from typing import TYPE_CHECKING
 
-from pybevy._internal.reload_modules import (
+from .reload_modules import (
     evict_modules,
     is_external_module_path,
     record_module_flush,
 )
 
 if TYPE_CHECKING:
-    from pybevy.app import App, Stage
+    from ..app import App, Stage
 
 
 def _flush_user_modules(project_dir: str) -> None:

@@ -39,7 +39,8 @@ helpers from the project root.
 - Clears all entities and custom Python resources
 - Built-in (engine-plugin) resources survive as resources but are reset to their
   engine defaults, including Time, GlobalVolume and WireframeConfig. The virtual
-  Time clock therefore resets to 0
+  Time clock therefore resets to 0, but its pause state and `relative_speed`
+  are kept (see [Time Continuity](#time-continuity))
 - Native resources first created by scene code are removed, including values
   inserted in the initial entrypoint or Startup. Plugin defaults are captured
   before user startup; later overrides do not turn them into user-only resources

@@ -136,6 +136,12 @@ requests `Mesh`, and `#Animation0` requests `AnimationClip`. The label must
 exist in the file. Unlabelled glTF loads still return `Gltf` when settings
 establish the type.
 
+A loaded root `Gltf` maps source names to handles like Bevy's `HashMap`
+fields: `named_scenes`, `named_meshes`, `named_materials`, `named_nodes`,
+`named_skins`, and `named_animations` each return a `dict` snapshot, such as
+`gltf.named_scenes["Scene"]`. Assign a whole `dict` through
+`ResMut[Assets[Gltf]].get_mut()` to replace a map.
+
 Coordinate conversion is experimental in Bevy. Keep `validate=True` unless the
 asset must bypass glTF validation deliberately.
 

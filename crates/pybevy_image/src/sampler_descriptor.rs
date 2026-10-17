@@ -1,16 +1,47 @@
-use bevy::image::{ImageSampler, ImageSamplerDescriptor};
+use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
     domain::IntegerInput,
+    public_error,
     repr::{float_repr, str_repr},
 };
 use pybevy_macros::pyfield;
-use pyo3::prelude::*;
+use pyo3::{PyClass, exceptions::PyValueError, prelude::*};
 
 use crate::{
     image_address_mode::PyImageAddressMode, image_compare_function::PyImageCompareFunction,
     image_filter_mode::PyImageFilterMode, image_sampler_border_color::PyImageSamplerBorderColor,
 };
+
+/// wgpu rejects an anisotropy_clamp above 1 unless all three filters are Linear.
+fn check_anisotropic_filters(
+    anisotropy_clamp: u16,
+    mag_filter: ImageFilterMode,
+    min_filter: ImageFilterMode,
+    mipmap_filter: ImageFilterMode,
+) -> PyResult<()> {
+    if anisotropy_clamp <= 1 {
+        return Ok(());
+    }
+    let filters = [
+        ("mag_filter", mag_filter),
+        ("min_filter", min_filter),
+        ("mipmap_filter", mipmap_filter),
+    ];
+    match filters
+        .into_iter()
+        .find(|(_, filter)| *filter != ImageFilterMode::Linear)
+    {
+        Some((name, _)) => Err(PyValueError::new_err(
+            public_error::sampler_anisotropy_requires_linear(
+                <PyImageSamplerDescriptor as PyClass>::NAME,
+                anisotropy_clamp,
+                name,
+            ),
+        )),
+        None => Ok(()),
+    }
+}
 
 // wgpu requires 0 <= lod_min_clamp <= lod_max_clamp and anisotropy_clamp >= 1.
 #[pyfield(domains = [
@@ -78,6 +109,12 @@ impl PyImageSamplerDescriptor {
             label,
         };
         Self::validate_domains(&descriptor)?;
+        check_anisotropic_filters(
+            descriptor.anisotropy_clamp,
+            descriptor.mag_filter,
+            descriptor.min_filter,
+            descriptor.mipmap_filter,
+        )?;
         Ok(descriptor.into())
     }
 
@@ -131,7 +168,12 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_mag_filter(&mut self, value: PyImageFilterMode) -> PyResult<()> {
-        self.as_mut()?.mag_filter = value.into();
+        let value: ImageFilterMode = value.into();
+        {
+            let d = self.as_ref()?;
+            check_anisotropic_filters(d.anisotropy_clamp, value, d.min_filter, d.mipmap_filter)?;
+        }
+        self.as_mut()?.mag_filter = value;
         Ok(())
     }
 
@@ -142,7 +184,12 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_min_filter(&mut self, value: PyImageFilterMode) -> PyResult<()> {
-        self.as_mut()?.min_filter = value.into();
+        let value: ImageFilterMode = value.into();
+        {
+            let d = self.as_ref()?;
+            check_anisotropic_filters(d.anisotropy_clamp, d.mag_filter, value, d.mipmap_filter)?;
+        }
+        self.as_mut()?.min_filter = value;
         Ok(())
     }
 
@@ -153,7 +200,12 @@ impl PyImageSamplerDescriptor {
 
     #[setter]
     pub fn set_mipmap_filter(&mut self, value: PyImageFilterMode) -> PyResult<()> {
-        self.as_mut()?.mipmap_filter = value.into();
+        let value: ImageFilterMode = value.into();
+        {
+            let d = self.as_ref()?;
+            check_anisotropic_filters(d.anisotropy_clamp, d.mag_filter, d.min_filter, value)?;
+        }
+        self.as_mut()?.mipmap_filter = value;
         Ok(())
     }
 
@@ -201,6 +253,10 @@ impl PyImageSamplerDescriptor {
     #[setter]
     pub fn set_anisotropy_clamp(&mut self, value: IntegerInput<u16>) -> PyResult<()> {
         let value = Self::check_anisotropy_clamp(value)?.stored();
+        {
+            let d = self.as_ref()?;
+            check_anisotropic_filters(value, d.mag_filter, d.min_filter, d.mipmap_filter)?;
+        }
         self.as_mut()?.anisotropy_clamp = value;
         Ok(())
     }
@@ -225,6 +281,14 @@ impl PyImageSamplerDescriptor {
     pub fn set_label(&mut self, value: Option<String>) -> PyResult<()> {
         self.as_mut()?.label = value;
         Ok(())
+    }
+
+    pub fn __copy__(&self) -> PyResult<Self> {
+        Ok(Self::from_owned(self.storage.get()?))
+    }
+
+    pub fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
     }
 
     pub fn __repr__(&self) -> PyResult<String> {

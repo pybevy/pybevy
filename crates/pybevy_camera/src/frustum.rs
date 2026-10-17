@@ -18,9 +18,9 @@ pub struct PyFrustum {
 #[pymethods]
 impl PyFrustum {
     #[new]
-    #[pyo3(signature = (view_frustum = PyViewFrustum::from(ViewFrustum::default())))]
-    pub fn new(view_frustum: PyViewFrustum) -> PyResult<PyClassInitializer<Self>> {
-        let frustum = Frustum(view_frustum.try_into()?);
+    #[pyo3(signature = (value = PyViewFrustum::from(ViewFrustum::default())))]
+    pub fn new(value: PyViewFrustum) -> PyResult<PyClassInitializer<Self>> {
+        let frustum = Frustum(value.try_into()?);
         Ok((
             PyFrustum {
                 storage: ComponentStorage::owned(frustum),
@@ -36,8 +36,8 @@ impl PyFrustum {
     }
 
     #[setter]
-    pub fn set_value(&mut self, view_frustum: PyViewFrustum) -> PyResult<()> {
-        self.as_mut()?.0 = view_frustum.try_into()?;
+    pub fn set_value(&mut self, value: PyViewFrustum) -> PyResult<()> {
+        self.as_mut()?.0 = value.try_into()?;
         Ok(())
     }
 

@@ -254,8 +254,10 @@ def play_tone(commands: Commands, pitches: ResMut[Assets[Pitch]]) -> None:
 
 `Pitch.frequency` must be finite and positive; `Pitch.duration` must be finite
 and non-negative. The duration accepts float or int seconds or a `timedelta` and
-reads back as float seconds. Invalid numeric values raise `ValueError` in both
-the constructor and setters. A zero duration is valid.
+reads back as a `timedelta`, like `PlaybackSettings.duration`; use
+`pitch.duration.total_seconds()` for float seconds. Invalid numeric values
+raise `ValueError` in both the constructor and setters. A zero duration is
+valid.
 
 Use `Query[AudioPlayer[Pitch]]` to read procedural players and
 `Query[Mut[AudioPlayer[Pitch]]]` to change their source. The replacement handle

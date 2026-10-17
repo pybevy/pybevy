@@ -9,7 +9,8 @@ use pyo3::prelude::*;
 
 use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloomPrefilter};
 
-// Bevy documents a valid range of [0, 1] for the curvature and high-pass frequency.
+// Bevy documents [0, 1] for the curvature and high-pass frequency, but a zero high-pass
+// frequency or fewer than 8 mip pixels divides 0/0 and blackens the frame.
 #[pycomponent(
     Bloom,
     bridge,
@@ -17,8 +18,8 @@ use crate::{bloom_composite_mode::PyBloomCompositeMode, bloom_prefilter::PyBloom
         intensity => [finite, non_negative],
         low_frequency_boost => [finite, non_negative],
         low_frequency_boost_curvature => [range_inclusive(0.0, 1.0)],
-        high_pass_frequency => [range_inclusive(0.0, 1.0)],
-        max_mip_dimension => [positive],
+        high_pass_frequency => [positive, range_inclusive(0.0, 1.0)],
+        max_mip_dimension => [range_inclusive(8.0, 16384.0)],
         scale => [finite],
     ],
     view_fields = [

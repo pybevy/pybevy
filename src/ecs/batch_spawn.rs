@@ -17,6 +17,7 @@ use pyo3::{
     prelude::*,
     types::{PyTuple, PyType},
 };
+use smallvec::SmallVec;
 
 use super::{
     commands::{
@@ -31,7 +32,7 @@ use super::{
     component_wrapper::*,
     custom_batch::PyCustomComponentBatch,
     helpers::type_utils::get_python_type_name,
-    lifecycle_mutation::finish_new_bundle,
+    lifecycle_mutation::{finish_new_bundle, native_component_type},
 };
 
 /// Enum to represent either a batch component or a uniform component
@@ -127,12 +128,18 @@ struct ValidatedSpawnBatch {
 struct CommittedSpawnBatch {
     entities: Vec<Entity>,
     lifecycle_types: Vec<PyComponentType>,
+    required_additions: HashMap<Entity, Vec<PyComponentType>>,
 }
 
 impl CommittedSpawnBatch {
     fn finish(&self, world: &mut World) {
         for &entity in &self.entities {
-            finish_new_bundle(world, entity, &self.lifecycle_types);
+            let mut components =
+                SmallVec::<[PyComponentType; 8]>::from_slice(&self.lifecycle_types);
+            if let Some(required) = self.required_additions.get(&entity) {
+                components.extend_from_slice(required);
+            }
+            finish_new_bundle(world, entity, &components);
         }
     }
 }
@@ -410,9 +417,19 @@ impl SpawnBatchCommand {
             None => BatchSpawnCore::apply(world, validated.plan),
         };
 
+        let mut required_additions: HashMap<Entity, Vec<PyComponentType>> = HashMap::new();
+        for (entity, id) in committed.required_additions {
+            if let Some(component) = native_component_type(world, id) {
+                required_additions
+                    .entry(entity)
+                    .or_default()
+                    .push(component);
+            }
+        }
         CommittedSpawnBatch {
             entities: committed.entities,
             lifecycle_types: validated.lifecycle_types,
+            required_additions,
         }
     }
 }

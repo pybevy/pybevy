@@ -179,6 +179,12 @@ rule, rather than returning an unrelated or stale readback frame. `capture_depth
 still requires a `Camera3d` and reports its selected identity and target passes
 with its depth rays.
 
+Captures read any colour target format a camera can render into. sRGB targets
+(`Rgba8UnormSrgb`, the `new_render_target` default) report display values;
+linear, signed, 16- and 32-bit and packed formats (`Rgba8Unorm`, `Rgba16Float`,
+`Rgb10a2Unorm`, `Rg11b10Ufloat`, ...) report their stored linear values clamped
+to 0-1, and single- or two-channel formats report their first channel as grey.
+
 ## Troubleshooting
 
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
@@ -204,9 +210,13 @@ Image readback returns one `width * height` frame at the size the readback was r
 
 A camera's first readback frame can be blank (all zeros), because Bevy does not draw a newly added camera on its first frame; judge the image from a later frame. After the camera producing headless frames is despawned, headless captures fail immediately with "no frame yet" instead of waiting for the capture deadline.
 
-If the GPU rejects a render target or its readback buffer, PyBevy logs the
-mapping error and disables readback for that camera. Capture may then time out;
-use a target within the device's supported dimensions and restart the scene.
+A capture whose image target is wider or taller than the GPU's 2D texture
+limit (commonly 8192 or 16384) fails at once with an error naming the size and
+the limit, since the GPU rejects such a texture and nothing renders into it. If
+the GPU rejects a render target or its readback buffer for another reason,
+PyBevy logs the mapping error and disables readback for that camera. Capture may
+then time out; use a target within the device's supported dimensions and restart
+the scene.
 
 ## Capture Quality and Style
 

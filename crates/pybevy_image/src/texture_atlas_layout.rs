@@ -1,5 +1,8 @@
 use bevy::{image::TextureAtlasLayout, math::UVec2};
-use pybevy_core::{AssetStorage, PyAsset};
+use pybevy_core::{
+    AssetStorage, PyAsset,
+    domain::{IntegerInput, NON_NEGATIVE, check_for},
+};
 use pybevy_macros::pyasset;
 use pybevy_math::{urect::PyURect, uvec2::PyUVec2};
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -63,11 +66,13 @@ impl PyTextureAtlasLayout {
     #[pyo3(signature = (tile_size, columns, rows, padding=None, offset=None))]
     pub fn from_grid(
         tile_size: PyUVec2,
-        columns: u32,
-        rows: u32,
+        columns: IntegerInput<u32>,
+        rows: IntegerInput<u32>,
         padding: Option<PyUVec2>,
         offset: Option<PyUVec2>,
     ) -> PyResult<Py<PyTextureAtlasLayout>> {
+        let columns = check_for::<Self, _>("columns", columns, NON_NEGATIVE)?.stored();
+        let rows = check_for::<Self, _>("rows", rows, NON_NEGATIVE)?.stored();
         let count = u64::from(columns) * u64::from(rows);
         if count > MAX_GRID_RECTS {
             return Err(PyValueError::new_err(format!(

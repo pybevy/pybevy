@@ -111,6 +111,14 @@ pub fn pywrap(attr: TokenStream, item: TokenStream) -> TokenStream {
                 pub fn __copy__(&self, py: Python) -> PyResult<Py<Self>> {
                     Py::new(py, Self::from_owned(self.0.clone()))
                 }
+
+                pub fn __deepcopy__(
+                    &self,
+                    py: Python,
+                    _memo: &Bound<'_, PyAny>,
+                ) -> PyResult<Py<Self>> {
+                    self.__copy__(py)
+                }
             }
         }
     } else {

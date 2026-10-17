@@ -334,8 +334,8 @@ class Pitch(Asset):
         """Set the frequency in Hz."""
 
     @property
-    def duration(self) -> float:
-        """Get the duration in seconds."""
+    def duration(self) -> timedelta:
+        """Get the duration."""
 
     @duration.setter
     def duration(self, value: timedelta | float | int) -> None:

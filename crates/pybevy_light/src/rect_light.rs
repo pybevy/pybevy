@@ -9,7 +9,7 @@ use pyo3::prelude::*;
     range,
     width,
     height
-], batch_only_fields = [color], domains = [intensity => [finite], range => [finite], width => [finite], height => [finite]])]
+], batch_only_fields = [color], domains = [intensity => [finite], range => [finite], width => [positive], height => [positive]])]
 #[pyclass(name = "RectLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyRectLight {

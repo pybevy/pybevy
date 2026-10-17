@@ -4,12 +4,15 @@ use bevy::{
     camera::{ImageRenderTarget, RenderTarget},
     ecs::world::World,
     prelude::*,
-    render::render_resource::{TextureFormat, TextureUsages},
+    render::{
+        render_resource::{TextureFormat, TextureUsages},
+        renderer::RenderDevice,
+    },
     window::{PrimaryWindow, Window, WindowRef},
 };
 use pybevy_core::public_error::{
     SCREENSHOT_CAMERA3D_REQUIRED, TURNAROUND_CAMERA3D_REQUIRED, capture_inactive_cameras,
-    capture_no_camera, capture_no_target,
+    capture_no_camera, capture_no_target, capture_target_exceeds_gpu_limit,
 };
 
 use crate::{
@@ -107,6 +110,28 @@ pub(super) fn validate_capture_camera(
     }
 
     Ok(())
+}
+
+/// An image target the GPU cannot allocate, whose capture would read back black.
+pub(super) fn oversized_target_error(
+    world: &World,
+    target: &RenderTarget,
+    operation: &str,
+) -> Option<ControlError> {
+    let RenderTarget::Image(target) = target else {
+        return None;
+    };
+    let limit = world
+        .get_resource::<RenderDevice>()?
+        .limits()
+        .max_texture_dimension_2d;
+    let image = world.get_resource::<Assets<Image>>()?.get(&target.handle)?;
+    let (width, height) = (image.width(), image.height());
+    (width > limit || height > limit).then(|| {
+        ControlError::invalid_params(capture_target_exceeds_gpu_limit(
+            operation, width, height, limit,
+        ))
+    })
 }
 
 pub(super) fn selected_camera_screenshot_target(

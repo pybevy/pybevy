@@ -92,6 +92,7 @@ fn build_info(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     let info = installed_build_info();
     let dict = PyDict::new(py);
     dict.set_item("version", pybevy_core::PYBEVY_VERSION)?;
+    dict.set_item("bevy_version", pybevy_core::BEVY_VERSION)?;
     dict.set_item("git_sha", info.git_sha)?;
     dict.set_item("git_sha_short", info.git_sha_short)?;
     dict.set_item("git_dirty", info.git_dirty)?;

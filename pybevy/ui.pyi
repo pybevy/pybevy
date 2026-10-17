@@ -2605,6 +2605,8 @@ class GridTrack:
         """Create a track sized to viewport maximum dimension percentage."""
 
     def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> GridTrack: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GridTrack: ...
 
 
 class GridPlacement:
@@ -2770,6 +2772,8 @@ class RepeatedGridTrack:
         """Create repeated fit-content tracks with percentage limit."""
 
     def __eq__(self, other: object) -> bool: ...
+    def __copy__(self) -> RepeatedGridTrack: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> RepeatedGridTrack: ...
 
 
 class IsDefaultUiCamera(Component):
@@ -2852,7 +2856,9 @@ class RelativeCursorPosition(Component):
 
     Attributes:
         cursor_over: True if cursor is over an unclipped area of the node.
-        normalized: Cursor position in normalized coordinates (0-1), or None if unknown.
+        normalized: Cursor position relative to the node's centre, in node sizes:
+            (0, 0) at the centre, -0.5 to 0.5 across the node, unbounded
+            outside it; None if unknown.
     """
     def __init__(self) -> None: ...
 
@@ -2865,7 +2871,12 @@ class RelativeCursorPosition(Component):
 
     @property
     def normalized(self) -> Vec2 | None:
-        """Cursor position normalized to node bounds (0-1), or None if unknown."""
+        """Cursor position relative to the node's centre, in node sizes.
+
+        (0, 0) is the centre, (-0.5, -0.5) the top-left and (0.5, 0.5) the
+        bottom-right corner; values outside -0.5 to 0.5 lie outside the node.
+        None if unknown.
+        """
 
     @normalized.setter
     def normalized(self, value: Vec2 | None) -> None: ...

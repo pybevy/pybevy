@@ -11,13 +11,19 @@ const CONDITION_EXPR_ATTR: &str = "__pybevy_condition_expr__";
 const MAX_CONDITION_EXPR_DEPTH: usize = 64;
 
 pub(crate) fn extract_condition_expr(condition: Py<PyAny>) -> PyResult<ConditionExpr<Py<PyAny>>> {
-    extract_condition_expr_at(condition, 0)
+    Ok(extract_condition_expr_at(condition, 0)?.0)
 }
 
+/// Extracts one marker, returning the expression and its generated tree depth.
+///
+/// The marker-depth check alone is not enough: folding a flat operand list
+/// builds a left-deep tree far deeper than any input marker nesting, and
+/// recursive lowering or teardown of that tree exhausts the stack. Tracking
+/// the generated depth during the fold keeps the constructed tree bounded.
 fn extract_condition_expr_at(
     condition: Py<PyAny>,
     depth: usize,
-) -> PyResult<ConditionExpr<Py<PyAny>>> {
+) -> PyResult<(ConditionExpr<Py<PyAny>>, usize)> {
     if depth > MAX_CONDITION_EXPR_DEPTH {
         return Err(PyValueError::new_err(
             "condition expression nesting exceeds 64 levels",
@@ -29,7 +35,7 @@ fn extract_condition_expr_at(
         let marker = match condition.bind(py).getattr(CONDITION_EXPR_ATTR) {
             Ok(marker) => marker,
             Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
-                return Ok(ConditionExpr::Leaf(condition));
+                return Ok((ConditionExpr::Leaf(condition), 0));
             }
             Err(error) => return Err(error),
         };
@@ -39,18 +45,26 @@ fn extract_condition_expr_at(
         match operator.as_str() {
             "and" | "or" => {
                 let Some(first) = operands.next() else {
-                    return Ok(ConditionExpr::Leaf(condition));
+                    return Ok((ConditionExpr::Leaf(condition), 0));
                 };
-                let mut expression = extract_condition_expr_at(first, depth + 1)?;
+                let (mut expression, mut expression_depth) =
+                    extract_condition_expr_at(first, depth + 1)?;
                 for operand in operands {
-                    let right = extract_condition_expr_at(operand, depth + 1)?;
+                    let (right, right_depth) = extract_condition_expr_at(operand, depth + 1)?;
+                    let folded_depth = expression_depth.max(right_depth) + 1;
+                    if folded_depth > MAX_CONDITION_EXPR_DEPTH {
+                        return Err(PyValueError::new_err(
+                            "condition expression nesting exceeds 64 levels",
+                        ));
+                    }
+                    expression_depth = folded_depth;
                     expression = if operator == "and" {
                         ConditionExpr::And(Box::new(expression), Box::new(right))
                     } else {
                         ConditionExpr::Or(Box::new(expression), Box::new(right))
                     };
                 }
-                Ok(expression)
+                Ok((expression, expression_depth))
             }
             "not" => {
                 let operand = operands.next().ok_or_else(|| {
@@ -61,10 +75,13 @@ fn extract_condition_expr_at(
                         "not condition expression requires one operand",
                     ));
                 }
-                Ok(ConditionExpr::Not(Box::new(extract_condition_expr_at(
-                    operand,
-                    depth + 1,
-                )?)))
+                let (inner, inner_depth) = extract_condition_expr_at(operand, depth + 1)?;
+                if inner_depth + 1 > MAX_CONDITION_EXPR_DEPTH {
+                    return Err(PyValueError::new_err(
+                        "condition expression nesting exceeds 64 levels",
+                    ));
+                }
+                Ok((ConditionExpr::Not(Box::new(inner)), inner_depth + 1))
             }
             _ => Err(PyValueError::new_err(
                 "unknown condition expression operator",
@@ -135,6 +152,8 @@ impl PyConditionalSystem {
     pub fn and_(&self, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
         let condition = condition_callable(condition, "and_()")?;
         Python::attach(|py| {
+            let operand = extract_condition_expr_at(condition, 0)?;
+            ensure_condition_depth(self.condition.depth().max(operand.1) + 1)?;
             Ok(Self {
                 system: self.system.clone_ref(py),
                 condition: ConditionExpr::And(
@@ -142,7 +161,7 @@ impl PyConditionalSystem {
                         self.condition
                             .map_ref(&mut |condition| condition.clone_ref(py)),
                     ),
-                    Box::new(extract_condition_expr(condition)?),
+                    Box::new(operand.0),
                 ),
             })
         })
@@ -154,6 +173,8 @@ impl PyConditionalSystem {
     pub fn or_(&self, condition: &Bound<'_, PyAny>) -> PyResult<Self> {
         let condition = condition_callable(condition, "or_()")?;
         Python::attach(|py| {
+            let operand = extract_condition_expr_at(condition, 0)?;
+            ensure_condition_depth(self.condition.depth().max(operand.1) + 1)?;
             Ok(Self {
                 system: self.system.clone_ref(py),
                 condition: ConditionExpr::Or(
@@ -161,7 +182,7 @@ impl PyConditionalSystem {
                         self.condition
                             .map_ref(&mut |condition| condition.clone_ref(py)),
                     ),
-                    Box::new(extract_condition_expr(condition)?),
+                    Box::new(operand.0),
                 ),
             })
         })
@@ -172,6 +193,7 @@ impl PyConditionalSystem {
     /// Usage: run_if(system, condition).not_()
     pub fn not_(&self) -> PyResult<Self> {
         Python::attach(|py| {
+            ensure_condition_depth(self.condition.depth() + 1)?;
             Ok(Self {
                 system: self.system.clone_ref(py),
                 condition: ConditionExpr::Not(Box::new(
@@ -181,6 +203,19 @@ impl PyConditionalSystem {
             })
         })
     }
+}
+
+/// Rejects expression trees deeper than the documented cap.
+///
+/// Constructed expressions are bounded by this check, so later recursive
+/// lowering, traversal, and teardown cannot exhaust the stack.
+fn ensure_condition_depth(depth: usize) -> PyResult<()> {
+    if depth > MAX_CONDITION_EXPR_DEPTH {
+        return Err(PyValueError::new_err(
+            "condition expression nesting exceeds 64 levels",
+        ));
+    }
+    Ok(())
 }
 
 impl PyConditionalSystem {

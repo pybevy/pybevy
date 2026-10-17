@@ -57,6 +57,19 @@ impl<T> ConditionExpr<T> {
         }
     }
 
+    /// Number of combiner nodes on the longest root-to-leaf path.
+    ///
+    /// Callers only measure expressions already bounded by the construction
+    /// cap, so the recursion stays shallow.
+    #[must_use]
+    pub fn depth(&self) -> usize {
+        match self {
+            Self::Leaf(_) => 0,
+            Self::And(left, right) | Self::Or(left, right) => 1 + left.depth().max(right.depth()),
+            Self::Not(condition) => 1 + condition.depth(),
+        }
+    }
+
     pub fn for_each_leaf(&self, f: &mut impl FnMut(&T)) {
         match self {
             Self::Leaf(leaf) => f(leaf),

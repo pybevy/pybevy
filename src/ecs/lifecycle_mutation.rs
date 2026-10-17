@@ -8,10 +8,11 @@ use bevy::ecs::{
     hierarchy::{ChildOf, Children},
     world::{World, WorldId},
 };
+use pybevy_core::registry::global_registry;
 use pybevy_ecs::shared::{
     lifecycle_mutation::{
         LifecycleEvent, LifecycleMutationAdapter, LifecycleMutationCore, LifecycleMutationOutcome,
-        RecursiveDespawnSnapshot,
+        RecursiveDespawnSnapshot, required_component_ids,
     },
     observer_registry::LifecycleKind,
     system_runtime::ErrorPolicy,
@@ -131,6 +132,24 @@ impl<F: FnOnce(&mut World) -> bool> LifecycleMutationAdapter for MainLifecycleAd
         self.world
             .get_entity(entity)
             .is_ok_and(|entity_ref| entity_ref.contains_id(component_id))
+    }
+
+    fn required_components(&mut self, components: &[PyComponentType]) -> Vec<PyComponentType> {
+        let explicit = components
+            .iter()
+            .filter_map(|component| {
+                if let PyComponentType::Dynamic(ptr) = component {
+                    global_registry::get_bridge_by_py_type(*ptr)
+                        .map(|bridge| bridge.register(self.world))
+                } else {
+                    self.component_id(*component)
+                }
+            })
+            .collect::<Vec<_>>();
+        required_component_ids(self.world.components(), &explicit)
+            .into_iter()
+            .filter_map(|id| native_component_type(self.world, id))
+            .collect()
     }
 
     fn snapshot_observers(
@@ -265,6 +284,12 @@ fn lifecycle_kind(event: LifecycleEvent) -> LifecycleKind {
         LifecycleEvent::Discard => LifecycleKind::Discard,
         LifecycleEvent::Despawn => LifecycleKind::Despawn,
     }
+}
+
+pub(crate) fn native_component_type(world: &World, id: ComponentId) -> Option<PyComponentType> {
+    let native_type = world.components().get_info(id)?.type_id()?;
+    let bridge = global_registry::get_component_bridge_by_type_id(native_type)?;
+    Some(PyComponentType::Dynamic(bridge.py_type_ptr()))
 }
 
 pub(crate) fn insert_many_with(

@@ -34,10 +34,18 @@ fn extract_handles<A: Asset>(handles: Vec<PyHandle>) -> PyResult<Vec<Handle<A>>>
     handles.into_iter().map(extract_handle).collect()
 }
 
-fn extract_named_handles<A: Asset, I>(handles: I) -> PyResult<BevyHashMap<Box<str>, Handle<A>>>
-where
-    I: IntoIterator<Item = (String, PyHandle)>,
-{
+fn named_handles<A: Asset>(
+    handles: &BevyHashMap<Box<str>, Handle<A>>,
+) -> HashMap<String, PyHandle> {
+    handles
+        .iter()
+        .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
+        .collect()
+}
+
+fn extract_named_handles<A: Asset>(
+    handles: HashMap<String, PyHandle>,
+) -> PyResult<BevyHashMap<Box<str>, Handle<A>>> {
     handles
         .into_iter()
         .map(|(name, handle)| Ok((name.into_boxed_str(), extract_handle(handle)?)))
@@ -588,17 +596,12 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn named_scenes(&self) -> PyResult<Vec<(String, PyHandle)>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .named_scenes
-            .iter()
-            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
-            .collect())
+    pub fn named_scenes(&self) -> PyResult<HashMap<String, PyHandle>> {
+        Ok(named_handles(&self.storage.as_ref()?.named_scenes))
     }
 
     #[setter]
-    pub fn set_named_scenes(&mut self, value: Vec<(String, PyHandle)>) -> PyResult<()> {
+    pub fn set_named_scenes(&mut self, value: HashMap<String, PyHandle>) -> PyResult<()> {
         self.as_mut()?.named_scenes = extract_named_handles(value)?;
         Ok(())
     }
@@ -617,17 +620,12 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn named_meshes(&self) -> PyResult<Vec<(String, PyHandle)>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .named_meshes
-            .iter()
-            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
-            .collect())
+    pub fn named_meshes(&self) -> PyResult<HashMap<String, PyHandle>> {
+        Ok(named_handles(&self.storage.as_ref()?.named_meshes))
     }
 
     #[setter]
-    pub fn set_named_meshes(&mut self, value: Vec<(String, PyHandle)>) -> PyResult<()> {
+    pub fn set_named_meshes(&mut self, value: HashMap<String, PyHandle>) -> PyResult<()> {
         self.as_mut()?.named_meshes = extract_named_handles(value)?;
         Ok(())
     }
@@ -646,17 +644,12 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn named_materials(&self) -> PyResult<Vec<(String, PyHandle)>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .named_materials
-            .iter()
-            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
-            .collect())
+    pub fn named_materials(&self) -> PyResult<HashMap<String, PyHandle>> {
+        Ok(named_handles(&self.storage.as_ref()?.named_materials))
     }
 
     #[setter]
-    pub fn set_named_materials(&mut self, value: Vec<(String, PyHandle)>) -> PyResult<()> {
+    pub fn set_named_materials(&mut self, value: HashMap<String, PyHandle>) -> PyResult<()> {
         self.as_mut()?.named_materials = extract_named_handles(value)?;
         Ok(())
     }
@@ -675,17 +668,12 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn named_nodes(&self) -> PyResult<Vec<(String, PyHandle)>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .named_nodes
-            .iter()
-            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
-            .collect())
+    pub fn named_nodes(&self) -> PyResult<HashMap<String, PyHandle>> {
+        Ok(named_handles(&self.storage.as_ref()?.named_nodes))
     }
 
     #[setter]
-    pub fn set_named_nodes(&mut self, value: Vec<(String, PyHandle)>) -> PyResult<()> {
+    pub fn set_named_nodes(&mut self, value: HashMap<String, PyHandle>) -> PyResult<()> {
         self.as_mut()?.named_nodes = extract_named_handles(value)?;
         Ok(())
     }
@@ -716,17 +704,12 @@ impl PyGltf {
     }
 
     #[getter]
-    pub fn named_skins(&self) -> PyResult<Vec<(String, PyHandle)>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .named_skins
-            .iter()
-            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
-            .collect())
+    pub fn named_skins(&self) -> PyResult<HashMap<String, PyHandle>> {
+        Ok(named_handles(&self.storage.as_ref()?.named_skins))
     }
 
     #[setter]
-    pub fn set_named_skins(&mut self, value: Vec<(String, PyHandle)>) -> PyResult<()> {
+    pub fn set_named_skins(&mut self, value: HashMap<String, PyHandle>) -> PyResult<()> {
         self.as_mut()?.named_skins = extract_named_handles(value)?;
         Ok(())
     }
@@ -746,12 +729,7 @@ impl PyGltf {
 
     #[getter]
     pub fn named_animations(&self) -> PyResult<HashMap<String, PyHandle>> {
-        let gltf = self.storage.as_ref()?;
-        Ok(gltf
-            .named_animations
-            .iter()
-            .map(|(name, handle)| (name.to_string(), PyHandle::from(handle)))
-            .collect())
+        Ok(named_handles(&self.storage.as_ref()?.named_animations))
     }
 
     #[setter]

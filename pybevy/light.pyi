@@ -30,10 +30,10 @@ class LightGizmoColor:
 
 
     class Manual(LightGizmoColor):
-        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        __match_args__: ClassVar[tuple[Literal["color"]]] = ("color",)
         @property
-        def value(self) -> Color: ...
-        def __init__(self, value: Color) -> None: ...
+        def color(self) -> Color: ...
+        def __init__(self, color: Color) -> None: ...
 
     class Varied(LightGizmoColor):
         __match_args__: ClassVar[tuple[()]]
@@ -246,6 +246,7 @@ class PointLight(Component):
     intensity: float
     range: float
     radius: float
+    """Finite and non-negative; a negative radius blackens the lit scene."""
     shadow_maps_enabled: bool
     contact_shadows_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
@@ -290,6 +291,7 @@ class SpotLight(Component):
     intensity: float
     range: float
     radius: float
+    """Finite and non-negative; a negative radius blackens the lit scene."""
     shadow_maps_enabled: bool
     contact_shadows_enabled: bool
     affects_lightmapped_mesh_diffuse: bool
@@ -373,7 +375,9 @@ class RectLight(Component):
     intensity: float
     range: float
     width: float
+    """Finite and greater than zero; a zero-sized rect light blackens all lighting."""
     height: float
+    """Finite and greater than zero."""
 
     @staticmethod
     def batch(  # type: ignore[override]

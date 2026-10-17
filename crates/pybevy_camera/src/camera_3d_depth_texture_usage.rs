@@ -1,4 +1,6 @@
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyValueError, prelude::*};
+
+use crate::texture_usage_rules::check_depth_texture_usage;
 
 #[pyclass(
     name = "Camera3dDepthTextureUsage",
@@ -13,8 +15,9 @@ pub struct PyCamera3dDepthTextureUsage(pub u32);
 #[pymethods]
 impl PyCamera3dDepthTextureUsage {
     #[new]
-    pub fn new(flags: u32) -> Self {
-        PyCamera3dDepthTextureUsage(flags)
+    pub fn new(value: u32) -> PyResult<Self> {
+        check_depth_texture_usage(value).map_err(PyValueError::new_err)?;
+        Ok(PyCamera3dDepthTextureUsage(value))
     }
 
     #[getter]

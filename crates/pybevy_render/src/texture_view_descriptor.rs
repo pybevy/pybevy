@@ -202,4 +202,8 @@ impl PyTextureViewDescriptor {
     fn __copy__(&self) -> PyResult<Self> {
         Ok(Self::from_owned(self.as_ref()?.clone()))
     }
+
+    fn __deepcopy__(&self, _memo: &Bound<'_, PyAny>) -> PyResult<Self> {
+        self.__copy__()
+    }
 }

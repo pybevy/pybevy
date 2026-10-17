@@ -2,7 +2,10 @@ use bevy::{
     math::{Dir3, Vec2},
     mesh::{MeshBuilder, PlaneMeshBuilder},
 };
-use pybevy_core::PyAsset;
+use pybevy_core::{
+    PyAsset,
+    domain::{IntegerInput, NON_NEGATIVE, check_for},
+};
 use pybevy_math::{dir3::PyDir3, vec2::PyVec2};
 use pybevy_shape::primitives::dimension::dimension;
 use pyo3::prelude::*;
@@ -52,18 +55,36 @@ impl PyPlaneMeshBuilder {
         Py::new(py, (Self(self.0.size(width, height)), PyMeshBuilder))
     }
 
-    pub fn subdivisions(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
+    pub fn subdivisions(
+        &self,
+        py: Python<'_>,
+        subdivisions: IntegerInput<u32>,
+    ) -> PyResult<Py<Self>> {
+        let subdivisions =
+            check_for::<Self, _>("subdivisions", subdivisions, NON_NEGATIVE)?.stored();
         Py::new(py, (Self(self.0.subdivisions(subdivisions)), PyMeshBuilder))
     }
 
-    pub fn subdivisions_x(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
+    pub fn subdivisions_x(
+        &self,
+        py: Python<'_>,
+        subdivisions: IntegerInput<u32>,
+    ) -> PyResult<Py<Self>> {
+        let subdivisions =
+            check_for::<Self, _>("subdivisions_x", subdivisions, NON_NEGATIVE)?.stored();
         Py::new(
             py,
             (Self(self.0.subdivisions_x(subdivisions)), PyMeshBuilder),
         )
     }
 
-    pub fn subdivisions_z(&self, py: Python<'_>, subdivisions: u32) -> PyResult<Py<Self>> {
+    pub fn subdivisions_z(
+        &self,
+        py: Python<'_>,
+        subdivisions: IntegerInput<u32>,
+    ) -> PyResult<Py<Self>> {
+        let subdivisions =
+            check_for::<Self, _>("subdivisions_z", subdivisions, NON_NEGATIVE)?.stored();
         Py::new(
             py,
             (Self(self.0.subdivisions_z(subdivisions)), PyMeshBuilder),

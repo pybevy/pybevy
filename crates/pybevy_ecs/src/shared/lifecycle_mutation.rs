@@ -8,7 +8,28 @@
 //! membership at every callback boundary. Matching observer handles are
 //! snapshotted into an owned vector before the core invokes them.
 
+use bevy::ecs::component::{ComponentId, Components};
 use smallvec::SmallVec;
+
+/// Resolve transitive requirements, excluding explicit bundle components.
+pub fn required_component_ids(
+    components: &Components,
+    explicit: &[ComponentId],
+) -> SmallVec<[ComponentId; 8]> {
+    let mut required = SmallVec::<[ComponentId; 8]>::new();
+    for id in explicit {
+        if let Some(info) = components.get_info(*id) {
+            required.extend(
+                info.required_components()
+                    .iter_ids()
+                    .filter(|id| !explicit.contains(id)),
+            );
+        }
+    }
+    required.sort_unstable_by_key(|id| id.index());
+    required.dedup();
+    required
+}
 
 /// Lifecycle callback selected by the mutation planner.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -42,12 +63,17 @@ pub enum LifecycleMutationOutcome {
 /// callback boundaries too.
 pub trait LifecycleMutationAdapter {
     type Entity: Copy;
-    type Component: Copy;
+    type Component: Copy + PartialEq;
     type Observer;
 
     fn entity_exists(&self, entity: Self::Entity) -> bool;
 
     fn component_exists(&self, entity: Self::Entity, component: Self::Component) -> bool;
+
+    /// Resolve Python-visible requirements without retaining World or registry borrows.
+    fn required_components(&mut self, _components: &[Self::Component]) -> Vec<Self::Component> {
+        Vec::new()
+    }
 
     /// Snapshot matching prepared observer handles in registration order.
     /// The returned values must own everything needed for an in-flight call so
@@ -145,7 +171,12 @@ impl LifecycleMutationCore {
         if !adapter.entity_exists(entity) {
             return LifecycleMutationOutcome::EntityGone;
         }
-        let is_add = !adapter.component_exists(entity, component);
+        let insertions = Self::insertion_components(adapter, entity, &[component]);
+        let additions = insertions
+            .iter()
+            .copied()
+            .filter(|candidate| !adapter.component_exists(entity, *candidate))
+            .collect::<SmallVec<[A::Component; 8]>>();
 
         if !adapter.insert_component(entity, component) {
             return LifecycleMutationOutcome::ComponentGone;
@@ -157,8 +188,10 @@ impl LifecycleMutationCore {
             return LifecycleMutationOutcome::ComponentGone;
         }
 
-        if is_add {
-            Self::dispatch_event(adapter, LifecycleEvent::Add, entity, component);
+        for addition in additions {
+            if adapter.component_exists(entity, addition) {
+                Self::dispatch_event(adapter, LifecycleEvent::Add, entity, addition);
+            }
             if !adapter.entity_exists(entity) {
                 return LifecycleMutationOutcome::EntityGone;
             }
@@ -167,7 +200,14 @@ impl LifecycleMutationCore {
             }
         }
 
-        Self::dispatch_event(adapter, LifecycleEvent::Insert, entity, component);
+        for insertion in insertions {
+            if !adapter.entity_exists(entity) {
+                return LifecycleMutationOutcome::EntityGone;
+            }
+            if adapter.component_exists(entity, insertion) {
+                Self::dispatch_event(adapter, LifecycleEvent::Insert, entity, insertion);
+            }
+        }
         LifecycleMutationOutcome::Complete
     }
 
@@ -196,7 +236,8 @@ impl LifecycleMutationCore {
             }
         }
 
-        let additions = components
+        let insertions = Self::insertion_components(adapter, entity, components);
+        let additions = insertions
             .iter()
             .copied()
             .filter(|component| !adapter.component_exists(entity, *component))
@@ -216,7 +257,7 @@ impl LifecycleMutationCore {
                 return LifecycleMutationOutcome::EntityGone;
             }
         }
-        for component in components {
+        for component in &insertions {
             if adapter.component_exists(entity, *component) {
                 Self::dispatch_event(adapter, LifecycleEvent::Insert, entity, *component);
             }
@@ -226,6 +267,21 @@ impl LifecycleMutationCore {
         }
 
         LifecycleMutationOutcome::Complete
+    }
+
+    /// Classify after Discard callbacks: existing requirements are preserved by Bevy.
+    fn insertion_components<A: LifecycleMutationAdapter>(
+        adapter: &mut A,
+        entity: A::Entity,
+        explicit: &[A::Component],
+    ) -> SmallVec<[A::Component; 8]> {
+        let mut insertions = SmallVec::from_slice(explicit);
+        for component in adapter.required_components(explicit) {
+            if !insertions.contains(&component) && !adapter.component_exists(entity, component) {
+                insertions.push(component);
+            }
+        }
+        insertions
     }
 
     /// Finish a successful bulk commit into an entity known to have been empty
@@ -459,6 +515,7 @@ mod tests {
         entity: Entity,
         alive: bool,
         components: HashSet<Component>,
+        requirements: HashMap<Component, Vec<Component>>,
         actions: HashMap<(LifecycleEvent, Component), Vec<CallbackAction>>,
         cleanup_despawns: bool,
         steps: Vec<Step>,
@@ -470,6 +527,7 @@ mod tests {
                 entity,
                 alive: true,
                 components: components.into_iter().collect(),
+                requirements: HashMap::new(),
                 actions: HashMap::new(),
                 cleanup_despawns: false,
                 steps: Vec::new(),
@@ -506,6 +564,19 @@ mod tests {
 
         fn component_exists(&self, entity: Entity, component: Component) -> bool {
             self.entity_exists(entity) && self.components.contains(&component)
+        }
+
+        fn required_components(&mut self, components: &[Component]) -> Vec<Component> {
+            components
+                .iter()
+                .flat_map(|component| {
+                    self.requirements
+                        .get(component)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                })
+                .collect()
         }
 
         fn snapshot_observers(
@@ -566,6 +637,9 @@ mod tests {
             assert!(self.entity_exists(entity));
             self.steps.push(Step::Insert(component));
             self.components.insert(component);
+            if let Some(required) = self.requirements.get(&component) {
+                self.components.extend(required);
+            }
             true
         }
 
@@ -588,6 +662,69 @@ mod tests {
             if self.cleanup_despawns {
                 self.alive = false;
                 self.components.clear();
+            }
+        }
+    }
+
+    #[test]
+    fn completed_single_insert_preserves_its_outcome_when_final_callback_despawns() {
+        let mut adapter =
+            FakeAdapter::new(7, []).on(LifecycleEvent::Insert, 10, CallbackAction::DespawnEntity);
+        assert_eq!(
+            LifecycleMutationCore.insert(&mut adapter, 7, 10),
+            LifecycleMutationOutcome::Complete
+        );
+        assert!(!adapter.entity_exists(7));
+        assert!(matches!(
+            adapter.steps.last(),
+            Some(Step::Dispatch {
+                event: LifecycleEvent::Insert,
+                component: 10,
+                readable: true,
+            })
+        ));
+    }
+
+    #[test]
+    fn requirements_are_classified_after_discard_and_never_replaced() {
+        for single in [false, true] {
+            for action in [
+                CallbackAction::Noop,
+                CallbackAction::RemoveOtherComponent(20),
+                CallbackAction::InsertOtherComponent(20),
+            ] {
+                let initial = if action == CallbackAction::InsertOtherComponent(20) {
+                    vec![10]
+                } else {
+                    vec![10, 20]
+                };
+                let mut adapter =
+                    FakeAdapter::new(7, initial).on(LifecycleEvent::Discard, 10, action);
+                adapter.requirements.insert(10, vec![20, 20]);
+                if single {
+                    LifecycleMutationCore.insert(&mut adapter, 7, 10);
+                } else {
+                    LifecycleMutationCore.insert_many(&mut adapter, 7, &[10]);
+                }
+                let events = adapter
+                    .steps
+                    .iter()
+                    .filter_map(|step| match step {
+                        Step::Dispatch {
+                            event,
+                            component: 20,
+                            readable: true,
+                        } => Some(*event),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let expected = if action == CallbackAction::RemoveOtherComponent(20) {
+                    vec![LifecycleEvent::Add, LifecycleEvent::Insert]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(events, expected);
+                assert!(adapter.components.contains(&20));
             }
         }
     }

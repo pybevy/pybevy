@@ -14,6 +14,7 @@ use pybevy_core::{
     LogicalTypeId, NativeAsset, PluginBuild, PyComponent, PyHandle, PyMaterial, PyPlugin,
     ValueStorage,
     asset_path::parse_asset_path,
+    domain::{IntegerInput, NON_NEGATIVE, check_for},
     ensure_asset_type, extract_handle_from_any,
     public_error::{
         MATERIAL_TYPE_MISMATCH, shader_data_too_long, shader_texture_slot_out_of_range,
@@ -209,14 +210,14 @@ impl PyShaderMaterial {
 
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=0, shader_def_names=None, textures=None, bindings_wgsl=None, *, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
+    #[pyo3(signature = (base, fragment_shader=None, vertex_shader=None, data=None, shader_defs=IntegerInput::new(0), shader_def_names=None, textures=None, bindings_wgsl=None, *, prepass_vertex_shader=None, prepass_fragment_shader=None, deferred_vertex_shader=None, deferred_fragment_shader=None))]
     pub fn new(
         py: Python<'_>,
         base: &Bound<'_, PyAny>,
         fragment_shader: Option<String>,
         vertex_shader: Option<String>,
         data: Option<Vec<f32>>,
-        shader_defs: u32,
+        shader_defs: IntegerInput<u32>,
         shader_def_names: Option<Vec<String>>,
         textures: Option<Py<PyList>>,
         bindings_wgsl: Option<String>,
@@ -225,6 +226,7 @@ impl PyShaderMaterial {
         deferred_vertex_shader: Option<String>,
         deferred_fragment_shader: Option<String>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let shader_defs = check_for::<Self, _>("shader_defs", shader_defs, NON_NEGATIVE)?.stored();
         Ok(Self::from_owned(build_shader_material(
             py,
             base,
@@ -255,7 +257,8 @@ impl PyShaderMaterial {
         material_access::get_shader_defs(&self.storage)
     }
 
-    fn set_shader_defs(&mut self, defs: u32) -> PyResult<()> {
+    fn set_shader_defs(&mut self, defs: IntegerInput<u32>) -> PyResult<()> {
+        let defs = check_for::<Self, _>("shader_defs", defs, NON_NEGATIVE)?.stored();
         material_access::set_shader_defs(&mut self.storage, defs)
     }
 
