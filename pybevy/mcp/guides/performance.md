@@ -74,8 +74,9 @@ def main(app: App) -> App:
 
 **Applies to:** projectiles, VFX, particles, pooled enemies - anything spawned more than once.
 
-**Verify:** `get_performance` Assets counts distinct stored assets; inspect
-retained strong handles if counts keep rising.
+**Verify:** `get_performance.assets` counts the stored assets of each type,
+keyed by class name (`Mesh`, `StandardMaterial`, `ColorMaterial`, ...), as of
+the latest frame; inspect retained strong handles if counts keep rising.
 
 ## Material Mutation Caching
 

@@ -22,7 +22,13 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     transmittance_lut_size => [positive],
     multiscattering_lut_size => [positive],
     sky_view_lut_size => [positive],
-    aerial_view_lut_size => [positive]
+    aerial_view_lut_size => [positive],
+    transmittance_lut_samples => [range_inclusive(0.0, 1024.0)],
+    multiscattering_lut_dirs => [range_inclusive(0.0, 1024.0)],
+    multiscattering_lut_samples => [range_inclusive(0.0, 1024.0)],
+    sky_view_lut_samples => [range_inclusive(0.0, 1024.0)],
+    aerial_view_lut_samples => [range_inclusive(0.0, 1024.0)],
+    sky_max_samples => [range_inclusive(0.0, 1024.0)]
 ])]
 #[pyclass(name = "AtmosphereSettings", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyAtmosphereSettings {
@@ -73,13 +79,19 @@ impl PyAtmosphereSettings {
             aerial_view_lut_size: Self::check_aerial_view_lut_size(UVec3::try_from(
                 aerial_view_lut_size,
             )?)?,
-            transmittance_lut_samples,
-            multiscattering_lut_dirs,
-            multiscattering_lut_samples,
-            sky_view_lut_samples,
-            aerial_view_lut_samples,
+            transmittance_lut_samples: Self::check_transmittance_lut_samples(
+                transmittance_lut_samples,
+            )?,
+            multiscattering_lut_dirs: Self::check_multiscattering_lut_dirs(
+                multiscattering_lut_dirs,
+            )?,
+            multiscattering_lut_samples: Self::check_multiscattering_lut_samples(
+                multiscattering_lut_samples,
+            )?,
+            sky_view_lut_samples: Self::check_sky_view_lut_samples(sky_view_lut_samples)?,
+            aerial_view_lut_samples: Self::check_aerial_view_lut_samples(aerial_view_lut_samples)?,
             aerial_view_lut_max_distance,
-            sky_max_samples,
+            sky_max_samples: Self::check_sky_max_samples(sky_max_samples)?,
             rendering_method: rendering_method.into(),
         })
         .into())
@@ -155,7 +167,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_transmittance_lut_samples(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.transmittance_lut_samples = value;
+        self.as_mut()?.transmittance_lut_samples = Self::check_transmittance_lut_samples(value)?;
         Ok(())
     }
 
@@ -166,7 +178,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_multiscattering_lut_dirs(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.multiscattering_lut_dirs = value;
+        self.as_mut()?.multiscattering_lut_dirs = Self::check_multiscattering_lut_dirs(value)?;
         Ok(())
     }
 
@@ -177,7 +189,8 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_multiscattering_lut_samples(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.multiscattering_lut_samples = value;
+        self.as_mut()?.multiscattering_lut_samples =
+            Self::check_multiscattering_lut_samples(value)?;
         Ok(())
     }
 
@@ -188,7 +201,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_sky_view_lut_samples(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.sky_view_lut_samples = value;
+        self.as_mut()?.sky_view_lut_samples = Self::check_sky_view_lut_samples(value)?;
         Ok(())
     }
 
@@ -199,7 +212,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_aerial_view_lut_samples(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.aerial_view_lut_samples = value;
+        self.as_mut()?.aerial_view_lut_samples = Self::check_aerial_view_lut_samples(value)?;
         Ok(())
     }
 
@@ -221,7 +234,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_sky_max_samples(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.sky_max_samples = value;
+        self.as_mut()?.sky_max_samples = Self::check_sky_max_samples(value)?;
         Ok(())
     }
 

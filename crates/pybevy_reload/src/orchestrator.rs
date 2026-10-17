@@ -145,6 +145,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         result.plugins_added = None;
         result.plugins_removed = None;
         result.systems_removed = None;
+        result.entrypoint_changed = false;
         result.actual_mode = Some(match mode {
             ReloadMode::Full => pybevy_core::ReloadRequestMode::Full,
             ReloadMode::Partial => pybevy_core::ReloadRequestMode::Partial,
@@ -234,6 +235,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
     // after every fallible candidate-commit step succeeds.
     let candidate_plugins: HashSet<PluginIdentity> =
         runtime.plugin_names(&defs).into_iter().collect();
+    let entrypoint_changed = runtime.entrypoint_changed(&defs);
 
     emit_reload_progress(
         world,
@@ -545,6 +547,11 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
                 removed
             );
         }
+        if entrypoint_changed {
+            eprintln!(
+                "⚠️ [Hot Reload] @entrypoint changed: native plugin settings and App configuration in it are applied only at startup; use run_scene"
+            );
+        }
         if let Some(mut result) = world.get_resource_mut::<pybevy_core::ReloadResult>() {
             if !added.is_empty() {
                 result.plugins_added = Some(added);
@@ -552,6 +559,7 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
             if !removed.is_empty() {
                 result.plugins_removed = Some(removed);
             }
+            result.entrypoint_changed = entrypoint_changed;
         }
     }
 

@@ -74,7 +74,7 @@ for key in keyboard.get_just_pressed():
 
 ### Keyboard Events (Message-Based)
 
-For event-driven input, including text input, use `MessageReader[KeyboardInput]`:
+For event-driven input, including text input, use `MessageReader[KeyboardInput]`; window events use `MessageReader[WindowEvent]`:
 
 ```python
 from pybevy.input import ButtonState, Key, KeyboardInput

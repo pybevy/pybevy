@@ -563,6 +563,20 @@ impl PyMessageType {
         Self::from_message_type(message.cast::<PyType>()?)
     }
 
+    /// Whether `message` or one of its bases is a Python or native message type.
+    pub(crate) fn is_message_class(message: &Bound<'_, PyType>) -> PyResult<bool> {
+        if message.is_subclass_of::<PyMessage>()? {
+            return Ok(true);
+        }
+        let mro = message.getattr("__mro__")?.cast_into::<PyTuple>()?;
+        for base in mro.iter() {
+            if Self::from_message_type(&base.cast_into::<PyType>()?).is_ok() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn from_message_type(message: &Bound<'_, PyType>) -> PyResult<Self> {
         use pybevy_window::window_event::PyWindowEvent;
         use pybevy_world_serialization::world_instance_ready::PyWorldInstanceReady;

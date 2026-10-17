@@ -1,4 +1,10 @@
-use std::{error::Error, fmt, io, time::Duration};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fmt, io,
+    sync::{LazyLock, Mutex, PoisonError},
+    time::Duration,
+};
 
 use serde_json::Value;
 
@@ -8,6 +14,27 @@ use crate::{
 };
 
 const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+
+static SESSION_TOKENS: LazyLock<Mutex<HashMap<u16, String>>> = LazyLock::new(Mutex::default);
+
+/// Remember the bearer token a scene's control server on `port` requires, or forget it.
+pub fn set_session_token(port: u16, token: Option<String>) {
+    let mut tokens = SESSION_TOKENS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    match token {
+        Some(token) => tokens.insert(port, token),
+        None => tokens.remove(&port),
+    };
+}
+
+fn session_token(port: u16) -> Option<String> {
+    SESSION_TOKENS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&port)
+        .cloned()
+}
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -202,6 +229,10 @@ pub fn control_health(port: u16, timeout: Duration) -> Result<bool, ClientError>
     Ok(response.status == 200)
 }
 
+pub fn control_engine_activity(port: u16, timeout: Duration) -> Result<Value, ClientError> {
+    request_json(port, &RequestSpec::get("/api/v1/engine/activity"), timeout)
+}
+
 pub fn control_last_error(port: u16, timeout: Duration) -> Result<Value, ClientError> {
     request_json(port, &RequestSpec::get("/api/v1/error"), timeout)
 }
@@ -241,6 +272,9 @@ fn execute(
         .method(request.method.as_str())
         .uri(uri)
         .header("Accept", "application/json");
+    if let Some(token) = session_token(port) {
+        builder = builder.header("Authorization", format!("Bearer {token}"));
+    }
     if request.body.is_some() {
         builder = builder.header("Content-Type", "application/json");
     }

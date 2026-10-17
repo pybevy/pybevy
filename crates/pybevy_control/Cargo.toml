@@ -37,7 +37,7 @@ pybevy_ecs = { workspace = true }
 pybevy_macros = { workspace = true, optional = true }
 
 pybevy_transform = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
 axum = { version = "0.8", features = ["json"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 base64 = "0.22"

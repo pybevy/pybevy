@@ -17,6 +17,7 @@ Key features:
 from __future__ import annotations
 
 import hashlib
+import importlib
 import importlib.machinery
 import importlib.util
 import os
@@ -283,6 +284,24 @@ class _FreshSourceFinder:
 _FRESH_SOURCE_FINDER = _FreshSourceFinder()
 
 
+def scene_module_location(script_path: str) -> tuple[str, str]:
+    """Return a scene's importable module name and the directory to import it from.
+
+    A scene inside a package (each enclosing directory holding ``__init__.py``)
+    is named by its dotted package path and imported from above the top
+    package, so relative imports work. A standalone script is named by its file
+    stem and imported from its own directory.
+    """
+    abs_path = os.path.abspath(script_path)
+    stem = os.path.splitext(os.path.basename(abs_path))[0]
+    parts = [] if stem == "__init__" else [stem]
+    root = os.path.dirname(abs_path)
+    while os.path.isfile(os.path.join(root, "__init__.py")):
+        parts.insert(0, os.path.basename(root))
+        root = os.path.dirname(root)
+    return ".".join(parts), root
+
+
 def exec_scene_module(
     module_name: str,
     file_path: str | None = None,
@@ -387,9 +406,9 @@ def reload_module_from_source(
     flushed from ``sys.modules`` first (transitive dependency reload).
     Otherwise only the single *module_name* entry is removed.
 
-    This is the canonical reload mechanism shared by the CLI hot reload
-    (``load_entrypoint_function``) and the native plugin hot reload
-    (``PyBevyPlugin.with_hot_reload``).
+    ``load_entrypoint_function`` uses it for standalone scripts, and the
+    native plugin hot reload (``PyBevyPlugin.with_hot_reload``) for every
+    scene. Packaged scenes go through ``exec_scene_module`` instead.
 
     Args:
         module_path: Absolute filesystem path to the ``.py`` file.
@@ -562,9 +581,10 @@ def load_entrypoint_function(
         verbose: If True, print debug information
         project_dir: Absolute path to the project root directory whose user
             modules are flushed before the reload (transitive dependency
-            reload). Defaults to the script's own directory. Pass the project
-            root explicitly when the scene lives in a subdirectory and
-            imports modules from the project root or other subdirectories.
+            reload), also added to ``sys.path``. Defaults to the script's own
+            directory for flushing; a scene inside a package also gets the
+            package's import root. Pass the project root explicitly when the
+            scene lives in a subdirectory and imports modules from elsewhere.
 
     Returns:
         The @entrypoint decorated function (NOT called yet)
@@ -597,19 +617,32 @@ def load_entrypoint_function(
         if verbose:
             print("   → Component cache CLEARED (full reload)")
 
-    # Add script directory to path
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
+    module_name, import_root = scene_module_location(abs_path)
+    packaged = import_root != parent_dir
+    import_roots = [import_root]
+    if project_dir is not None:
+        import_roots.append(os.path.abspath(project_dir))
+    for root in import_roots:
+        if root not in sys.path:
+            sys.path.insert(0, root)
 
     # Ensure sys.argv only contains the script path so user argparse works correctly
     sys.argv = [script_path]
 
     # project_dir selects the flush root (default: the script's own dir).
-    module_globals = reload_module_from_source(
-        script_path,
-        project_dir=project_dir if project_dir is not None else parent_dir,
-        verbose=verbose,
-    )
+    flush_root = project_dir if project_dir is not None else parent_dir
+    if packaged:
+        flush_user_modules(flush_root, verbose=verbose)
+        parent_package = module_name.rpartition(".")[0]
+        if parent_package:
+            importlib.import_module(parent_package)
+        module_globals = exec_scene_module(
+            module_name, file_path=abs_path, verbose=verbose
+        )
+    else:
+        module_globals = reload_module_from_source(
+            script_path, project_dir=flush_root, verbose=verbose
+        )
 
     # Find and return entrypoint
     return find_entrypoint(module_globals)

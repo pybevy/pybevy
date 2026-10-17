@@ -79,7 +79,11 @@ value has no opaque fields; a `spawn_example`
 may also come from a Bevy reflected default when the Python enum base is not
 constructible. An enum without a replayable default has no example. Native
 lifecycle or plugin requirements can still make a syntactically valid spawn
-fail in a particular scene.
+fail in a particular scene. Components whose default cannot render, such as
+`IrradianceVolume` (its default voxel image is 2D, the shader needs 3D), keep
+their `defaults` but offer no example. A relationship such as `ChildOf` offers
+`{"ChildOf": "<packed entity id>"}`; `spawn_example_placeholders` says what to
+put in place of the placeholder before spawning.
 
 Custom Python component annotations define their schema even before an instance
 exists. If such a class has no annotations, the schema instead reports public
@@ -300,6 +304,15 @@ to distinct control names:
 | `ButtonInput[KeyCode]` | `ButtonInput` |
 | `ButtonInput[MouseButton]` / `MouseInput` | `MouseInput` |
 
+A native resource or component whose Python wrapper has no readable
+properties, such as the Time resources, `ButtonInput`, `MouseInput` or
+`Gamepad`, reads back as Bevy's reflected fields: durations in seconds, sets
+as sorted arrays, and maps as sorted `{"key": ..., "value": ...}` entries. For
+example, `_TimeVirtual` returns `elapsed`, `delta` and a `context` holding
+`relative_speed`, `paused` and `max_delta`; `ButtonInput` returns `pressed`,
+`just_pressed` and `just_released`. A readable field is not automatically
+writable.
+
 When a custom resource shares a control name with a native resource, the
 registry lists both by qualified name. For example, a custom `game.Time`
 requires `game.Time`, while native Time becomes `pybevy.time.Time`; bare `Time`
@@ -326,9 +339,19 @@ insertion; a failed patch does not insert a partial value.
 `ClearColor`, `GlobalAmbientLight`, and `DefaultOpaqueRendererMethod` cannot be
 removed through MCP or Python `World`/`Commands` resource APIs. Bevy copies
 them into the render world and does not clear those copies when their main-world
-resource disappears. Set their fields or insert a replacement instead. Other
-native resources whose bridges prohibit removal likewise return an error rather
-than a successful no-op; custom Python resources remain removable.
+resource disappears. Set their fields or insert a replacement instead. Input,
+UI scale, text, shadow-map and time-update resources (`ButtonInput`,
+`MouseInput`, `Touches`, `AccumulatedMouseMotion`, `AccumulatedMouseScroll`,
+`UiScale`, `RemSize`, `FontAtlasSet`, `DirectionalLightShadowMap`,
+`PointLightShadowMap`, `TimeUpdateStrategy`) are refused the same way, because
+engine systems require them every frame. Other native resources whose bridges
+prohibit removal likewise return an error rather than a successful no-op;
+custom Python resources remain removable.
+
+`remove_component` refuses a component that another component on the entity
+requires, such as a camera's `Projection` or the `GlobalTransform` of an entity
+with a `Transform`: `Component 'Projection' is required by 'Camera3d' on entity
+...; remove 'Camera3d' first or despawn the entity`.
 
 ## Batching Mutations
 
@@ -593,6 +616,10 @@ because it counts all composed cells. Read `views` for each cell's angle or
 `top` label and position. Colored bars in turnaround and timeline sheets
 indicate capture order, not scene data.
 
+Elevation is in degrees and may go past the poles. A non-finite elevation,
+center, or computed camera position is rejected before capture; reduce
+`distance` or the magnitude of `look_at` if a position overflows.
+
 **Tip:** Auto-fit distance can be dominated by large ground planes. For scenes with wide geometry, explicitly supply `look_at` and `distance` parameters rather than relying on auto-fit.
 
 ### Depth Probing
@@ -603,6 +630,7 @@ capture_depth {"position": [5, 5, 5], "look_at": [0, 0, 0], "grid_density": 8}
 → RGB screenshot + 64 ray-AABB depth samples with hit entity IDs and world positions
 ```
 
+`grid_density` runs from 1 to 32 (32 gives 1,024 samples).
 Auto-grid samples report `grid: [column, row]` with
 `coordinate_space: "grid_indices"`. When `sample_points` is provided, samples
 instead report `pixel: [x, y]` with
@@ -716,7 +744,10 @@ schedule_actions {"stop_on_error": true, "actions": [
 
 ### Async Mode
 
-For long-running schedules, use `mode: "async"` to get an immediate schedule ID, then poll:
+`at` may be at most 60 virtual seconds in the default sync mode and 3600 in async
+mode. A sync request also ends with an error after 120 wall-clock seconds, even
+if virtual time is slow or paused. For longer schedules, use `mode: "async"` to
+get an immediate schedule ID, then poll:
 ```
 schedule_actions {"mode": "async", "actions": [...]}
 → {"schedule_id": "schedule-0", "status": "running"}

@@ -3316,31 +3316,6 @@ reason = "core-010: private hot-reload watcher visible through repr and error te
 
 [[validation.exceptions]]
 code = "W016"
-path = "ecs.Res"
-reason = "core-010: subscription helper still reports builtins.Res in TypeError text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.ResMut"
-reason = "core-010: subscription helper still reports builtins.ResMut in TypeError text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.ResParam"
-reason = "core-010: system-parameter descriptor still reports builtins.ResParam"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.In"
-reason = "core-010: system-input marker still reports builtins.In"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.InParam"
-reason = "core-010: system-input descriptor still reports builtins.InParam"
-
-[[validation.exceptions]]
-code = "W016"
 path = "ecs.CustomComponentBatch"
 reason = "core-010: custom batch transport reaches users through component batch factories"
 

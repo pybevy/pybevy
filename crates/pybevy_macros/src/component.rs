@@ -160,6 +160,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
         clone_with: Option<Path>,
         batch_validate: Option<Path>,
         reflect_validate: Option<Path>,
+        no_spawn_example: bool,
         domains: Domains,
     }
 
@@ -179,6 +180,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             let mut clone_with = None;
             let mut batch_validate = None;
             let mut reflect_validate = None;
+            let mut no_spawn_example = false;
             let mut domains = Domains::default();
 
             while input.peek(Token![,]) {
@@ -193,6 +195,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                     "unit" => unit = true,
                     "bridge" => bridge = true,
                     "no_reflect" => no_reflect = true,
+                    "no_spawn_example" => no_spawn_example = true,
                     "materialize" => {
                         bridge = true;
                         input.parse::<Token![=]>()?;
@@ -242,7 +245,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                         return Err(syn::Error::new_spanned(
                             ident,
                             format!(
-                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, materialize, clone_with, batch_validate, reflect_validate, view_fields, batch_only_fields, view_only_fields, domains",
+                                "unknown option '{}', expected one of: no_clone, no_insert, unit, bridge, no_reflect, no_spawn_example, materialize, clone_with, batch_validate, reflect_validate, view_fields, batch_only_fields, view_only_fields, domains",
                                 other
                             ),
                         ));
@@ -265,6 +268,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
                 clone_with,
                 batch_validate,
                 reflect_validate,
+                no_spawn_example,
                 domains,
             })
         }
@@ -340,6 +344,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
             args.clone_with.as_ref(),
             args.batch_validate.as_ref(),
             args.reflect_validate.as_ref(),
+            args.no_spawn_example,
             &args.domains.fields,
             true, // emit inventory registration
         )
@@ -535,6 +540,7 @@ fn generate_bridge_tokens(
     clone_with: Option<&Path>,
     batch_validate: Option<&Path>,
     reflect_validate: Option<&Path>,
+    no_spawn_example: bool,
     domains: &[DomainEntry],
     emit_inventory: bool,
 ) -> proc_macro2::TokenStream {
@@ -843,6 +849,10 @@ fn generate_bridge_tokens(
             fn can_offer_hook_free_default_spawn(&self) -> bool {
                 <#bevy_type as bevy::ecs::component::Component>::on_add().is_none()
                     && <#bevy_type as bevy::ecs::component::Component>::on_insert().is_none()
+            }
+
+            fn offers_spawn_example(&self) -> bool {
+                !#no_spawn_example
             }
 
             #reflect_validate_impl

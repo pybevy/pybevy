@@ -1,9 +1,18 @@
 use bevy::text::LineHeight;
 use pybevy_core::{
-    ComponentStorage, domain::FINITE, enum_comparison::compare_values, repr::float_repr,
+    ComponentStorage, domain::FieldDomain, enum_comparison::compare_values, repr::float_repr,
 };
 use pybevy_macros::pyenum;
 use pyo3::{prelude::*, pyclass::CompareOp};
+
+const LINE_HEIGHT_PX: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: -65536.0,
+    hi: 65536.0,
+}];
+const LINE_HEIGHT_RELATIVE: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: -1000.0,
+    hi: 1000.0,
+}];
 
 #[pyenum(LineHeight, component, manual_comparison)]
 #[pyclass(name = "LineHeight", module = "pybevy.text")]
@@ -11,13 +20,13 @@ pub enum PyLineHeight {
     #[py_bevy(tuple)]
     Px {
         #[py_set]
-        #[py_domain(FINITE)]
+        #[py_domain(LINE_HEIGHT_PX)]
         value: f32,
     },
     #[py_bevy(tuple)]
     RelativeToFont {
         #[py_set]
-        #[py_domain(FINITE)]
+        #[py_domain(LINE_HEIGHT_RELATIVE)]
         value: f32,
     },
 }

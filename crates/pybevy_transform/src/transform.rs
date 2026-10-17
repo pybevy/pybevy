@@ -5,7 +5,7 @@ use bevy::{
 use pybevy_core::{
     ComponentStorage, PyComponent,
     domain::{FINITE, check_for},
-    public_error::direction_argument_type,
+    public_error::{TRANSFORM_ROTATION_ZERO_LENGTH, direction_argument_type},
     repr::ReprLiteral,
 };
 use pybevy_macros::pycomponent;
@@ -13,7 +13,10 @@ use pybevy_math::{
     affine3a::PyAffine3A, dir3::PyDir3, isometry3d::PyIsometry3d, mat4::PyMat4, quat::PyQuat,
     vec3::PyVec3,
 };
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+};
 
 #[pycomponent(
     Transform,
@@ -34,8 +37,21 @@ pub struct PyTransform {
 impl PyTransform {
     fn checked(transform: Transform) -> PyResult<(Self, PyComponent)> {
         Self::validate_domains(&transform)?;
+        nonzero_rotation(transform.rotation)?;
         Ok((transform.into(), PyComponent))
     }
+
+    fn checked_rotation(rotation: Quat) -> PyResult<Quat> {
+        nonzero_rotation(Self::check_rotation(rotation)?)
+    }
+}
+
+// A zero quaternion is no rotation at all; MCP writes reject it the same way.
+fn nonzero_rotation(rotation: Quat) -> PyResult<Quat> {
+    if rotation.length_squared() == 0.0 {
+        return Err(PyValueError::new_err(TRANSFORM_ROTATION_ZERO_LENGTH));
+    }
+    Ok(rotation)
 }
 
 impl PartialEq for PyTransform {
@@ -64,7 +80,7 @@ fn finite_vec3(field: &'static str, value: Vec3) -> PyResult<Vec3> {
 
 fn finite_rotation(rotation: Quat) -> PyResult<Quat> {
     if rotation.is_finite() {
-        return Ok(rotation);
+        return nonzero_rotation(rotation);
     }
     Ok(PyTransform::check_rotation(rotation)?)
 }
@@ -181,7 +197,7 @@ impl PyTransform {
 
     #[setter]
     pub fn set_rotation(&mut self, rotation: PyQuat) -> PyResult<()> {
-        let rotation = Self::check_rotation(Quat::try_from(rotation)?)?;
+        let rotation = Self::checked_rotation(Quat::try_from(rotation)?)?;
         self.as_mut()?.rotation = rotation;
         Ok(())
     }
@@ -289,7 +305,7 @@ impl PyTransform {
 
     pub fn with_rotation(&self, py: Python<'_>, rotation: &PyQuat) -> PyResult<Py<Self>> {
         let mut transform = *self.as_ref()?;
-        transform.rotation = Self::check_rotation(Quat::try_from(rotation)?)?;
+        transform.rotation = Self::checked_rotation(Quat::try_from(rotation)?)?;
         Py::new(py, (transform.into(), PyComponent))
     }
 

@@ -5,7 +5,13 @@ use pybevy_core::{
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(IrradianceVolume, bridge, view_fields = [intensity, affects_lightmapped_meshes])]
+// The default voxel handle is a 2D image; the shader binds a 3D one, so it cannot render.
+#[pycomponent(
+    IrradianceVolume,
+    bridge,
+    no_spawn_example,
+    view_fields = [intensity, affects_lightmapped_meshes]
+)]
 #[pyclass(name = "IrradianceVolume", module = "pybevy.light", extends = PyComponent)]
 pub struct PyIrradianceVolume {
     pub(crate) storage: ComponentStorage<IrradianceVolume>,

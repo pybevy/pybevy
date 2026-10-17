@@ -4,7 +4,8 @@ use pybevy_core::{
     domain::{NON_NEGATIVE, check_for},
     public_error::{
         AXIS_NOT_NORMALIZED, CLAMP_MIN_EXCEEDS_MAX, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED,
-        UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED, from_slice_too_short,
+        ROTATE_TOWARDS_UNDEFINED_ANGLE, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED,
+        from_slice_too_short,
     },
     repr::ReprLiteral,
 };
@@ -834,9 +835,12 @@ impl PyVec3A {
     }
 
     pub fn rotate_towards(&self, rhs: &PyVec3A, max_angle: f32) -> PyResult<PyVec3A> {
-        Ok(PyVec3A::from_vec3a(
-            self.as_ref()?.rotate_towards(*rhs.as_ref()?, max_angle),
-        ))
+        let (from, to) = (*self.as_ref()?, *rhs.as_ref()?);
+        // glam clamps by this angle and panics when it is NaN.
+        if from.angle_between(to).is_nan() {
+            return Err(PyValueError::new_err(ROTATE_TOWARDS_UNDEFINED_ANGLE));
+        }
+        Ok(PyVec3A::from_vec3a(from.rotate_towards(to, max_angle)))
     }
 
     pub fn rotate_x(&self, angle: f32) -> PyResult<PyVec3A> {

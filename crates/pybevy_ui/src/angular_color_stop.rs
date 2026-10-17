@@ -7,7 +7,7 @@ use pybevy_core::{
 use pybevy_macros::pyvalue;
 use pyo3::prelude::*;
 
-#[pyvalue(domains = [hint => [range_inclusive(0.0, 1.0)]])]
+#[pyvalue(domains = [angle => [finite], hint => [range_inclusive(0.0, 1.0)]])]
 #[pyclass(name = "AngularColorStop", module = "pybevy.ui", eq, from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyAngularColorStop {
@@ -50,7 +50,7 @@ impl PyAngularColorStop {
         let color = Color::try_from(color)?;
         Ok(Self::from_owned(AngularColorStop {
             color,
-            angle,
+            angle: Self::check_angle(angle)?,
             hint: Self::check_hint(hint)?,
         }))
     }
@@ -87,6 +87,7 @@ impl PyAngularColorStop {
 
     #[setter]
     pub fn set_angle(&mut self, value: Option<f32>) -> PyResult<()> {
+        let value = Self::check_angle(value)?;
         self.as_mut()?.angle = value;
         Ok(())
     }

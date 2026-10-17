@@ -113,9 +113,12 @@ def drive_phase(next_state: ResMut[NextState[GamePhase]]) -> None:
 ```
 
 Bevy still runs `OnTransition(current, current)` for that conditional identity
-transition. Multiple requests before the transition pass follow call order,
-except an equal unconditional request from `set()` is not weakened by a later
-`set_if_neq()` call.
+transition. `NextState` holds one pending request. A later request for a
+different target replaces it, even if the earlier `set()` targets the current
+state. The exception is `set(X)` followed by `set_if_neq(X)`: the unconditional
+request remains pending, so same-state exit and enter still run. When requests
+come from different systems, explicitly order those systems if the winner
+matters; registration order alone is not an execution guarantee.
 
 Bare `ResMut[NextState]` remains compatible when an App has exactly one state
 machine. It is ambiguous and raises `TypeError` when multiple machines are registered.

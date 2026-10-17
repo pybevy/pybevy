@@ -241,12 +241,16 @@ commands.spawn(
 works, anything before the first frame): inserting it after materials have been
 prepared leaves their pipelines untouched and SSR renders nothing.
 `ScreenSpaceReflections()` adds `DepthPrepass` and `DeferredPrepass` to its
-camera automatically.
+camera automatically. Its `linear_steps` must be in `0..=1024` and
+`bisection_steps` in `0..=64`, the same kind of loop-count limit as
+`MotionBlur.samples`; `ContactShadows.linear_steps` and every
+`AtmosphereSettings` sample and direction count are limited to `0..=1024`.
 
 Other cameras in an app using deferred rendering must add
-`DepthPrepass()`, `DeferredPrepass()`, and `Msaa.Off` themselves. A camera with
-`DepthPrepass` but no `DeferredPrepass` can panic when drawing a deferred opaque
-mesh.
+`DepthPrepass()`, `DeferredPrepass()`, and `Msaa.Off` themselves. Without the
+prepass markers, forced-deferred meshes can be omitted from the frame without a
+diagnostic even while forward-rendered objects remain visible. Adding only
+`Msaa.Off` does not fix this; other incomplete prepass combinations may panic.
 
 ```python
 from pybevy.pbr import DefaultOpaqueRendererMethod

@@ -41,11 +41,13 @@ pub struct ScheduleAction {
     #[serde(default)]
     #[schemars(schema_with = "json_object_schema")]
     pub args: serde_json::Value,
-    /// Time offset in **virtual** seconds from schedule start (default 0). Must be monotonically
-    /// non-decreasing. Note: virtual seconds do not advance while time is paused, so a schedule
-    /// that calls `pause_time` cannot use `at` for any later action - use `at_frame` instead, or
-    /// call `resume_time` from outside the schedule. A `seek_time` action moves the schedule clock
+    /// Time offset in **virtual** seconds from schedule start (default 0); at most 60 in sync
+    /// mode or 3600 in async mode. Must be monotonically non-decreasing. Note: virtual seconds
+    /// do not advance while time is paused, so a schedule that calls `pause_time` cannot use
+    /// `at` for any later action - use `at_frame` instead, or call `resume_time` from outside
+    /// the schedule. A `seek_time` action moves the schedule clock
     /// with virtual time, so later actions keep their `at` spacing from the seek.
+    #[schemars(range(min = 0.0, max = MAX_ASYNC_AT_SECONDS))]
     pub at: Option<f64>,
     /// Frame offset from schedule start (alternative to 'at'). Cannot mix with 'at'.
     pub at_frame: Option<i64>,
@@ -70,7 +72,17 @@ fn is_non_schedulable(tool: &str) -> bool {
         || OperationTag::from_name(tool).is_some_and(|tag| !tag.spec().schedulable)
 }
 
+pub const MAX_SYNC_AT_SECONDS: f64 = 60.0;
+pub const MAX_ASYNC_AT_SECONDS: f64 = 3600.0;
+
 pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
+    let (max_at, mode) = match request.mode {
+        ScheduleMode::Sync => (
+            MAX_SYNC_AT_SECONDS,
+            "sync mode; use mode='async' for longer schedules",
+        ),
+        ScheduleMode::Async => (MAX_ASYNC_AT_SECONDS, "async mode"),
+    };
     if request.actions.is_empty() {
         return Err("actions must not be empty".to_string());
     }
@@ -124,6 +136,11 @@ pub fn validate_schedule(request: &ScheduleRequest) -> Result<(), String> {
                     return Err(format!(
                         "action[{}]: 'at' must be a finite non-negative number",
                         i
+                    ));
+                }
+                if at > max_at {
+                    return Err(format!(
+                        "action[{i}]: 'at' must be at most {max_at} virtual seconds in {mode}"
                     ));
                 }
                 if let Some(prev) = last_at
@@ -219,6 +236,40 @@ mod tests {
             SetComponentParams,
         },
     };
+
+    #[test]
+    fn test_validate_at_is_bounded_per_mode() {
+        for (mode, max_at, error) in [
+            (
+                ScheduleMode::Sync,
+                MAX_SYNC_AT_SECONDS,
+                "action[0]: 'at' must be at most 60 virtual seconds in sync mode; use mode='async' for longer schedules",
+            ),
+            (
+                ScheduleMode::Async,
+                MAX_ASYNC_AT_SECONDS,
+                "action[0]: 'at' must be at most 3600 virtual seconds in async mode",
+            ),
+        ] {
+            let mut request = ScheduleRequest {
+                actions: vec![ScheduleAction {
+                    tool: "get_time_status".to_string(),
+                    args: serde_json::Value::Null,
+                    at: Some(max_at),
+                    at_frame: None,
+                    label: None,
+                    skip_if_error: None,
+                }],
+                mode,
+                stop_on_error: false,
+            };
+            assert_eq!(validate_schedule(&request), Ok(()));
+            for at in [max_at + 1.0, 1.0e19] {
+                request.actions[0].at = Some(at);
+                assert_eq!(validate_schedule(&request), Err(error.to_string()));
+            }
+        }
+    }
 
     #[test]
     fn test_validate_empty_actions() {

@@ -564,7 +564,7 @@ pub(crate) fn build_scheduled_system(
             callable,
             generation,
             error_state.clone(),
-            error_buffer,
+            error_buffer.clone(),
             system_stage,
             state_machine_count,
         )?;
@@ -577,7 +577,7 @@ pub(crate) fn build_scheduled_system(
             pipe_stages,
             generation,
             error_state.clone(),
-            error_buffer,
+            error_buffer.clone(),
             system_stage,
             py,
             &mut ticks,
@@ -601,6 +601,7 @@ pub(crate) fn build_scheduled_system(
             expression,
             generation,
             error_state.clone(),
+            error_buffer.clone(),
             system_stage,
             &mut ticks,
             state_machine_count,
@@ -616,6 +617,7 @@ pub(crate) fn build_scheduled_system(
             condition,
             generation,
             error_state.clone(),
+            error_buffer.clone(),
             system_stage,
             &mut ticks,
             state_machine_count,
@@ -788,6 +790,7 @@ fn build_condition_expr(
     expression: ConditionExpr<Py<PyAny>>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
     ticks: &mut SystemTickRegistration,
     state_machine_count: Option<usize>,
@@ -798,6 +801,7 @@ fn build_condition_expr(
                 condition,
                 generation,
                 error_state,
+                error_buffer,
                 system_stage,
                 state_machine_count,
             )?;
@@ -809,6 +813,7 @@ fn build_condition_expr(
                 *left,
                 generation,
                 error_state.clone(),
+                error_buffer.clone(),
                 system_stage,
                 ticks,
                 state_machine_count,
@@ -817,6 +822,7 @@ fn build_condition_expr(
                 *right,
                 generation,
                 error_state,
+                error_buffer,
                 system_stage,
                 ticks,
                 state_machine_count,
@@ -830,6 +836,7 @@ fn build_condition_expr(
                 *left,
                 generation,
                 error_state.clone(),
+                error_buffer.clone(),
                 system_stage,
                 ticks,
                 state_machine_count,
@@ -838,6 +845,7 @@ fn build_condition_expr(
                 *right,
                 generation,
                 error_state,
+                error_buffer,
                 system_stage,
                 ticks,
                 state_machine_count,
@@ -851,6 +859,7 @@ fn build_condition_expr(
                 *condition,
                 generation,
                 error_state,
+                error_buffer,
                 system_stage,
                 ticks,
                 state_machine_count,
@@ -864,6 +873,7 @@ fn build_persistent_condition_expr(
     expression: ConditionExpr<Py<PyAny>>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
 ) -> PyResult<BoxedCondition> {
     match expression {
@@ -871,6 +881,7 @@ fn build_persistent_condition_expr(
             condition,
             generation,
             error_state,
+            error_buffer,
             system_stage,
             None,
         )?)),
@@ -879,10 +890,16 @@ fn build_persistent_condition_expr(
                 *left,
                 generation,
                 error_state.clone(),
+                error_buffer.clone(),
                 system_stage,
             )?;
-            let right =
-                build_persistent_condition_expr(*right, generation, error_state, system_stage)?;
+            let right = build_persistent_condition_expr(
+                *right,
+                generation,
+                error_state,
+                error_buffer,
+                system_stage,
+            )?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).and_then(ErasedConditionSystem::new(right)),
             ))
@@ -892,17 +909,28 @@ fn build_persistent_condition_expr(
                 *left,
                 generation,
                 error_state.clone(),
+                error_buffer.clone(),
                 system_stage,
             )?;
-            let right =
-                build_persistent_condition_expr(*right, generation, error_state, system_stage)?;
+            let right = build_persistent_condition_expr(
+                *right,
+                generation,
+                error_state,
+                error_buffer,
+                system_stage,
+            )?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).or_else(ErasedConditionSystem::new(right)),
             ))
         }
         ConditionExpr::Not(condition) => {
-            let condition =
-                build_persistent_condition_expr(*condition, generation, error_state, system_stage)?;
+            let condition = build_persistent_condition_expr(
+                *condition,
+                generation,
+                error_state,
+                error_buffer,
+                system_stage,
+            )?;
             Ok(Box::new(not(ErasedConditionSystem::new(condition))))
         }
     }
@@ -912,6 +940,7 @@ pub(crate) fn build_set_config(
     value: &Bound<'_, PyAny>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
 ) -> PyResult<ScheduleConfigs<InternedSystemSet>> {
     let (set, ordering, conditions) = system_set_config_parts(value)?;
@@ -922,6 +951,7 @@ pub(crate) fn build_set_config(
             extract_condition_expr(condition)?,
             generation,
             error_state.clone(),
+            error_buffer.clone(),
             system_stage,
         )?;
         config.run_if_dyn(condition);

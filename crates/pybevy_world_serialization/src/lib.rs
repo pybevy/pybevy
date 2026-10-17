@@ -57,6 +57,7 @@ impl PyWorldSerializationPlugin {
 impl PluginBuild for PyWorldSerializationPlugin {
     fn build(_py_plugin: &Bound<'_, PyAny>, app: &mut App) -> PyResult<()> {
         app.add_plugins(WorldSerializationPlugin);
+        app.add_message::<WorldInstanceReadyMessage>();
         app.add_observer(world_instance_ready_bridge);
         Ok(())
     }

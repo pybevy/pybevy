@@ -1795,6 +1795,7 @@ class QueryIter:
         """Iterate over specific entities that match the query."""
 
     def __len__(self) -> int: ...
+    def __contains__(self, entity: Entity) -> bool: ...
 
 class QueryIterator(Iterator[Any]):
     """Iterator for one fresh Query traversal."""
@@ -2156,6 +2157,9 @@ class Query(Generic[QueryParam_T, *Qs]):
 
     def __len__(self) -> int:
         """Get the number of entities matching this query."""
+
+    def __contains__(self, entity: Entity) -> bool:
+        """Whether ``entity`` matches the query; any other operand raises TypeError."""
 
     def is_empty(self) -> bool:
         """Check if the query has no matching entities.

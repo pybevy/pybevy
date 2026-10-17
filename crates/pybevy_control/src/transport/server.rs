@@ -1,9 +1,13 @@
-use std::{convert::Infallible, sync::Arc, thread};
+use std::{convert::Infallible, sync::Arc, thread, time::Duration};
 
 use axum::{
     Json, Router,
-    extract::{Path, Query as AxumQuery, State},
-    http::{HeaderMap, StatusCode},
+    extract::{Path, Query as AxumQuery, Request, State},
+    http::{
+        HeaderMap, StatusCode,
+        header::{AUTHORIZATION, HOST, ORIGIN},
+    },
+    middleware::{self, Next},
     response::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
@@ -18,7 +22,7 @@ use tokio_stream::StreamExt;
 use crate::{
     catalog::tools::list_tools as catalog_tools,
     discovery::ApiIndex,
-    engine::channel::{ControlRequest, ControlSender},
+    engine::channel::{ControlRequest, ControlSender, FrameActivity},
     plugin::ControlConfig,
     protocol::{
         ControlOperation, EntityRef, ErrorCode, GetComponentParams, GetResourceParams,
@@ -120,11 +124,39 @@ pub(super) async fn respond(
         _ => StatusCode::OK,
     };
     let image_delivery = operation.spec().image_delivery;
-    match send_operation(&state.sender, operation).await {
+    let result = match &operation {
+        ControlOperation::ScheduleActions(request) if request.mode == ScheduleMode::Sync => {
+            with_deadline(
+                SYNC_SCHEDULE_DEADLINE,
+                send_operation(&state.sender, operation),
+            )
+            .await
+        }
+        _ => send_operation(&state.sender, operation).await,
+    };
+    match result {
         Ok(value) if image_delivery => image_response(status, value, headers).into_response(),
         Ok(value) => (status, Json(value)).into_response(),
         Err(error) => error.into_response(),
     }
+}
+
+/// Dropping the timed-out future closes the response channel, so the engine discards the schedule.
+async fn with_deadline(
+    deadline: Duration,
+    operation: impl Future<Output = Result<serde_json::Value, ErrorResponse>>,
+) -> Result<serde_json::Value, ErrorResponse> {
+    tokio::time::timeout(deadline, operation)
+        .await
+        .unwrap_or_else(|_| {
+            Err(error_response(
+                StatusCode::GATEWAY_TIMEOUT,
+                &format!(
+                    "Synchronous schedule exceeded the {}-second wall-clock deadline; use mode='async' for longer schedules",
+                    deadline.as_secs_f64()
+                ),
+            ))
+        })
 }
 
 pub(super) fn error_response(status: StatusCode, message: &str) -> ErrorResponse {
@@ -201,10 +233,94 @@ async fn capture_with_gizmos(
     respond_to_tool(&state, "capture_screenshot", arguments, &headers).await
 }
 
+const LOOPBACK_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
+const SYNC_SCHEDULE_DEADLINE: Duration = Duration::from_secs(120);
+
+fn host_name(authority: &str) -> String {
+    let authority = authority.trim().to_ascii_lowercase();
+    if authority.starts_with('[') {
+        return authority
+            .split_once(']')
+            .map_or(authority.clone(), |(host, _)| format!("{host}]"));
+    }
+    authority
+        .rsplit_once(':')
+        .map_or(authority.clone(), |(host, _)| host.to_string())
+}
+
+fn host_allowed(bind_host: &str, host: &str) -> bool {
+    let bind = host_name(bind_host);
+    if bind == "0.0.0.0" || bind == "[::]" || bind == "::" {
+        return true;
+    }
+    let host = host_name(host);
+    LOOPBACK_HOSTS.contains(&host.as_str()) || host == bind
+}
+
+/// A DNS-rebound page reaches a loopback server under its own host name, and
+/// a scene started with a session token answers only requests that carry it.
+async fn guard_request(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let host = headers.get(HOST).map(|value| value.to_str().unwrap_or(""));
+    let origin = headers.get(ORIGIN).map(|value| {
+        let origin = value.to_str().unwrap_or("");
+        origin
+            .split_once("://")
+            .map_or("", |(_, authority)| authority)
+    });
+    for (header, value) in [("Host", host), ("Origin", origin)] {
+        if let Some(value) = value
+            && !host_allowed(&state.config.host, value)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "{header} '{value}' is not allowed; the control server answers only requests addressed to {}",
+                        state.config.host
+                    ),
+                })),
+            )
+                .into_response();
+        }
+    }
+    if let Some(token) = &state.config.token
+        && request.uri().path() != "/health"
+        && !bearer_matches(request.headers(), token)
+    {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "this control server requires its session token as `Authorization: Bearer <token>`",
+            })),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+fn bearer_matches(headers: &HeaderMap, token: &str) -> bool {
+    let Some(presented) = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    else {
+        return false;
+    };
+    presented.len() == token.len()
+        && presented
+            .bytes()
+            .zip(token.bytes())
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
 pub fn build_router(state: AppState) -> Router {
+    let host_check = middleware::from_fn_with_state(state.clone(), guard_request);
     Router::new()
         // Health
         .route("/health", get(health))
+        .route("/api/v1/engine/activity", get(engine_activity))
         // SSE
         .route("/api/v1/sse", get(handle_sse))
         // Entities
@@ -346,10 +462,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/instructions", get(get_instructions))
         .route("/api/v1/tools", get(list_tools))
         .route("/api/v1/tools/{name}", post(call_tool))
+        .layer(host_check)
         .with_state(state)
 }
 async fn health() -> &'static str {
     "ok"
+}
+
+/// Answered from the server thread, so it responds while the main thread is stuck.
+async fn engine_activity(State(state): State<AppState>) -> Json<Value> {
+    Json(match state.sender.heartbeat().activity() {
+        FrameActivity::InFrame { secs } => serde_json::json!({"in_frame": true, "secs": secs}),
+        FrameActivity::BetweenFrames { secs } => {
+            serde_json::json!({"in_frame": false, "secs": secs})
+        }
+    })
 }
 
 async fn handle_sse(
@@ -750,6 +877,104 @@ mod tests {
     };
 
     #[test]
+    fn host_allowed_accepts_loopback_names_and_the_bound_host() {
+        for host in ["127.0.0.1:8420", "localhost", "LOCALHOST:1", "[::1]:8420"] {
+            assert!(host_allowed("127.0.0.1", host), "{host}");
+        }
+        for host in [
+            "evil.example:8420",
+            "127.0.0.2",
+            "",
+            "localhost.evil.example",
+        ] {
+            assert!(!host_allowed("127.0.0.1", host), "{host}");
+        }
+        assert!(host_allowed("192.168.1.5", "192.168.1.5:8420"));
+        assert!(!host_allowed("192.168.1.5", "evil.example"));
+        assert!(host_allowed("0.0.0.0", "evil.example"));
+    }
+
+    #[tokio::test]
+    async fn sync_schedule_deadline_closes_the_engine_response_channel() {
+        let (state, mut receiver) = test_state_enabled();
+        let operation = ControlOperation::ScheduleActions(
+            serde_json::from_value(serde_json::json!({
+                "actions": [{"tool": "get_time_status", "at": 1.0}]
+            }))
+            .unwrap(),
+        );
+
+        let (status, Json(error)) = with_deadline(
+            Duration::from_millis(10),
+            send_operation(&state.sender, operation),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            error["error"],
+            "Synchronous schedule exceeded the 0.01-second wall-clock deadline; use mode='async' for longer schedules"
+        );
+        assert!(receiver.rx.try_recv().unwrap().response_tx.is_closed());
+    }
+
+    #[tokio::test]
+    async fn router_requires_the_session_token_except_for_health() {
+        let (mut state, _rx) = test_state_enabled();
+        state.config.token = Some("s3cret".into());
+        let request = |uri: &str, auth: Option<&str>| {
+            let mut builder = Request::builder().uri(uri);
+            if let Some(auth) = auth {
+                builder = builder.header("authorization", auth);
+            }
+            builder.body(Body::empty()).unwrap()
+        };
+        for (uri, auth, status) in [
+            ("/health", None, StatusCode::OK),
+            ("/api/v1/tools", None, StatusCode::UNAUTHORIZED),
+            (
+                "/api/v1/tools",
+                Some("Bearer wrong!"),
+                StatusCode::UNAUTHORIZED,
+            ),
+            ("/api/v1/tools", Some("s3cret"), StatusCode::UNAUTHORIZED),
+            ("/api/v1/tools", Some("Bearer s3cret"), StatusCode::OK),
+        ] {
+            let response = build_router(state.clone())
+                .oneshot(request(uri, auth))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{uri} {auth:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn router_rejects_foreign_host_and_origin_headers() {
+        let (state, _rx) = test_state_enabled();
+        let request = |name: &str, value: &str| {
+            Request::builder()
+                .uri("/health")
+                .header(name, value)
+                .body(Body::empty())
+                .unwrap()
+        };
+        for (name, value, status) in [
+            ("host", "127.0.0.1:8420", StatusCode::OK),
+            ("host", "evil.example:8420", StatusCode::FORBIDDEN),
+            ("origin", "http://localhost:3000", StatusCode::OK),
+            ("origin", "http://evil.example:8420", StatusCode::FORBIDDEN),
+            ("origin", "null", StatusCode::FORBIDDEN),
+        ] {
+            let response = build_router(state.clone())
+                .oneshot(request(name, value))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{name}: {value}");
+        }
+    }
+
+    #[test]
     fn parse_entity_ref_numeric_string() {
         let result = parse_entity_ref("42");
         assert!(matches!(result, EntityRef::Id(42)));
@@ -847,6 +1072,7 @@ mod tests {
                 manipulation: true,
                 execute_python: true,
                 api_discovery: true,
+                token: None,
             },
             SharedScheduleRegistry::default(),
         );
@@ -866,6 +1092,7 @@ mod tests {
                 manipulation: false,
                 execute_python: false,
                 api_discovery: false,
+                token: None,
             },
             SharedScheduleRegistry::default(),
         );

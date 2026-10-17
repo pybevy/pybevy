@@ -118,7 +118,7 @@ pub(super) fn compose_contact_sheet<K: Ord + Copy>(
         && canvas.width() > max_w
     {
         let scale = max_w as f64 / canvas.width() as f64;
-        let new_height = (canvas.height() as f64 * scale).round() as u32;
+        let new_height = ((canvas.height() as f64 * scale).round() as u32).max(1);
         canvas = resize(&canvas, max_w, new_height, FilterType::Triangle);
     }
 
@@ -344,5 +344,14 @@ mod tests {
 
         let result = composite_contact_sheet(&mut timeline).unwrap();
         assert_eq!(result["width"], 50);
+    }
+
+    #[test]
+    fn compose_contact_sheet_keeps_one_row_when_downscaling_a_wide_sheet() {
+        let mut frames = vec![(0, RgbImage::from_pixel(512, 4, Rgb([100, 100, 100])))];
+
+        let sheet = compose_contact_sheet(&mut frames, &TIMELINE_SHEET, 20, Some(8)).unwrap();
+
+        assert_eq!((sheet.width, sheet.height), (8, 1));
     }
 }

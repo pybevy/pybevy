@@ -8,6 +8,7 @@ Usage:
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 from ..app import App, Plugin, Update
 from ..decorators import component, plugin, resource
@@ -37,8 +38,8 @@ class OrbitCamera(Component):
         rotate_sensitivity: Mouse rotation sensitivity (default: 0.003)
         pan_sensitivity: Mouse pan sensitivity multiplier (default: 0.001)
         zoom_sensitivity: Zoom fraction per scroll line (default: 0.1)
-        min_distance: Minimum zoom distance (default: 5.0)
-        max_distance: Maximum zoom distance (default: 1000.0)
+        min_distance: Minimum zoom distance, above zero (default: 5.0)
+        max_distance: Maximum zoom distance, at least min_distance (default: 1000.0)
     """
 
     distance: float
@@ -50,6 +51,19 @@ class OrbitCamera(Component):
     zoom_sensitivity: float = 0.1
     min_distance: float = 5.0
     max_distance: float = 1000.0
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in ("min_distance", "max_distance"):
+            # During dataclass init the other bound is not set yet.
+            bounds = {**self.__dict__, name: value}
+            low = cast(float, bounds.get("min_distance", value))
+            high = cast(float, bounds.get("max_distance", value))
+            if not 0.0 < low <= high < math.inf:
+                raise ValueError(
+                    "OrbitCamera needs finite 0 < min_distance <= max_distance "
+                    f"(got {low!r} and {high!r})"
+                )
+        object.__setattr__(self, name, value)
 
 
 @resource

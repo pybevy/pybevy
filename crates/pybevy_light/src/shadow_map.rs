@@ -4,7 +4,12 @@ use pybevy_macros::pyresource;
 use pyo3::prelude::*;
 
 // Bevy creates the shadow textures with `size as u32` sides.
-#[pyresource(PointLightShadowMap, bridge, domains = [size => [at_least(1)]])]
+#[pyresource(
+    PointLightShadowMap,
+    bridge,
+    no_user_remove,
+    domains = [size => [at_least(1)]]
+)]
 #[pyclass(name = "PointLightShadowMap", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyPointLightShadowMap {
@@ -41,7 +46,12 @@ impl PyPointLightShadowMap {
     }
 }
 
-#[pyresource(DirectionalLightShadowMap, bridge, domains = [size => [at_least(1)]])]
+#[pyresource(
+    DirectionalLightShadowMap,
+    bridge,
+    no_user_remove,
+    domains = [size => [at_least(1)]]
+)]
 #[pyclass(name = "DirectionalLightShadowMap", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug)]
 pub struct PyDirectionalLightShadowMap {

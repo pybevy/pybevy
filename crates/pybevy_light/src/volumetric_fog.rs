@@ -4,7 +4,14 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(VolumetricFog, bridge, view_fields = [ambient_intensity, step_count, jitter], batch_only_fields = [ambient_color])]
+// The raymarch takes step_count samples per pixel; far larger counts stall the GPU.
+#[pycomponent(
+    VolumetricFog,
+    bridge,
+    view_fields = [ambient_intensity, step_count, jitter],
+    batch_only_fields = [ambient_color],
+    domains = [step_count => [range_inclusive(0.0, 1024.0)]]
+)]
 #[pyclass(name = "VolumetricFog", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyVolumetricFog {
@@ -49,7 +56,7 @@ impl PyVolumetricFog {
         Ok(Self::from_owned(VolumetricFog {
             ambient_color,
             ambient_intensity,
-            step_count,
+            step_count: Self::check_step_count(step_count)?,
             jitter,
         })
         .into())
@@ -85,7 +92,7 @@ impl PyVolumetricFog {
 
     #[setter]
     pub fn set_step_count(&mut self, count: u32) -> PyResult<()> {
-        self.as_mut()?.step_count = count;
+        self.as_mut()?.step_count = Self::check_step_count(count)?;
         Ok(())
     }
 

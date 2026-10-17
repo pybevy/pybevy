@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 use bevy::prelude::Resource;
@@ -56,16 +59,91 @@ impl Drop for ExclusiveExecutionGuard {
     }
 }
 
+/// When the main loop last started and finished a frame, read by the HTTP
+/// thread to tell a busy main thread from an idle loop.
+#[derive(Resource, Clone)]
+pub struct FrameHeartbeat {
+    inner: Arc<HeartbeatInner>,
+}
+
+struct HeartbeatInner {
+    epoch: Instant,
+    in_frame: AtomicBool,
+    started_ms: AtomicU64,
+    finished_ms: AtomicU64,
+}
+
+/// Seconds the main thread has spent in the current frame, or since its last one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FrameActivity {
+    InFrame { secs: f64 },
+    BetweenFrames { secs: f64 },
+}
+
+impl Default for FrameHeartbeat {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(HeartbeatInner {
+                epoch: Instant::now(),
+                in_frame: AtomicBool::new(false),
+                started_ms: AtomicU64::new(0),
+                finished_ms: AtomicU64::new(0),
+            }),
+        }
+    }
+}
+
+impl FrameHeartbeat {
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.inner.epoch.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    pub fn mark_started(&self) {
+        self.inner
+            .started_ms
+            .store(self.now_ms(), Ordering::Release);
+        self.inner.in_frame.store(true, Ordering::Release);
+    }
+
+    pub fn mark_finished(&self) {
+        self.inner
+            .finished_ms
+            .store(self.now_ms(), Ordering::Release);
+        self.inner.in_frame.store(false, Ordering::Release);
+    }
+
+    pub fn activity(&self) -> FrameActivity {
+        let in_frame = self.inner.in_frame.load(Ordering::Acquire);
+        let now = self.now_ms();
+        let secs =
+            |since: &AtomicU64| now.saturating_sub(since.load(Ordering::Acquire)) as f64 / 1000.0;
+        if in_frame {
+            FrameActivity::InFrame {
+                secs: secs(&self.inner.started_ms),
+            }
+        } else {
+            FrameActivity::BetweenFrames {
+                secs: secs(&self.inner.finished_ms),
+            }
+        }
+    }
+}
+
 /// Clonable sender for the control channel (stored in HTTP server state)
 #[derive(Clone)]
 pub struct ControlSender {
     pub tx: mpsc::UnboundedSender<ControlRequest>,
     exclusive_execution: SharedExclusiveExecution,
+    heartbeat: FrameHeartbeat,
 }
 
 impl ControlSender {
     pub(crate) fn exclusive_execution(&self) -> SharedExclusiveExecution {
         self.exclusive_execution.clone()
+    }
+
+    pub fn heartbeat(&self) -> FrameHeartbeat {
+        self.heartbeat.clone()
     }
 }
 
@@ -76,6 +154,7 @@ pub fn create_channel() -> (ControlSender, ControlReceiver) {
         ControlSender {
             tx,
             exclusive_execution: SharedExclusiveExecution::default(),
+            heartbeat: FrameHeartbeat::default(),
         },
         ControlReceiver { rx },
     )
@@ -121,6 +200,27 @@ mod tests {
         drop(guard);
         assert!(!state_a.is_active());
         assert!(state_a.try_enter().is_some());
+    }
+
+    #[test]
+    fn heartbeat_tells_a_frame_in_progress_from_an_idle_loop() {
+        let heartbeat = FrameHeartbeat::default();
+        assert!(matches!(
+            heartbeat.activity(),
+            FrameActivity::BetweenFrames { .. }
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        heartbeat.mark_started();
+        assert!(matches!(
+            heartbeat.activity(),
+            FrameActivity::InFrame { .. }
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        heartbeat.mark_finished();
+        assert!(matches!(
+            heartbeat.activity(),
+            FrameActivity::BetweenFrames { .. }
+        ));
     }
 
     #[test]

@@ -563,14 +563,27 @@ mod tests {
     }
 
     #[test]
-    fn capture_depth_grid_density_has_positive_minimum() {
+    fn capture_tools_advertise_size_bounds() {
         let tools = list_tools();
-        let tool = tools.iter().find(|t| t["name"] == "capture_depth").unwrap();
-
-        assert_eq!(
-            tool["inputSchema"]["properties"]["grid_density"]["minimum"],
-            1
-        );
+        let properties = |name: &str| {
+            tools.iter().find(|t| t["name"] == name).unwrap()["inputSchema"]["properties"].clone()
+        };
+        let depth = properties("capture_depth");
+        assert_eq!(depth["grid_density"]["minimum"], 1);
+        assert_eq!(depth["grid_density"]["maximum"], 32);
+        let timeline = properties("capture_timeline");
+        for field in ["columns", "capture_count"] {
+            assert_eq!(timeline[field]["minimum"], 1);
+            assert_eq!(timeline[field]["maximum"], 20);
+        }
+        for tool in [
+            "capture_depth",
+            "capture_timeline",
+            "capture_turnaround",
+            "reload_and_capture",
+        ] {
+            assert_eq!(properties(tool)["max_width"]["minimum"], 1, "{tool}");
+        }
     }
 
     #[test]

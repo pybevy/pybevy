@@ -3,8 +3,9 @@ use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
     public_error::{
-        CLAMP_MIN_EXCEEDS_MAX, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
-        VECTOR_NOT_NORMALIZED, from_slice_too_short,
+        CLAMP_MIN_EXCEEDS_MAX, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED,
+        ROTATE_TOWARDS_UNDEFINED_ANGLE, UNSUPPORTED_COMPARISON, VECTOR_NOT_NORMALIZED,
+        from_slice_too_short,
     },
     repr::ReprLiteral,
 };
@@ -663,9 +664,12 @@ impl PyVec2 {
     }
 
     pub fn rotate_towards(&self, rhs: &PyVec2, max_angle: f32) -> PyResult<PyVec2> {
-        Ok(PyVec2::from_vec2(
-            self.as_ref()?.rotate_towards(*rhs.as_ref()?, max_angle),
-        ))
+        let (from, to) = (*self.as_ref()?, *rhs.as_ref()?);
+        // glam clamps by this angle and panics when it is NaN.
+        if from.angle_to(to).is_nan() {
+            return Err(PyValueError::new_err(ROTATE_TOWARDS_UNDEFINED_ANGLE));
+        }
+        Ok(PyVec2::from_vec2(from.rotate_towards(to, max_angle)))
     }
 
     pub fn abs_diff_eq(&self, rhs: &PyVec2, max_abs_diff: f32) -> PyResult<bool> {

@@ -5,11 +5,11 @@ use pyo3::{
 };
 
 /// Annotation marker for the value received from the previous stage of a pipe.
-#[pyclass(name = "In", frozen)]
+#[pyclass(name = "In", module = "pybevy.ecs", frozen)]
 pub struct PyIn;
 
 /// Descriptor returned by `In[T]`.
-#[pyclass(name = "InParam", frozen)]
+#[pyclass(name = "InParam", module = "pybevy.ecs", frozen)]
 pub struct PyInParam {
     value_type: Py<PyAny>,
     type_name: String,

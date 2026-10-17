@@ -8,8 +8,8 @@ use bevy::{
     time::{Real, Time},
 };
 use pybevy_reload::{
-    HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode, StartPaused, is_verbose,
-    perform_reload,
+    EscalationTracker, HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode,
+    StartPaused, is_verbose, perform_reload,
 };
 use pyo3::prelude::*;
 
@@ -305,6 +305,14 @@ pub fn check_hot_reload_system(world: &mut World) {
 
     // If we got the loader func, construct runtime and perform reload
     if let Some((loader_func, mode, error_state, hot_reload_state)) = reload_data {
+        // The failed Full rolled modules back; a partial import would reuse them.
+        if mode == ReloadMode::Partial
+            && world
+                .get_resource::<EscalationTracker>()
+                .is_some_and(|tracker| tracker.full_reload_required)
+        {
+            hot_reload_state.import_all_modules();
+        }
         run_definition_reload_attempt(world, loader_func, mode, error_state, hot_reload_state);
     }
 }

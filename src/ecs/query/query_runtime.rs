@@ -15,8 +15,10 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentWriteContext, ExtractFn, FilteredEntityAccess, LogicalTypeId, LogicalTypeMap,
-    ensure_asset_access_registry, extract_entity_from_any, public_error::QUERY_ROW_SHAPE_MISMATCH,
-    registry::global_registry, resource_initializer,
+    ensure_asset_access_registry, extract_entity_from_any,
+    public_error::{self, QUERY_ROW_SHAPE_MISMATCH},
+    registry::global_registry,
+    resource_initializer,
 };
 use pybevy_ecs::shared::{
     cached_query::CachedQueryCore,
@@ -1513,6 +1515,18 @@ impl PyQueryIter {
                 .is_empty_with::<Python<'_>, _>(&materializer)
                 .map_err(query_runtime_error_to_py)
         }
+    }
+
+    /// Whether `entity` matches the query, like Bevy's `Query::contains`.
+    fn __contains__(&mut self, entity: &Bound<'_, PyAny>, py: Python) -> PyResult<bool> {
+        if !entity.is_instance_of::<PyEntity>() {
+            return Err(PyTypeError::new_err(
+                public_error::query_contains_requires_entity(
+                    &entity.get_type().name()?.to_string(),
+                ),
+            ));
+        }
+        Ok(self.get(entity, py)?.is_some())
     }
 
     /// Get components for a specific entity by ID.

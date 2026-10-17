@@ -3,8 +3,10 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use super::EntityRef;
 use crate::capture::{
-    analysis::DEFAULT_COMPARE_EPSILON, screenshot::MAX_CAPTURE_DELAY_FRAMES,
-    timeline::MAX_TIMELINE_FRAMES,
+    analysis::DEFAULT_COMPARE_EPSILON,
+    depth::MAX_DEPTH_GRID_DENSITY,
+    screenshot::MAX_CAPTURE_DELAY_FRAMES,
+    timeline::{MAX_TIMELINE_CAPTURES, MAX_TIMELINE_FRAMES},
 };
 
 /// Reload mode: full (default) re-executes all scene code, partial only reloads changed systems.
@@ -198,12 +200,16 @@ pub struct CaptureTimelineParams {
     pub total_frames: u32,
     /// Number of captures (max 20)
     #[serde(default = "default_6")]
+    #[schemars(range(min = 1, max = MAX_TIMELINE_CAPTURES))]
     pub capture_count: u32,
     /// Max composite width in pixels (default 1200)
     #[schemars(extend("default" = 1200))]
+    #[schemars(range(min = 1))]
+    #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
-    /// Grid columns
+    /// Grid columns (default 3, max 20)
     #[serde(default = "default_3")]
+    #[schemars(range(min = 1, max = MAX_TIMELINE_CAPTURES))]
     pub columns: u32,
     /// Debug camera position [x, y, z]
     pub position: Option<[f32; 3]>,
@@ -225,7 +231,7 @@ pub struct CaptureTurnaroundParams {
     /// Camera distance from center. Auto-fitted to scene bounds if omitted.
     #[schemars(extend("exclusiveMinimum" = 0.0))]
     pub distance: Option<f32>,
-    /// Camera elevation in degrees (default 25)
+    /// Camera elevation in degrees (default 25); must be finite.
     #[schemars(extend("default" = 25))]
     pub elevation: Option<f32>,
     /// Number of orbit positions (default 6)
@@ -239,6 +245,8 @@ pub struct CaptureTurnaroundParams {
     pub columns: Option<u32>,
     /// Max composite width (default 1200)
     #[schemars(extend("default" = 1200))]
+    #[schemars(range(min = 1))]
+    #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
     /// Hide UI during capture (default true)
     #[schemars(extend("default" = true))]
@@ -255,9 +263,9 @@ pub struct CaptureDepthParams {
     /// Normalized ray-cast coordinates on a fixed 800x800 scale, using the
     /// selected Camera3d projection and viewport. Grid if omitted.
     pub sample_points: Option<Vec<[i64; 2]>>,
-    /// Auto-generate NxN sample grid (default 8 if no sample_points)
+    /// Auto-generate NxN sample grid (default 8 if no sample_points, max 32)
     #[schemars(extend("default" = 8))]
-    #[schemars(range(min = 1))]
+    #[schemars(range(min = 1, max = MAX_DEPTH_GRID_DENSITY))]
     pub grid_density: Option<u32>,
     /// Include RGB screenshot (default true)
     #[schemars(extend("default" = true))]
@@ -271,6 +279,8 @@ pub struct CaptureDepthParams {
     pub hide_ui: Option<bool>,
     /// Max screenshot width (default 768)
     #[schemars(extend("default" = 768))]
+    #[schemars(range(min = 1))]
+    #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
 }
 
@@ -303,6 +313,8 @@ pub struct ReloadAndCaptureParams {
     #[schemars(range(max = MAX_CAPTURE_DELAY_FRAMES))]
     pub delay_frames: Option<u32>,
     /// Max screenshot width (default 768)
+    #[schemars(range(min = 1))]
+    #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
     /// Debug camera position [x, y, z]
     pub position: Option<[f32; 3]>,

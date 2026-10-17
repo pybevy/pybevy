@@ -638,6 +638,11 @@ pub const ASSET_SERVER_MANUAL_INSERT: &str =
     "AssetServer cannot be manually inserted. It is provided by AssetPlugin.";
 pub const ASSET_SERVER_MANUAL_REMOVE: &str =
     "AssetServer cannot be manually removed. It is managed by AssetPlugin.";
+pub fn query_contains_requires_entity(type_name: &str) -> String {
+    format!(
+        "`in Query` takes an Entity, got {type_name}; a Query matches entities, not its data rows"
+    )
+}
 pub fn control_resource_remove_forbidden(resource: &str) -> String {
     format!("Resource '{resource}' is engine-managed and cannot be removed through the control API")
 }
@@ -1390,6 +1395,8 @@ pub const INFINITE_PLANE_POINTS: &str =
     "infinite plane must be defined by three finite, non-collinear points";
 pub const INTEGER_VECTOR_OVERFLOW: &str = "integer vector arithmetic overflow";
 pub const RHS_NOT_NORMALIZED: &str = "rhs must be normalized";
+pub const ROTATE_TOWARDS_UNDEFINED_ANGLE: &str =
+    "rotate_towards needs finite, non-zero vectors: the angle between these is undefined";
 pub const CLAMP_MIN_EXCEEDS_MAX: &str = "clamp: expected min <= max";
 pub const VECTOR_NOT_NORMALIZED: &str = "vector must be normalized";
 pub const NORMAL_NOT_NORMALIZED: &str = "normal must be normalized";
@@ -1397,6 +1404,9 @@ pub const AXIS_NOT_NORMALIZED: &str = "axis must be normalized";
 pub const DIRECTION_NOT_NORMALIZED: &str = "direction must be normalized";
 pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
 pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
+pub const RELOAD_ENTRYPOINT_CHANGED: &str = "the @entrypoint changed; Python plugins, systems and observers in it were reloaded, but native plugin settings (such as ScheduleRunnerPlugin.run_loop), WindowPlugin and other App configuration apply only at startup: call run_scene for those to take effect";
+pub const TRANSFORM_ROTATION_ZERO_LENGTH: &str =
+    "Transform.rotation must be a non-zero quaternion; use Quat.IDENTITY for no rotation";
 pub const QUAT_NOT_NORMALIZED: &str = "quaternion must be normalized";
 pub const ROTATION_AXES_NOT_NORMALIZED: &str = "rotation axes must be normalized";
 pub const INVALID_INTERVAL: &str =

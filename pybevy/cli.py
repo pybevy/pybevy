@@ -456,24 +456,17 @@ def _run_script(
                 back to the script's own directory when not given.
         """
         sys.argv = scene_argv.copy()
-        # Try to convert file path to module name for relative imports
+        from .util.hot_reload import scene_module_location
+
         abs_path = os.path.abspath(script_path)
-        cwd = (
-            os.getcwd()
-        )  # Check if script is in a package (has __init__.py in parent dir)
         parent_dir = os.path.dirname(abs_path)
-        parent_name = os.path.basename(parent_dir)
+        module_name, import_root = scene_module_location(abs_path)
 
         module_globals: dict[str, object]
-        if os.path.exists(os.path.join(parent_dir, "__init__.py")):
-            # Add project root to sys.path if not already there
-            if cwd not in sys.path:
-                sys.path.insert(0, cwd)
-
-            # Convert path to module name: examples/hot_reload.py -> examples.hot_reload
-            module_name = (
-                parent_name + "." + os.path.splitext(os.path.basename(abs_path))[0]
-            )
+        if import_root != parent_dir:
+            # A packaged scene imports from above its top package so relative imports work.
+            if import_root not in sys.path:
+                sys.path.insert(0, import_root)
 
             # Clear module cache based on what changed
             # Use 'is not None' check because changed_files can be an empty set
@@ -564,7 +557,6 @@ def _run_script(
             # unimportable module name).
             from .util.hot_reload import exec_scene_module
 
-            module_name = os.path.splitext(os.path.basename(abs_path))[0]
             module_globals = exec_scene_module(
                 module_name, file_path=abs_path, verbose=verbose
             )

@@ -4,6 +4,7 @@ use pyo3::{
     create_exception,
     exceptions::{PyException, PyRuntimeError, PyValueError},
     prelude::*,
+    types::PyType,
 };
 use serde_json::Value;
 
@@ -80,6 +81,21 @@ fn _control_health(py: Python<'_>, port: u16, timeout: f64) -> PyResult<bool> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (port, token))]
+fn _control_set_session_token(port: u16, token: Option<String>) {
+    client::set_session_token(port, token);
+}
+
+#[pyfunction]
+fn _control_engine_activity(py: Python<'_>, port: u16, timeout: f64) -> PyResult<Py<PyAny>> {
+    let timeout = timeout_duration(timeout)?;
+    let result = py
+        .detach(move || client::control_engine_activity(port, timeout))
+        .map_err(client_error_to_py)?;
+    json_to_python(py, &result)
+}
+
+#[pyfunction]
 fn _control_last_error(py: Python<'_>, port: u16, timeout: f64) -> PyResult<Py<PyAny>> {
     let timeout = timeout_duration(timeout)?;
     let result = py
@@ -89,23 +105,28 @@ fn _control_last_error(py: Python<'_>, port: u16, timeout: f64) -> PyResult<Py<P
 }
 
 pub fn add_functions(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add(
+    add_control_exception(
+        module,
         "_ControlTimeoutError",
         module.py().get_type::<PyControlTimeoutError>(),
     )?;
-    module.add(
+    add_control_exception(
+        module,
         "_ControlConnectError",
         module.py().get_type::<PyControlConnectError>(),
     )?;
-    module.add(
+    add_control_exception(
+        module,
         "_ControlHttpStatusError",
         module.py().get_type::<PyControlHttpStatusError>(),
     )?;
-    module.add(
+    add_control_exception(
+        module,
         "_ControlProtocolError",
         module.py().get_type::<PyControlProtocolError>(),
     )?;
-    module.add(
+    add_control_exception(
+        module,
         "_ControlTransportError",
         module.py().get_type::<PyControlTransportError>(),
     )?;
@@ -113,7 +134,21 @@ pub fn add_functions(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_control_request_scene_resource, module)?)?;
     module.add_function(wrap_pyfunction!(_control_health, module)?)?;
     module.add_function(wrap_pyfunction!(_control_last_error, module)?)?;
+    module.add_function(wrap_pyfunction!(_control_engine_activity, module)?)?;
+    module.add_function(wrap_pyfunction!(_control_set_session_token, module)?)?;
     Ok(())
+}
+
+// pybevy.mcp is this native module, so pickle and tracebacks resolve the public name.
+fn add_control_exception(
+    module: &Bound<'_, PyModule>,
+    public_name: &str,
+    exception_type: Bound<'_, PyType>,
+) -> PyResult<()> {
+    exception_type.setattr("__module__", "pybevy.mcp")?;
+    exception_type.setattr("__name__", public_name)?;
+    exception_type.setattr("__qualname__", public_name)?;
+    module.add(public_name, exception_type)
 }
 
 fn timeout_duration(timeout: f64) -> PyResult<Duration> {

@@ -126,6 +126,11 @@ pub trait ReloadRuntime {
     /// Extract stable plugin identities from pending definitions for delta detection.
     fn plugin_names(&self, defs: &Self::Defs) -> Vec<PluginIdentity>;
 
+    /// Whether the candidate's entrypoint code differs from the committed generation's.
+    fn entrypoint_changed(&self, _defs: &Self::Defs) -> bool {
+        false
+    }
+
     /// Extract system names from pending definitions (for delta detection).
     fn system_names(&self, defs: &Self::Defs) -> std::collections::HashSet<String>;
 

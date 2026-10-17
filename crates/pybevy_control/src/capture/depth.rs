@@ -14,6 +14,7 @@ use crate::{
 };
 
 const EXPLICIT_SAMPLE_EXTENT: i64 = 800;
+pub const MAX_DEPTH_GRID_DENSITY: u32 = 32;
 
 #[derive(Debug)]
 pub struct PendingDepthAnalysis {
@@ -101,10 +102,10 @@ pub fn validate_depth_sampling(
     sample_points: &Option<Vec<[i64; 2]>>,
     grid_density: &Option<u32>,
 ) -> Result<(), ControlError> {
-    if matches!(grid_density, Some(0)) {
-        return Err(ControlError::invalid_params(
-            "grid_density must be at least 1",
-        ));
+    if grid_density.is_some_and(|density| !(1..=MAX_DEPTH_GRID_DENSITY).contains(&density)) {
+        return Err(ControlError::invalid_params(format!(
+            "grid_density must be between 1 and {MAX_DEPTH_GRID_DENSITY}"
+        )));
     }
     sample_points
         .as_deref()
@@ -882,14 +883,25 @@ mod tests {
     }
 
     #[test]
-    fn compute_depth_samples_rejects_zero_grid_density_before_camera_lookup() {
+    fn compute_depth_samples_rejects_out_of_range_grid_density_before_camera_lookup() {
         let mut world = World::new();
 
-        let error = compute_depth_samples(&mut world, &None, &None, &None, &Some(0))
-            .expect_err("zero grid density must be rejected");
+        for density in [0, MAX_DEPTH_GRID_DENSITY + 1, u32::MAX] {
+            let error = compute_depth_samples(&mut world, &None, &None, &None, &Some(density))
+                .expect_err("out-of-range grid density must be rejected");
 
-        assert_eq!(error.code, ErrorCode::InvalidParams);
-        assert_eq!(error.message, "grid_density must be at least 1");
+            assert_eq!(error.code, ErrorCode::InvalidParams);
+            assert_eq!(error.message, "grid_density must be between 1 and 32");
+        }
+        let error = compute_depth_samples(
+            &mut world,
+            &None,
+            &None,
+            &None,
+            &Some(MAX_DEPTH_GRID_DENSITY),
+        )
+        .expect_err("a world without a camera has nothing to sample");
+        assert_eq!(error.code, ErrorCode::NotFound);
     }
 
     #[test]

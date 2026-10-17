@@ -321,6 +321,13 @@ pub fn process_active_schedules(world: &mut World) {
     let mut schedules = world
         .remove_resource::<ActiveSchedules>()
         .unwrap_or_default();
+    // A sync caller that timed out or disconnected can no longer receive the result.
+    schedules.schedules.retain(|schedule| {
+        !schedule
+            .sync_response_tx
+            .as_ref()
+            .is_some_and(oneshot::Sender::is_closed)
+    });
 
     if schedules.schedules.is_empty() {
         world.insert_resource(schedules);
@@ -876,6 +883,29 @@ mod tests {
         assert_eq!(response["aborted_actions"], 0);
         assert_eq!(response["cancelled_actions"], 0);
         assert_eq!(response["start_game_time"], 0.25);
+    }
+
+    #[test]
+    fn process_active_schedules_drops_a_sync_schedule_whose_caller_left() {
+        let (tx, rx) = oneshot::channel();
+        drop(rx);
+        let mut world = World::new();
+        world.insert_resource(ActiveSchedules {
+            schedules: vec![ActiveSchedule::new_sync(
+                "s-1".to_string(),
+                serde_json::from_value(
+                    json!({"actions": [{"tool": "get_time_status", "at": 1.0}]}),
+                )
+                .unwrap(),
+                0.0,
+                tx,
+            )],
+            next_id: 1,
+        });
+
+        process_active_schedules(&mut world);
+
+        assert!(world.resource::<ActiveSchedules>().schedules.is_empty());
     }
 
     #[test]

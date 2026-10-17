@@ -5,7 +5,14 @@ use pyo3::prelude::*;
 
 use crate::mouse_button::PyMouseButton;
 
-#[pyresource(ButtonInput<MouseButton>, no_clone, bridge, "MouseInput", default_insert)]
+#[pyresource(
+    ButtonInput<MouseButton>,
+    no_clone,
+    bridge,
+    "MouseInput",
+    default_insert,
+    no_user_remove
+)]
 #[pyclass(name = "MouseInput", module = "pybevy.input", extends = PyResource)]
 pub struct PyMouseInput {
     pub(crate) storage: ResourceStorage<ButtonInput<MouseButton>>,

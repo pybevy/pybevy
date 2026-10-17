@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use bevy::{
-    animation::{AnimationClip, graph::AnimationGraph},
     asset::{Assets, RenderAssetUsages},
     color::Color,
     ecs::{
@@ -12,19 +11,17 @@ use bevy::{
         system::{Query, Res, ResMut},
         world::World,
     },
-    image::{Image, TextureAtlasLayout},
-    mesh::Mesh,
-    pbr::{StandardMaterial, wireframe::WireframeMaterial},
+    image::Image,
     prelude::{ImageNode, Resource, TextColor, TextFont, Visibility, default},
     text::FontSize,
     time::{Real, Time},
     ui::{Node, PositionType, Val, widget::Text},
-    world_serialization::WorldAsset,
 };
 #[cfg(feature = "mcp")]
 use pybevy_control::capture::hold::{InternalOverlayUi, OverlaySuppression};
 use pybevy_core::{
     DebugSnapshot, LastSystemError, ReloadMemorySnapshotInfo, ReloadResult, SystemProfile,
+    registry::global_registry,
 };
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate};
 
@@ -161,7 +158,7 @@ pub fn spawn_hot_reload_overlay_system(world: &mut World) {
     }
 }
 
-/// System that updates system stats (memory, CPU, GPU, entities, assets) periodically
+/// System that updates system stats: asset counts every frame, process stats and entities periodically
 pub fn update_system_stats(world: &mut World) {
     // Extract resources - we need mutable access to monitor and stats
     let Some(mut monitor) = world.remove_resource::<SystemMonitor>() else {
@@ -195,6 +192,16 @@ pub fn update_system_stats(world: &mut World) {
         stats.frame_time_p95_ms = frames
             .frame_time_percentile_ms(95.0)
             .unwrap_or(stats.frame_time_p95_ms);
+    }
+
+    // Every frame, so counts after a reload are current. `len` is O(1) per type.
+    stats.asset_counts.clear();
+    for bridge in global_registry::all_asset_bridges() {
+        if let Ok(count) = bridge.len(world)
+            && count > 0
+        {
+            stats.asset_counts.insert(bridge.name().to_string(), count);
+        }
     }
 
     // Real time for the refresh gate: the virtual clock resets on reload and freezes on pause
@@ -242,58 +249,6 @@ pub fn update_system_stats(world: &mut World) {
             .query_filtered::<Entity, Without<IsResource>>()
             .iter(world)
             .count();
-
-        // Update asset counts by type (O(1) per type)
-        stats.asset_counts.clear();
-
-        if let Some(assets) = world.get_resource::<Assets<Mesh>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("Mesh".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<Image>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("Image".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<StandardMaterial>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("Material".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<AnimationGraph>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("AnimGraph".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<AnimationClip>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("AnimClip".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<WorldAsset>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("WorldAsset".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<TextureAtlasLayout>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("Atlas".to_string(), count);
-            }
-        }
-        if let Some(assets) = world.get_resource::<Assets<WireframeMaterial>>() {
-            let count = assets.len();
-            if count > 0 {
-                stats.asset_counts.insert("Wireframe".to_string(), count);
-            }
-        }
 
         monitor.last_update = real_now;
 
