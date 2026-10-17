@@ -194,7 +194,10 @@ def setup(
   A class that defines `__post_init__` or its own `__init__` builds every row
   through that constructor, as `T(**row)` would: its validation errors raise
   from `batch()` and its normalized values are stored, at one Python call per
-  row. Plain dataclasses skip the per-row call.
+  row. This includes initializer descriptors without a Python code object.
+  Plain dataclasses skip the per-row call. Classes whose initializer resolves
+  to `object.__init__`, including `@dataclass(init=False)`, also use direct
+  columns, preserving supplied values without invoking an initializer.
   Scalars, generators, and ranges are not batch columns; materialize a list
   for those inputs.
 - A number in a `bool` batch column stores whether it is nonzero (NaN is
@@ -218,6 +221,14 @@ commands.spawn_batch([(Transform.from_xyz(i, 0, 0), Name(f"e{i}")) for i in rang
 The iterable is fully consumed and its component values are prepared before
 any entity is created. An iteration, conversion, or validation error therefore
 creates no partial prefix of the batch.
+
+Both batch forms apply ordinary spawning's resource-entity hierarchy guards.
+Registered component aliases count as the same component for duplicate checks.
+Deferred batches recheck class layouts when applied and reclaim their empty
+reserved entities when validation fails. Python lifecycle observers run after
+all bundles in the call are inserted, preventing observer changes to class
+metadata between validation and a later insertion. Native Bevy hooks run
+during insertion; their effects and panics are not rolled back.
 
 ## Choosing a Batch Strategy
 

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, mem::take, sync::Arc};
 
 use bevy::ecs::{component::ComponentId, entity::Entity, ptr::OwningPtr, world::World};
 use pybevy_core::{
@@ -8,17 +8,21 @@ use pybevy_core::{
 };
 use pybevy_ecs::shared::batch_spawn::{
     BatchCardinality, BatchSpawnCore, BatchSpawnPlan, BatchTypeKey, PreparedBatchInserter,
+    ValidatedBatchSpawn,
 };
 use pyo3::{
     PyTraverseError, PyVisit,
     exceptions::{PyMemoryError, PyStopIteration, PyTypeError, PyValueError},
-    ffi::PyTypeObject,
+    ffi::{PyObject as RawPyObject, PyTypeObject},
     prelude::*,
     types::{PyTuple, PyType},
 };
 
 use super::{
-    commands::reject_borrowed_component_proxy,
+    commands::{
+        component_logical_type, component_relationship_parent, reject_borrowed_component_proxy,
+        update_entity_logical_type, validate_inserted_link,
+    },
     component_layout::{ComponentStorageType, ComponentStorageTypeExt, serialize_to_wrapper},
     component_type::{
         PreparedCustomComponentRegistration, PyComponentType, check_custom_component_identity,
@@ -27,6 +31,7 @@ use super::{
     component_wrapper::*,
     custom_batch::PyCustomComponentBatch,
     helpers::type_utils::get_python_type_name,
+    lifecycle_mutation::finish_new_bundle,
 };
 
 /// Enum to represent either a batch component or a uniform component
@@ -90,12 +95,7 @@ impl PreparedBatchInserter for MainPreparedInserter {
             (self.logical_type, self.component_type.type_id())
         {
             for &entity in entities {
-                crate::ecs::commands::update_entity_logical_type(
-                    world,
-                    entity,
-                    native_type,
-                    logical_type,
-                );
+                update_entity_logical_type(world, entity, native_type, logical_type);
             }
         }
     }
@@ -116,6 +116,25 @@ pub struct SpawnBatchCommand {
     spawn_count: usize,
     retained_types: Vec<Py<PyType>>,
     registrations: Vec<Option<PreparedCustomComponentRegistration>>,
+    relationship_parents: Vec<Entity>,
+}
+
+struct ValidatedSpawnBatch {
+    plan: ValidatedBatchSpawn,
+    lifecycle_types: Vec<PyComponentType>,
+}
+
+struct CommittedSpawnBatch {
+    entities: Vec<Entity>,
+    lifecycle_types: Vec<PyComponentType>,
+}
+
+impl CommittedSpawnBatch {
+    fn finish(&self, world: &mut World) {
+        for &entity in &self.entities {
+            finish_new_bundle(world, entity, &self.lifecycle_types);
+        }
+    }
 }
 
 /// Bevy panics once entity indices run out, and an entity id buffer for an
@@ -144,6 +163,7 @@ impl SpawnBatchCommand {
         let mut component_data = Vec::new();
         let mut retained_types = Vec::new();
         let mut registrations = Vec::new();
+        let mut relationship_parents = Vec::new();
 
         for component in components.iter() {
             reject_borrowed_component_proxy(&component)?;
@@ -181,6 +201,11 @@ impl SpawnBatchCommand {
                 retained_types.push(component.get_type().unbind());
                 // It's a uniform component - determine its type
                 let component_type = PyComponentType::try_from((&component.get_type(), py))?;
+                if let Some((parent, _)) =
+                    component_relationship_parent(&component, component_type)?
+                {
+                    relationship_parents.push(parent);
+                }
                 let (name, prepared, registration) =
                     prepare_uniform(py, &component, component_type)?;
                 registrations.push(registration);
@@ -188,7 +213,7 @@ impl SpawnBatchCommand {
                     name,
                     component_type,
                     prepared,
-                    logical_type: crate::ecs::commands::component_logical_type(&component)?,
+                    logical_type: component_logical_type(&component)?,
                 });
             }
         }
@@ -201,6 +226,7 @@ impl SpawnBatchCommand {
             spawn_count,
             retained_types,
             registrations,
+            relationship_parents,
         })
     }
 
@@ -223,21 +249,65 @@ impl SpawnBatchCommand {
         self.spawn_count
     }
 
-    /// Apply the spawn batch command to the world
-    pub fn apply(self, world: &mut World) -> PyResult<Vec<Entity>> {
-        self.apply_inner(world, None)
+    /// Validate every bundle before allocating or inserting any targets.
+    pub(crate) fn apply_many(world: &mut World, mut batches: Vec<Self>) -> PyResult<Vec<Entity>> {
+        let plans = batches
+            .iter_mut()
+            .map(|batch| batch.validate(world, None))
+            .collect::<PyResult<Vec<_>>>()?;
+        let committed = batches
+            .iter()
+            .zip(plans)
+            .map(|(batch, plan)| batch.commit(world, plan, None))
+            .collect::<Vec<_>>();
+        for batch in &committed {
+            batch.finish(world);
+        }
+        Ok(committed
+            .into_iter()
+            .flat_map(|batch| batch.entities)
+            .collect())
     }
 
-    /// Apply to IDs already reserved by the Commands adapter.
-    pub fn apply_to(self, world: &mut World, entities: Vec<Entity>) -> PyResult<Vec<Entity>> {
-        self.apply_inner(world, Some(entities))
-    }
-
-    fn apply_inner(
-        self,
+    /// Reject the whole batch and reclaim empty reservations on preflight failure.
+    pub(crate) fn apply_many_to(
         world: &mut World,
-        entities: Option<Vec<Entity>>,
-    ) -> PyResult<Vec<Entity>> {
+        mut batches: Vec<(Self, Vec<Entity>)>,
+    ) -> PyResult<()> {
+        let mut plans = Vec::with_capacity(batches.len());
+        for (batch, entities) in &mut batches {
+            match batch.validate(world, Some(entities)) {
+                Ok(plan) => plans.push(plan),
+                Err(error) => {
+                    for (_, entities) in &batches {
+                        for &entity in entities {
+                            if let Ok(target) = world.get_entity(entity)
+                                && target.archetype().components().is_empty()
+                            {
+                                world.despawn(entity);
+                            }
+                        }
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        let committed = batches
+            .iter_mut()
+            .zip(plans)
+            .map(|((batch, entities), plan)| batch.commit(world, plan, Some(take(entities))))
+            .collect::<Vec<_>>();
+        for batch in &committed {
+            batch.finish(world);
+        }
+        Ok(())
+    }
+
+    fn validate(
+        &mut self,
+        world: &mut World,
+        entities: Option<&[Entity]>,
+    ) -> PyResult<ValidatedSpawnBatch> {
         Python::attach(|py| {
             for registration in self.registrations.iter().flatten() {
                 registration.validate_current(py)?;
@@ -246,6 +316,26 @@ impl SpawnBatchCommand {
         })?;
         for registration in self.registrations.iter().flatten() {
             check_custom_component_identity(world, registration)?;
+        }
+        if self.spawn_count != 0 && !self.relationship_parents.is_empty() {
+            for &parent in &self.relationship_parents {
+                validate_inserted_link(world, Entity::PLACEHOLDER, parent)
+                    .map_err(|error| PyTypeError::new_err(error.to_string()))?;
+            }
+            if let Some(entities) = entities {
+                for &child in entities {
+                    // Earlier queued commands can populate a reserved target.
+                    if world
+                        .get_entity(child)
+                        .is_ok_and(|target| !target.archetype().components().is_empty())
+                    {
+                        for &parent in &self.relationship_parents {
+                            validate_inserted_link(world, child, parent)
+                                .map_err(|error| PyTypeError::new_err(error.to_string()))?;
+                        }
+                    }
+                }
+            }
         }
         let lifecycle_types = self
             .components
@@ -256,12 +346,11 @@ impl SpawnBatchCommand {
             })
             .collect::<Vec<_>>();
 
-        // Resolving/registering component identities is allowed to mutate the
-        // World's type registry, but happens before any target entity exists.
+        // Registry changes happen before any prepared insertion commits.
         let insertions = Python::attach(|py| {
-            self.components
+            take(&mut self.components)
                 .into_iter()
-                .zip(self.registrations)
+                .zip(&self.registrations)
                 .map(|(component, registration)| {
                     let kind = match &component {
                         ComponentData::Batch { component_type, .. }
@@ -269,7 +358,7 @@ impl SpawnBatchCommand {
                     };
                     let component_id = match registration {
                         Some(registration) => {
-                            register_prepared_custom_component(world, &registration)?
+                            register_prepared_custom_component(world, registration)?
                         }
                         None => kind.register_simple(world, py),
                     };
@@ -302,19 +391,29 @@ impl SpawnBatchCommand {
                 .collect::<PyResult<Vec<_>>>()
         })?;
 
-        let validated =
-            BatchSpawnCore::validate(BatchSpawnPlan::new(self.explicit_count, insertions))
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let plan = BatchSpawnCore::validate(BatchSpawnPlan::new(self.explicit_count, insertions))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(ValidatedSpawnBatch {
+            plan,
+            lifecycle_types,
+        })
+    }
+
+    fn commit(
+        &self,
+        world: &mut World,
+        validated: ValidatedSpawnBatch,
+        entities: Option<Vec<Entity>>,
+    ) -> CommittedSpawnBatch {
         let committed = match entities {
-            Some(entities) => BatchSpawnCore::apply_to(world, validated, entities),
-            None => BatchSpawnCore::apply(world, validated),
+            Some(entities) => BatchSpawnCore::apply_to(world, validated.plan, entities),
+            None => BatchSpawnCore::apply(world, validated.plan),
         };
 
-        for &entity in &committed.entities {
-            crate::ecs::lifecycle_mutation::finish_new_bundle(world, entity, &lifecycle_types);
+        CommittedSpawnBatch {
+            entities: committed.entities,
+            lifecycle_types: validated.lifecycle_types,
         }
-
-        Ok(committed.entities)
     }
 }
 
@@ -480,8 +579,7 @@ fn prepare_uniform(
             let name = get_python_type_name(py, raw_type_ptr);
 
             // SAFETY: the live component retains its exact class during preparation.
-            let py_type =
-                unsafe { Bound::from_borrowed_ptr(py, raw_type_ptr as *mut pyo3::ffi::PyObject) };
+            let py_type = unsafe { Bound::from_borrowed_ptr(py, raw_type_ptr as *mut RawPyObject) };
             let class = py_type.cast::<PyType>()?;
             // A uniform component is prepared once and reused for every entity in the batch.
             let (storage_type, wrapper_layout) = ComponentStorageType::storage_with_layout(class)?;

@@ -10,8 +10,7 @@ use pybevy_bytecodevm::{
     columns::{ColumnMut, ColumnRef},
     dense::{DenseError, DenseInput, DenseOutput, DenseProgram, StackKind, execute_dense},
     tiled::{
-        ReduceOp, TiledScratch, f32_native_eligible, lane_reduce_slice, map_supported, run_map,
-        run_map_f32, run_reduce,
+        ReduceOp, TiledScratch, lane_reduce_slice, map_supported, run_map, run_map_f32, run_reduce,
     },
 };
 
@@ -396,7 +395,7 @@ fn float_elementwise_impl(
     // Native f32 programs round every intermediate in the f32 domain.
     if out_dtype == ArrayDType::Float32
         && indices_in_range
-        && f32_native_eligible(ops)
+        && map_supported(ops)
         && let Some(inputs) = lock_contiguous_inputs(operands, &result_shape, n)
     {
         let srcs: Vec<ColumnRef<'_>> = inputs

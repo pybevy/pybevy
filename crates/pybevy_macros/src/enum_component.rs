@@ -5,7 +5,7 @@ use syn::{Expr, Ident, ItemEnum, Lit, Meta, punctuated::Punctuated, token::Comma
 use crate::{
     enum_spec::{
         BevyVariantShape, EnumSpec, FieldSpec, VariantShape, constructor_signature, parameter,
-        parameter_name,
+        parameter_name, reject_variant_pyo3_options,
     },
     util::to_snake_case,
 };
@@ -72,6 +72,7 @@ fn try_expand(
     manual_comparison: bool,
 ) -> syn::Result<TokenStream> {
     let class = python_class_name(input)?;
+    reject_variant_pyo3_options(input)?;
     let py_type = spec.wrapper_name;
     let stem = to_snake_case(
         py_type

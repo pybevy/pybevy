@@ -5,6 +5,7 @@ use syn::{Expr, ItemEnum, Lit, Meta, punctuated::Punctuated, token::Comma};
 use crate::{
     enum_spec::{
         BevyVariantShape, EnumSpec, VariantShape, constructor_signature, parameter, parameter_name,
+        reject_variant_pyo3_options,
     },
     message::generate_message_bridge_tokens,
     util::{to_snake_case, value_repr},
@@ -48,6 +49,7 @@ fn try_expand(
     no_debug: bool,
 ) -> syn::Result<TokenStream> {
     let class = python_class_name(input)?;
+    reject_variant_pyo3_options(input)?;
     let py_type = spec.wrapper_name;
     let inner_type = spec.inner_type;
     let uses_mirror = quote!(#inner_type).to_string() != quote!(#message_type).to_string();
@@ -86,10 +88,15 @@ fn try_expand(
                 ));
             }
         };
-        if let Some(field) = fields
-            .iter()
-            .find(|field| field.materialize || field.borrowed || field.domain.is_some())
-        {
+        if variant.unsupported {
+            return Err(syn::Error::new_spanned(
+                rust_name,
+                "message pyenum variants do not support #[py_unsupported]",
+            ));
+        }
+        if let Some(field) = fields.iter().find(|field| {
+            field.materialize || field.borrowed || field.writable || field.domain.is_some()
+        }) {
             return Err(syn::Error::new_spanned(
                 field.rust_type,
                 "the PyO3 message emitter does not support this field conversion marker",

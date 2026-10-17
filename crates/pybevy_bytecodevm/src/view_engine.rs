@@ -12,7 +12,7 @@ use bevy_ecs::{
     component::{ComponentId, StorageType},
     entity::Entity,
     storage::{Table, TableId, TableRow, Tables},
-    world::{World, unsafe_world_cell::UnsafeWorldCell},
+    world::unsafe_world_cell::UnsafeWorldCell,
 };
 #[cfg(feature = "parallel")]
 use bevy_tasks::ComputeTaskPool;
@@ -206,59 +206,11 @@ impl From<NegativeIntegerPower> for BatchExecutionError {
     }
 }
 
-/// Validate that every field referenced by `bytecode` (including the
-/// destination field of an assignment) lies entirely within its
-/// component's registered `Layout`.
-///
-/// This is the safety gate for the raw-pointer arithmetic in
-/// `execute_batch_assignment` / `execute_filtered_assignment` /
-/// `evaluate_batch_program`,
-/// which compute `base.add(field_id.offset)`. Without this check, a
-/// Python-constructed `Expr("field", [cid, name, offset, field_type])` with
-/// an arbitrary `offset` could read/write out of bounds of the component
-/// column allocation.
-///
-/// Returns `Err` if any field is out of bounds or references a component
-/// not present in the World's registry.
-pub fn validate_bytecode_offsets(
-    world: &World,
-    bytecode: &CompiledBytecode,
-) -> Result<(), ViewEngineError> {
-    let components = world.components();
-    for field_id in &bytecode.field_map {
-        let info = components
-            .get_info(field_id.component_id)
-            .ok_or(ViewEngineError::ComponentNotFound(field_id.component_id))?;
-        let layout_size = info.layout().size();
-        let type_size = field_id.field_type.size_bytes();
-        // `offset` and `type_size` are attacker-controlled (from Python).
-        // Guard against overflow before the addition, then require the full
-        // field span to fit within the component layout.
-        let span = field_id.offset.checked_add(type_size).ok_or(
-            ViewEngineError::FieldOffsetOutOfBounds {
-                component_id: field_id.component_id,
-                offset: field_id.offset,
-                type_size,
-                layout_size,
-            },
-        )?;
-        if span > layout_size {
-            return Err(ViewEngineError::FieldOffsetOutOfBounds {
-                component_id: field_id.component_id,
-                offset: field_id.offset,
-                type_size,
-                layout_size,
-            });
-        }
-    }
-    Ok(())
-}
-
 /// Validate that every component referenced by `bytecode` is present in the
 /// view's declared component set (`allowed`).
 ///
-/// This is the safety gate paired with `validate_bytecode_offsets`: offsets
-/// guard against out-of-bounds within a component, this guards against
+/// Field spans guard against out-of-bounds access within a component; this
+/// guards against
 /// referencing a component the view never declared. A `field` expression can
 /// carry any `ComponentId` (component ids are small enumerable integers, and a
 /// field proxy captured from another View can be spliced into an assignment
@@ -289,10 +241,10 @@ pub fn validate_bytecode_components(
 /// compiler decomposes vectors into per-lane `F32` reads and never emits a `Vec*`
 /// `FieldType` into `field_map`).
 ///
-/// This is the safety gate paired with `validate_bytecode_offsets`. Offsets guard
-/// against reads that spill outside the component layout; this guards against a
+/// Field spans guard against reads that spill outside the component layout;
+/// this guards against a
 /// `field` expression whose `field_type` aliases a differently-typed field's bytes
-/// or whose `offset` lands mid-field - both in-bounds, so the offset check passes.
+/// or whose `offset` lands mid-field - both in-bounds, so a span check passes.
 /// The sharpest case it closes: an attacker-constructed
 /// `Expr("field", [cid, name, offset, "Bool"])` pointed at an `f32`/padding byte,
 /// which `read_field_value` reads as `bool` - a non-0/1 byte is an invalid bit
@@ -314,22 +266,6 @@ pub fn validate_bytecode_field_types(
         }
     }
     Ok(())
-}
-
-/// Resolve component strides (layout sizes) from the World's component metadata.
-pub fn resolve_component_strides(
-    world: &World,
-    component_ids: &HashSet<ComponentId>,
-) -> Result<HashMap<ComponentId, usize>, ViewEngineError> {
-    let components = world.components();
-    let mut strides = HashMap::with_capacity(component_ids.len());
-    for &component_id in component_ids {
-        let info = components
-            .get_info(component_id)
-            .ok_or(ViewEngineError::ComponentNotFound(component_id))?;
-        strides.insert(component_id, info.layout().size());
-    }
-    Ok(strides)
 }
 
 /// Build a per-entity tick mask for a table.
@@ -511,11 +447,6 @@ fn matching_table_row_ranges_from_archetypes(
         });
     }
     ranges
-}
-
-/// Resolve exact selected rows using an ordinary shared World reference.
-pub fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<TableRowRange> {
-    matching_table_row_ranges_from_archetypes(world.archetypes(), &world.storages().tables, filter)
 }
 
 /// Resolve exact selected rows from World metadata without borrowing the World.
@@ -1029,23 +960,12 @@ mod tests {
         mem::size_of,
     };
 
-    use bevy_ecs::{component::ComponentId, prelude::Component};
+    use bevy_ecs::{component::ComponentId, prelude::Component, world::World};
     #[cfg(feature = "parallel")]
     use bevy_tasks::TaskPoolBuilder;
 
     use super::*;
     use crate::bytecode::{Compiler, FieldId, FieldType, Op};
-
-    /// Fixed-layout probe component: three f32 fields, so `Layout::size() == 12`
-    /// and `align == 4`. Used to exercise the offset validator against a real
-    /// registered component layout.
-    #[derive(Component)]
-    #[allow(dead_code)]
-    struct Probe {
-        a: f32,
-        b: f32,
-        c: f32,
-    }
 
     #[derive(Component)]
     struct DenseValue(f32);
@@ -1072,6 +992,31 @@ mod tests {
             changed_ids: Vec::new(),
             added_ids: Vec::new(),
         }
+    }
+
+    /// Resolve component strides (layout sizes) from the World's component metadata.
+    fn resolve_component_strides(
+        world: &World,
+        component_ids: &HashSet<ComponentId>,
+    ) -> Result<HashMap<ComponentId, usize>, ViewEngineError> {
+        let components = world.components();
+        let mut strides = HashMap::with_capacity(component_ids.len());
+        for &component_id in component_ids {
+            let info = components
+                .get_info(component_id)
+                .ok_or(ViewEngineError::ComponentNotFound(component_id))?;
+            strides.insert(component_id, info.layout().size());
+        }
+        Ok(strides)
+    }
+
+    /// Resolve exact selected rows using an ordinary shared World reference.
+    fn matching_table_row_ranges(world: &World, filter: &ViewFilter) -> Vec<TableRowRange> {
+        matching_table_row_ranges_from_archetypes(
+            world.archetypes(),
+            &world.storages().tables,
+            filter,
+        )
     }
 
     /// Helper: bytecode that reads a single field of the given type at `offset`.
@@ -1873,65 +1818,6 @@ mod tests {
     }
 
     #[test]
-    fn offset_validator_accepts_field_within_layout() {
-        let mut world = World::new();
-        let cid = world.register_component::<Probe>();
-        // Probe is 12 bytes; an F32 at offset 8 spans [8, 12) - the last valid slot.
-        let bytecode = make_typed_read_bytecode(cid, 8, FieldType::F32);
-        assert!(validate_bytecode_offsets(&world, &bytecode).is_ok());
-    }
-
-    #[test]
-    fn offset_validator_rejects_offset_past_layout() {
-        let mut world = World::new();
-        let cid = world.register_component::<Probe>();
-        // offset 12 + 4-byte F32 = span 16 > 12 -> out of bounds.
-        let bytecode = make_typed_read_bytecode(cid, 12, FieldType::F32);
-        assert!(matches!(
-            validate_bytecode_offsets(&world, &bytecode),
-            Err(ViewEngineError::FieldOffsetOutOfBounds { .. })
-        ));
-    }
-
-    #[test]
-    fn offset_validator_rejects_wide_type_overrunning_last_byte() {
-        let mut world = World::new();
-        let cid = world.register_component::<Probe>();
-        // A Bool (1 byte) at the final byte (offset 11) fits (span 12); an F64
-        // (8 bytes) at the same offset overruns the 12-byte layout.
-        assert!(
-            validate_bytecode_offsets(&world, &make_typed_read_bytecode(cid, 11, FieldType::Bool))
-                .is_ok()
-        );
-        assert!(matches!(
-            validate_bytecode_offsets(&world, &make_typed_read_bytecode(cid, 11, FieldType::F64)),
-            Err(ViewEngineError::FieldOffsetOutOfBounds { .. })
-        ));
-    }
-
-    #[test]
-    fn offset_validator_rejects_overflowing_offset() {
-        let mut world = World::new();
-        let cid = world.register_component::<Probe>();
-        // offset + type_size would overflow usize -> caught before the addition.
-        let bytecode = make_typed_read_bytecode(cid, usize::MAX, FieldType::F64);
-        assert!(matches!(
-            validate_bytecode_offsets(&world, &bytecode),
-            Err(ViewEngineError::FieldOffsetOutOfBounds { .. })
-        ));
-    }
-
-    #[test]
-    fn offset_validator_rejects_unregistered_component() {
-        let world = World::new();
-        let bytecode = make_typed_read_bytecode(ComponentId::new(9999), 0, FieldType::F32);
-        assert!(matches!(
-            validate_bytecode_offsets(&world, &bytecode),
-            Err(ViewEngineError::ComponentNotFound(_))
-        ));
-    }
-
-    #[test]
     fn component_validator_accepts_declared_component() {
         let cid = ComponentId::new(3);
         let allowed: HashSet<ComponentId> = [cid].into_iter().collect();
@@ -2041,8 +1927,8 @@ mod tests {
 
     #[test]
     fn field_type_validator_rejects_mid_field_offset() {
-        // Offset 2 lands inside the first f32 field ([0,4)); not a field start, so
-        // `validate_bytecode_offsets` (bounds-only) would allow it but this rejects it.
+        // Offset 2 lands inside the first f32 field ([0,4)); not a field start, so a
+        // bounds-only span check would allow it but this rejects it.
         let cid = ComponentId::new(3);
         let allowed = allowed_fields_for(cid, &[(0, FieldType::F32), (4, FieldType::F32)]);
         let bytecode = make_typed_read_bytecode(cid, 2, FieldType::F32);

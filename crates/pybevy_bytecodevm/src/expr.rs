@@ -4,7 +4,6 @@
 //! that can be compiled to bytecode for efficient execution.
 
 use std::{
-    fmt,
     hash::{Hash, Hasher},
     mem::discriminant,
 };
@@ -17,7 +16,7 @@ use pyo3::{
     types::{PyBool, PyFloat, PyInt},
 };
 
-use super::bytecode::{Compiler, FieldId, FieldType, Op, ProgramTooLarge};
+use super::bytecode::{Compiler, FieldId, FieldType, Op};
 
 /// Extract exactly `N` expression arguments, rejecting malformed `args` lists
 /// with a `TypeError`.
@@ -177,9 +176,6 @@ pub enum RustExpr {
         field_type: FieldType,
     },
 
-    /// Interpreter-neutral dense input column.
-    Input { index: u16, field_type: FieldType },
-
     /// Python `int` (or `bool`) literal; it adopts the other operand's lane.
     Const(f64),
 
@@ -256,16 +252,6 @@ impl RustExpr {
                     field_type: bt,
                 },
             ) => ac == bc && ao == bo && at == bt,
-            (
-                Input {
-                    index: ai,
-                    field_type: at,
-                },
-                Input {
-                    index: bi,
-                    field_type: bt,
-                },
-            ) => ai == bi && at == bt,
             (Const(a), Const(b)) | (FloatConst(a), FloatConst(b)) => a.to_bits() == b.to_bits(),
             (Int(a), Int(b)) => a == b,
             _ => false,
@@ -321,10 +307,6 @@ impl RustExpr {
                 offset.hash(state);
                 field_type.hash(state);
             }
-            Input { index, field_type } => {
-                index.hash(state);
-                field_type.hash(state);
-            }
             Const(value) | FloatConst(value) => value.to_bits().hash(state),
             Int(value) => value.hash(state),
         }
@@ -336,49 +318,21 @@ impl RustExpr {
     /// - `op`: string describing the operation ("add", "mul", "field", "const", etc.)
     /// - `args`: list of arguments (child expressions or values)
     pub fn from_py_object(py: Python, obj: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let mut resolver = |_: &Bound<'_, PyAny>| Ok(None);
-        Self::from_py_object_with(py, obj, &mut resolver)
-    }
-
-    /// Parse a Python expression while allowing an adapter to resolve its own
-    /// leaf objects into neutral fields before the generic expression protocol
-    /// is inspected.
-    pub fn from_py_object_with<F>(
-        py: Python,
-        obj: &Bound<'_, PyAny>,
-        resolver: &mut F,
-    ) -> PyResult<Self>
-    where
-        F: FnMut(&Bound<'_, PyAny>) -> PyResult<Option<RustExpr>>,
-    {
-        Self::from_py_object_at(py, obj, resolver, 0)
+        Self::from_py_object_at(py, obj, 0)
     }
 
     /// Convert one node at `depth`, rejecting a tree that would drive this walk,
     /// the compiler and the drop glue past the stack every backend can afford.
     #[allow(clippy::only_used_in_recursion)]
-    fn from_py_object_at<F>(
-        py: Python,
-        obj: &Bound<'_, PyAny>,
-        resolver: &mut F,
-        depth: usize,
-    ) -> PyResult<Self>
-    where
-        F: FnMut(&Bound<'_, PyAny>) -> PyResult<Option<RustExpr>>,
-    {
+    fn from_py_object_at(py: Python, obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<Self> {
         if depth >= EXPRESSION_MAX_DEPTH {
             return Err(PyValueError::new_err(expression_too_deep()));
-        }
-
-        if let Some(resolved) = resolver(obj)? {
-            return Ok(resolved);
         }
 
         if let Some(literal) = Self::literal(obj)? {
             return Ok(literal);
         }
 
-        // Otherwise, expect an Expr object with 'op' and 'args'
         let op: String = obj
             .getattr("op")
             .map_err(|_| PyTypeError::new_err("Expression object must have 'op' attribute (str)"))?
@@ -388,410 +342,66 @@ impl RustExpr {
             PyTypeError::new_err("Expression object must have 'args' attribute (list)")
         })?;
 
+        let child = |arg: &Bound<'_, PyAny>| -> PyResult<Box<RustExpr>> {
+            Self::from_py_object_at(py, arg, depth + 1).map(Box::new)
+        };
+        let unary = |name: &str, build: fn(Box<RustExpr>) -> RustExpr| -> PyResult<RustExpr> {
+            let [value] = expect_args(name, &args)?;
+            Ok(build(child(&value)?))
+        };
+        let binary = |name: &str,
+                      build: fn(Box<RustExpr>, Box<RustExpr>) -> RustExpr|
+         -> PyResult<RustExpr> {
+            let [left, right] = expect_args(name, &args)?;
+            Ok(build(child(&left)?, child(&right)?))
+        };
+        let ternary = |name: &str,
+                       build: fn(Box<RustExpr>, Box<RustExpr>, Box<RustExpr>) -> RustExpr|
+         -> PyResult<RustExpr> {
+            let [first, second, third] = expect_args(name, &args)?;
+            Ok(build(child(&first)?, child(&second)?, child(&third)?))
+        };
+
         match op.as_str() {
-            "add" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Add operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Add(Box::new(left), Box::new(right)))
-            }
-
-            "sub" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Sub operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Sub(Box::new(left), Box::new(right)))
-            }
-
-            "mul" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Mul operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Mul(Box::new(left), Box::new(right)))
-            }
-
-            "div" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Div operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Div(Box::new(left), Box::new(right)))
-            }
-
-            "floordiv" => {
-                let [left, right] = expect_args::<2>("FloorDiv", &args)?;
-                Ok(RustExpr::FloorDiv(
-                    Box::new(Self::from_py_object_at(py, &left, resolver, depth + 1)?),
-                    Box::new(Self::from_py_object_at(py, &right, resolver, depth + 1)?),
-                ))
-            }
-
-            "pow" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Pow operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Pow(Box::new(left), Box::new(right)))
-            }
-
-            "neg" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Neg operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Neg(Box::new(expr)))
-            }
-
-            "sin" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Sin operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Sin(Box::new(expr)))
-            }
-
-            "cos" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Cos operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Cos(Box::new(expr)))
-            }
-
-            "tan" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Tan operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Tan(Box::new(expr)))
-            }
-
-            "asin" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Asin operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Asin(Box::new(expr)))
-            }
-
-            "acos" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Acos operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Acos(Box::new(expr)))
-            }
-
-            "atan" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Atan operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Atan(Box::new(expr)))
-            }
-
-            "sqrt" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Sqrt operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Sqrt(Box::new(expr)))
-            }
-
-            "abs" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Abs operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Abs(Box::new(expr)))
-            }
-
-            "floor" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Floor operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Floor(Box::new(expr)))
-            }
-
-            "ceil" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Ceil operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Ceil(Box::new(expr)))
-            }
-
-            "round" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Round operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-                let expr = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                Ok(RustExpr::Round(Box::new(expr)))
-            }
-
-            "min" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Min operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Min(Box::new(left), Box::new(right)))
-            }
-
-            "max" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Max operation requires 2 arguments, got {}",
-                        args_list.len()
-                    )));
-                }
-                let left = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                Ok(RustExpr::Max(Box::new(left), Box::new(right)))
-            }
-
-            "clamp" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 3 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Clamp operation requires 3 arguments (value, min, max), got {}",
-                        args_list.len()
-                    )));
-                }
-                let value = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let min = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                let max = Self::from_py_object_at(py, &args_list[2], resolver, depth + 1)?;
-                Ok(RustExpr::Clamp(
-                    Box::new(value),
-                    Box::new(min),
-                    Box::new(max),
-                ))
-            }
-
-            "eq" => {
-                let [left, right] = expect_args("Eq", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Eq(Box::new(left), Box::new(right)))
-            }
-
-            "ne" => {
-                let [left, right] = expect_args("Ne", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Ne(Box::new(left), Box::new(right)))
-            }
-
-            "lt" => {
-                let [left, right] = expect_args("Lt", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Lt(Box::new(left), Box::new(right)))
-            }
-
-            "le" => {
-                let [left, right] = expect_args("Le", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Le(Box::new(left), Box::new(right)))
-            }
-
-            "gt" => {
-                let [left, right] = expect_args("Gt", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Gt(Box::new(left), Box::new(right)))
-            }
-
-            "ge" => {
-                let [left, right] = expect_args("Ge", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Ge(Box::new(left), Box::new(right)))
-            }
-
-            "where" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 3 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Where operation requires 3 arguments (condition, true_value, false_value), got {}",
-                        args_list.len()
-                    )));
-                }
-                let condition = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let true_value = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                let false_value = Self::from_py_object_at(py, &args_list[2], resolver, depth + 1)?;
-                Ok(RustExpr::Where(
-                    Box::new(condition),
-                    Box::new(true_value),
-                    Box::new(false_value),
-                ))
-            }
-
-            "and" => {
-                let [left, right] = expect_args("And", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::And(Box::new(left), Box::new(right)))
-            }
-
-            "or" => {
-                let [left, right] = expect_args("Or", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Or(Box::new(left), Box::new(right)))
-            }
-
-            "not" => {
-                let [inner] = expect_args("Not", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Not(Box::new(expr)))
-            }
-
-            "exp" => {
-                let [inner] = expect_args("Exp", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Exp(Box::new(expr)))
-            }
-
-            "ln" => {
-                let [inner] = expect_args("Ln", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Ln(Box::new(expr)))
-            }
-
-            "log10" => {
-                let [inner] = expect_args("Log10", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Log10(Box::new(expr)))
-            }
-
-            "log2" => {
-                let [inner] = expect_args("Log2", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Log2(Box::new(expr)))
-            }
-
-            "sign" => {
-                let [inner] = expect_args("Sign", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Sign(Box::new(expr)))
-            }
-
-            "fract" => {
-                let [inner] = expect_args("Fract", &args)?;
-                let expr = Self::from_py_object_at(py, &inner, resolver, depth + 1)?;
-                Ok(RustExpr::Fract(Box::new(expr)))
-            }
-
-            "mod" => {
-                let [left, right] = expect_args("Mod", &args)?;
-                let left = Self::from_py_object_at(py, &left, resolver, depth + 1)?;
-                let right = Self::from_py_object_at(py, &right, resolver, depth + 1)?;
-                Ok(RustExpr::Mod(Box::new(left), Box::new(right)))
-            }
-
-            "lerp" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 3 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Lerp operation requires 3 arguments (a, b, t), got {}",
-                        args_list.len()
-                    )));
-                }
-                let a = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let b = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                let t = Self::from_py_object_at(py, &args_list[2], resolver, depth + 1)?;
-                Ok(RustExpr::Lerp(Box::new(a), Box::new(b), Box::new(t)))
-            }
+            "add" => binary("Add", RustExpr::Add),
+            "sub" => binary("Sub", RustExpr::Sub),
+            "mul" => binary("Mul", RustExpr::Mul),
+            "div" => binary("Div", RustExpr::Div),
+            "floordiv" => binary("FloorDiv", RustExpr::FloorDiv),
+            "pow" => binary("Pow", RustExpr::Pow),
+            "min" => binary("Min", RustExpr::Min),
+            "max" => binary("Max", RustExpr::Max),
+            "eq" => binary("Eq", RustExpr::Eq),
+            "ne" => binary("Ne", RustExpr::Ne),
+            "lt" => binary("Lt", RustExpr::Lt),
+            "le" => binary("Le", RustExpr::Le),
+            "gt" => binary("Gt", RustExpr::Gt),
+            "ge" => binary("Ge", RustExpr::Ge),
+            "and" => binary("And", RustExpr::And),
+            "or" => binary("Or", RustExpr::Or),
+            "mod" => binary("Mod", RustExpr::Mod),
+            "neg" => unary("Neg", RustExpr::Neg),
+            "sin" => unary("Sin", RustExpr::Sin),
+            "cos" => unary("Cos", RustExpr::Cos),
+            "tan" => unary("Tan", RustExpr::Tan),
+            "asin" => unary("Asin", RustExpr::Asin),
+            "acos" => unary("Acos", RustExpr::Acos),
+            "atan" => unary("Atan", RustExpr::Atan),
+            "sqrt" => unary("Sqrt", RustExpr::Sqrt),
+            "abs" => unary("Abs", RustExpr::Abs),
+            "floor" => unary("Floor", RustExpr::Floor),
+            "ceil" => unary("Ceil", RustExpr::Ceil),
+            "round" => unary("Round", RustExpr::Round),
+            "not" => unary("Not", RustExpr::Not),
+            "exp" => unary("Exp", RustExpr::Exp),
+            "ln" => unary("Ln", RustExpr::Ln),
+            "log10" => unary("Log10", RustExpr::Log10),
+            "log2" => unary("Log2", RustExpr::Log2),
+            "sign" => unary("Sign", RustExpr::Sign),
+            "fract" => unary("Fract", RustExpr::Fract),
+            "clamp" => ternary("Clamp", RustExpr::Clamp),
+            "where" => ternary("Where", RustExpr::Where),
+            "lerp" => ternary("Lerp", RustExpr::Lerp),
 
             "random" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
@@ -809,40 +419,24 @@ impl RustExpr {
 
             "random_range" => {
                 let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 2 && args_list.len() != 3 {
-                    return Err(PyTypeError::new_err(format!(
-                        "RandomRange operation requires 2 or 3 arguments (min, max, stream), got {}",
-                        args_list.len()
-                    )));
-                }
-
-                let min = Self::from_py_object_at(py, &args_list[0], resolver, depth + 1)?;
-                let max = Self::from_py_object_at(py, &args_list[1], resolver, depth + 1)?;
-                let stream = if args_list.len() == 3 {
-                    parse_random_stream(&args_list[2])?
-                } else {
-                    0
+                let (min, max, stream) = match args_list.as_slice() {
+                    [min, max] => (min, max, 0),
+                    [min, max, stream] => (min, max, parse_random_stream(stream)?),
+                    _ => {
+                        return Err(PyTypeError::new_err(format!(
+                            "RandomRange operation requires 2 or 3 arguments (min, max, stream), got {}",
+                            args_list.len()
+                        )));
+                    }
                 };
-                Ok(RustExpr::RandomRange(Box::new(min), Box::new(max), stream))
+                Ok(RustExpr::RandomRange(child(min)?, child(max)?, stream))
             }
 
             "field" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 4 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Field operation requires 4 arguments (component_id, field_name, offset, field_type), got {}",
-                        args_list.len()
-                    )));
-                }
-
-                // Extract ComponentId from Python int
-                let component_id_value: usize = args_list[0].extract()?;
-                let component_id = ComponentId::new(component_id_value);
-
-                let offset: usize = args_list[2].extract()?;
-
-                // Extract field type from string
-                let field_type_str: String = args_list[3].extract()?;
+                let [component_id, _name, offset, field_type] = expect_args("Field", &args)?;
+                let component_id = ComponentId::new(component_id.extract()?);
+                let offset: usize = offset.extract()?;
+                let field_type_str: String = field_type.extract()?;
                 let field_type = match field_type_str.as_str() {
                     "F32" => FieldType::F32,
                     "F64" => FieldType::F64,
@@ -868,17 +462,10 @@ impl RustExpr {
             }
 
             "const" => {
-                let args_list = args.extract::<Vec<Bound<'_, PyAny>>>()?;
-                if args_list.len() != 1 {
-                    return Err(PyTypeError::new_err(format!(
-                        "Const operation requires 1 argument, got {}",
-                        args_list.len()
-                    )));
-                }
-
-                match Self::literal(&args_list[0])? {
+                let [value] = expect_args("Const", &args)?;
+                match Self::literal(&value)? {
                     Some(literal) => Ok(literal),
-                    None => Ok(RustExpr::FloatConst(args_list[0].extract()?)),
+                    None => Ok(RustExpr::FloatConst(value.extract()?)),
                 }
             }
 
@@ -1148,10 +735,6 @@ impl RustExpr {
                 compiler.emit(Op::PushField(field_idx));
             }
 
-            RustExpr::Input { index, .. } => {
-                compiler.emit(Op::PushInput(*index));
-            }
-
             RustExpr::Const(value) => {
                 let const_idx = compiler.add_constant(*value);
                 compiler.emit(Op::PushConst(const_idx));
@@ -1168,61 +751,7 @@ impl RustExpr {
             }
         }
     }
-
-    /// Compile a component-independent expression that produces one value per row.
-    pub fn compile_map(expr: &RustExpr) -> Result<CompiledMap, MapCompileError> {
-        let mut compiler = Compiler::new();
-        expr.compile(&mut compiler);
-        compiler.lower_integers_to_f64();
-        let compiled = compiler
-            .try_finalize()
-            .map_err(|_| MapCompileError::ProgramTooLarge)?;
-        if !compiled.field_map.is_empty() {
-            return Err(MapCompileError::ComponentField);
-        }
-        let input_count = compiled
-            .bytecode
-            .iter()
-            .filter_map(|operation| match operation {
-                Op::PushInput(index) => Some(usize::from(*index) + 1),
-                _ => None,
-            })
-            .max()
-            .unwrap_or(0);
-        Ok(CompiledMap {
-            bytecode: compiled.bytecode,
-            constants: compiled.constants,
-            input_count,
-        })
-    }
 }
-
-/// Store-free bytecode over numbered dense input columns.
-#[derive(Debug, Clone)]
-pub struct CompiledMap {
-    pub bytecode: Vec<Op>,
-    pub constants: Vec<f64>,
-    pub input_count: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MapCompileError {
-    ComponentField,
-    ProgramTooLarge,
-}
-
-impl fmt::Display for MapCompileError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MapCompileError::ComponentField => {
-                write!(f, "dense expressions cannot reference ECS component fields")
-            }
-            MapCompileError::ProgramTooLarge => fmt::Display::fmt(&ProgramTooLarge, f),
-        }
-    }
-}
-
-impl std::error::Error for MapCompileError {}
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -1309,19 +838,6 @@ mod tests {
             field_type: FieldType::F64,
         }));
 
-        let input = RustExpr::Input {
-            index: 1,
-            field_type: FieldType::F32,
-        };
-        assert!(input.canonical_eq(&input));
-        assert!(!input.canonical_eq(&RustExpr::Input {
-            index: 2,
-            field_type: FieldType::F32,
-        }));
-        assert!(!input.canonical_eq(&RustExpr::Input {
-            index: 1,
-            field_type: FieldType::F64,
-        }));
         assert!(!RustExpr::Const(0.0).canonical_eq(&RustExpr::Const(-0.0)));
 
         let first_nan = f64::from_bits(0x7ff8_0000_0000_0001);
@@ -1408,10 +924,6 @@ mod tests {
         ));
         assert_eq!(bytecode.integers, vec![(1 << 60) + 1]);
         assert_eq!(bytecode.constants, vec![2_f64.powi(60)]);
-
-        let map = RustExpr::compile_map(&RustExpr::Int((1 << 60) + 1)).unwrap();
-        assert!(matches!(map.bytecode[..], [Op::PushConst(0)]));
-        assert_eq!(map.constants, vec![2_f64.powi(60)]);
     }
 
     #[test]
@@ -1430,53 +942,6 @@ mod tests {
         let bytecode = compile_expr(&expr);
         assert_eq!(bytecode.bytecode.len(), 3);
         assert_eq!(bytecode.constants.len(), 2);
-    }
-
-    #[test]
-    fn compile_map_preserves_expression_order_without_a_store() {
-        let left = RustExpr::Input {
-            index: 0,
-            field_type: FieldType::F32,
-        };
-        let right = RustExpr::Input {
-            index: 1,
-            field_type: FieldType::F32,
-        };
-        let expression = RustExpr::Add(
-            Box::new(left),
-            Box::new(RustExpr::Mul(Box::new(right), c(2.0))),
-        );
-
-        let compiled = RustExpr::compile_map(&expression).unwrap();
-
-        assert_eq!(compiled.bytecode.len(), 5);
-        assert!(matches!(compiled.bytecode[0], Op::PushInput(0)));
-        assert!(matches!(compiled.bytecode[1], Op::PushInput(1)));
-        assert!(matches!(compiled.bytecode[2], Op::PushConst(0)));
-        assert!(matches!(compiled.bytecode[3], Op::Mul));
-        assert!(matches!(compiled.bytecode[4], Op::Add));
-        assert_eq!(compiled.constants, vec![2.0]);
-        assert_eq!(compiled.input_count, 2);
-        assert!(
-            compiled
-                .bytecode
-                .iter()
-                .all(|operation| !matches!(operation, Op::StoreField(_)))
-        );
-    }
-
-    #[test]
-    fn compile_map_rejects_ecs_component_fields() {
-        let expression = RustExpr::Field {
-            component_id: ComponentId::new(3),
-            offset: 0,
-            field_type: FieldType::F32,
-        };
-
-        assert_eq!(
-            RustExpr::compile_map(&expression).unwrap_err(),
-            MapCompileError::ComponentField
-        );
     }
 
     fn nested_adds<'py>(py: Python<'py>, additions: usize) -> Bound<'py, PyAny> {
@@ -1519,6 +984,7 @@ mod tests {
                 "sub",
                 "mul",
                 "div",
+                "floordiv",
                 "pow",
                 "neg",
                 "sin",

@@ -1,20 +1,15 @@
 use quote::quote;
 use syn::{Ident, Type};
 
-use crate::util::reflect_registration_tokens;
+use crate::{domain::owner_name, util::reflect_registration_tokens};
 
 /// Shared unit bridge code generation used by `#[pycomponent(..., unit, bridge)]`.
 pub(crate) fn generate_unit_bridge_tokens(
     bevy_type: &Type,
     py_type: &Ident,
-    bridge_name_override: Option<&str>,
     no_reflect: bool,
 ) -> proc_macro2::TokenStream {
-    // Derive bridge name: either from explicit string or from py_type (strip "Py" prefix)
-    let bridge_name_str = bridge_name_override.map(String::from).unwrap_or_else(|| {
-        let name = py_type.to_string();
-        name.strip_prefix("Py").unwrap_or(&name).to_string()
-    });
+    let bridge_name_str = owner_name(py_type, None);
     let bridge_name = quote::format_ident!("{}Bridge", bridge_name_str);
     let component_name = &bridge_name_str;
 

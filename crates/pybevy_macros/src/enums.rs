@@ -197,32 +197,6 @@ impl Parse for BevyEnumArgs {
     }
 }
 
-/// Generates boilerplate implementations for PyBevy enum wrapper types.
-///
-/// This macro generates:
-/// - `impl From<BevyType> for PyType` (by matching variant names)
-/// - `impl From<PyType> for BevyType` (by matching variant names)
-/// - `#[pymethods]` with `__repr__`, `__copy__`, and `__deepcopy__`
-///
-/// Generated expansion supports unit variants, empty tuple variants, and named
-/// struct variants with any number of fields. Use `#[py_bevy(tuple)]` on a
-/// named adapter variant when its fields map by declaration order to a Bevy
-/// tuple variant. Handwritten adapter logic remains appropriate when field
-/// conversion is fallible, borrowed, or otherwise not a direct assignment.
-///
-/// # Usage
-///
-/// ```rust,ignore
-/// #[pyenum(BevyCursorGrabMode)]
-/// #[pyclass(name = "CursorGrabMode", eq, hash, frozen, from_py_object)]
-/// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// pub enum PyCursorGrabMode {
-///     None,
-///     Confined,
-///     Locked,
-/// }
-/// ```
-///
 /// Variant kind for pyenum processing
 enum VariantKind<'a> {
     /// Unit variant: `Variant`
@@ -257,6 +231,31 @@ pub(crate) fn variant_aliases_method(spec: &EnumSpec<'_>) -> proc_macro2::TokenS
     }
 }
 
+/// Generates boilerplate implementations for PyBevy enum wrapper types.
+///
+/// This macro generates:
+/// - `impl From<BevyType> for PyType` (by matching variant names)
+/// - `impl From<PyType> for BevyType` (by matching variant names)
+/// - `#[pymethods]` with `__repr__`, `__copy__`, and `__deepcopy__`
+///
+/// Generated expansion supports unit variants, empty tuple variants, and named
+/// struct variants with any number of fields. Use `#[py_bevy(tuple)]` on a
+/// named adapter variant when its fields map by declaration order to a Bevy
+/// tuple variant. Handwritten adapter logic remains appropriate when field
+/// conversion is fallible, borrowed, or otherwise not a direct assignment.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// #[pyenum(BevyCursorGrabMode)]
+/// #[pyclass(name = "CursorGrabMode", eq, hash, frozen, from_py_object)]
+/// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// pub enum PyCursorGrabMode {
+///     None,
+///     Confined,
+///     Locked,
+/// }
+/// ```
 pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as BevyEnumArgs);
     let mut input = parse_macro_input!(item as Item);
@@ -320,41 +319,8 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
         )
         .into();
     }
-    if let Some(field) = spec
-        .variants
-        .iter()
-        .find_map(|variant| match &variant.shape {
-            VariantShape::Tuple(fields) | VariantShape::Struct(fields) => fields
-                .iter()
-                .find(|field| field.materialize || field.domain.is_some()),
-            VariantShape::Unit | VariantShape::EmptyTuple => None,
-        })
-    {
-        let message = if field.domain.is_some() {
-            "#[py_domain] requires the component or resource pyenum mode"
-        } else {
-            "#[py_materialize] currently requires the struct-backed message pyenum mode"
-        };
-        return syn::Error::new_spanned(field.rust_type, message)
-            .to_compile_error()
-            .into();
-    }
-    if let Some(field) = spec
-        .variants
-        .iter()
-        .find_map(|variant| match &variant.shape {
-            VariantShape::Tuple(fields) | VariantShape::Struct(fields) => {
-                fields.iter().find(|field| field.borrowed)
-            }
-            VariantShape::Unit | VariantShape::EmptyTuple => None,
-        })
-    {
-        return syn::Error::new_spanned(
-            field.rust_type,
-            "#[py_borrow] requires the struct-backed component pyenum mode",
-        )
-        .to_compile_error()
-        .into();
+    if let Err(error) = check_native_markers(&spec) {
+        return error.to_compile_error().into();
     }
     debug_assert_eq!(spec.wrapper_name, py_type);
     let spec_inner_type = spec.inner_type;
@@ -672,6 +638,41 @@ pub fn pyenum(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Reject payload markers that only the struct-backed modes implement, so a
+/// native pyclass enum never drops one silently.
+fn check_native_markers(spec: &EnumSpec<'_>) -> syn::Result<()> {
+    if let Some(variant) = spec.variants.iter().find(|variant| variant.unsupported) {
+        return Err(syn::Error::new_spanned(
+            variant.rust_name,
+            "#[py_unsupported] requires the struct-backed component or resource pyenum mode",
+        ));
+    }
+    let fields = spec
+        .variants
+        .iter()
+        .flat_map(|variant| match &variant.shape {
+            VariantShape::Tuple(fields) | VariantShape::Struct(fields) => fields.as_slice(),
+            VariantShape::Unit | VariantShape::EmptyTuple => &[],
+        });
+    for field in fields {
+        let message = if field.domain.is_some() {
+            "#[py_domain] requires the component or resource pyenum mode"
+        } else if field.materialize {
+            "#[py_materialize] currently requires the struct-backed message pyenum mode"
+        } else if field.borrowed {
+            "#[py_borrow] requires the struct-backed component pyenum mode"
+        } else if field.writable {
+            "#[py_set] requires the struct-backed component pyenum mode"
+        } else if field.default.is_some() {
+            "#[py_default] is ignored by native pyclass enums; declare defaults in #[pyo3(constructor = ...)]"
+        } else {
+            continue;
+        };
+        return Err(syn::Error::new_spanned(field.rust_type, message));
+    }
+    Ok(())
 }
 
 fn from_bevy_field_value(

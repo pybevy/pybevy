@@ -223,6 +223,39 @@ pub(crate) fn constructor_signature(fields: &[FieldSpec<'_>]) -> TokenStream {
     quote! { #[pyo3(signature = (#(#parts),*))] }
 }
 
+/// Struct-backed emitters generate every variant class and constructor, so a
+/// variant's `#[pyo3(...)]` may only rename it.
+pub(crate) fn reject_variant_pyo3_options(item: &ItemEnum) -> syn::Result<()> {
+    for variant in &item.variants {
+        for attr in variant
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("pyo3"))
+        {
+            let keys = attr.parse_args_with(|input: syn::parse::ParseStream<'_>| {
+                let mut keys = Vec::new();
+                while !input.is_empty() {
+                    keys.push(input.parse::<Ident>()?);
+                    while !input.is_empty() && !input.peek(Comma) {
+                        input.parse::<proc_macro2::TokenTree>()?;
+                    }
+                    if !input.is_empty() {
+                        input.parse::<Comma>()?;
+                    }
+                }
+                Ok(keys)
+            })?;
+            if let Some(key) = keys.iter().find(|key| *key != "name") {
+                return Err(syn::Error::new_spanned(
+                    key,
+                    "struct-backed pyenum variants accept only #[pyo3(name = ...)]; the constructor is generated from the fields",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn explicit_bevy_shape(attrs: &[Attribute]) -> syn::Result<Option<BevyVariantShape>> {
     let attrs = attrs
         .iter()
@@ -297,6 +330,12 @@ fn parse_fields<'a>(
             return Err(syn::Error::new_spanned(
                 field,
                 "#[py_borrow] requires #[py_type(PyWrapper)]",
+            ));
+        }
+        if borrowed && domain.is_some() {
+            return Err(syn::Error::new_spanned(
+                field,
+                "#[py_borrow] cannot be combined with #[py_domain]: writes through the borrowed child would skip the domain check",
             ));
         }
         if !keyword_only {

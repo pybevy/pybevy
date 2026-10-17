@@ -53,7 +53,7 @@ pub fn pycomponent(attr: TokenStream, item: TokenStream) -> TokenStream {
     component::pycomponent(attr, item)
 }
 
-#[proc_macro_derive(PyComponent, attributes(color, borrowed, read_only, py_name))]
+#[proc_macro_derive(PyComponent, attributes(read_only, py_name))]
 pub fn derive_py_component(input: TokenStream) -> TokenStream {
     derive::derive_py_component(input)
 }

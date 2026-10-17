@@ -1013,7 +1013,7 @@ pub fn python_sign(x: f64) -> f64 {
 }
 
 #[inline]
-fn python_sign_f32(x: f32) -> f32 {
+pub(crate) fn python_sign_f32(x: f32) -> f32 {
     if x > 0.0 {
         1.0
     } else if x < 0.0 {
@@ -1113,7 +1113,7 @@ pub fn python_minimum(a: f64, b: f64) -> f64 {
 }
 
 #[inline]
-fn python_minimum_f32(a: f32, b: f32) -> f32 {
+pub(crate) fn python_minimum_f32(a: f32, b: f32) -> f32 {
     if a.is_nan() {
         a
     } else if b.is_nan() {
@@ -1136,7 +1136,7 @@ pub fn python_maximum(a: f64, b: f64) -> f64 {
 }
 
 #[inline]
-fn python_maximum_f32(a: f32, b: f32) -> f32 {
+pub(crate) fn python_maximum_f32(a: f32, b: f32) -> f32 {
     if a.is_nan() {
         a
     } else if b.is_nan() {
@@ -1156,7 +1156,7 @@ pub fn python_clip(value: f64, min: f64, max: f64) -> f64 {
 }
 
 #[inline]
-fn python_clip_f32(value: f32, min: f32, max: f32) -> f32 {
+pub(crate) fn python_clip_f32(value: f32, min: f32, max: f32) -> f32 {
     python_minimum_f32(python_maximum_f32(value, min), max)
 }
 

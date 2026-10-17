@@ -1506,7 +1506,16 @@ pub(crate) unsafe fn execute_prepared_observer(
                     }
                 }
                 let resource = if *mutable {
-                    resource_type.get_from_world_mut(world, py, validity.clone())?
+                    // SAFETY: observer dispatch owns the World exclusively.
+                    unsafe {
+                        resource_type.get_from_cell_mut(
+                            world.as_unsafe_world_cell(),
+                            py,
+                            validity.clone(),
+                            ticks.last_run,
+                            ticks.this_run,
+                        )
+                    }?
                 } else {
                     resource_type.get_from_world(world, py, validity.clone())?
                 };

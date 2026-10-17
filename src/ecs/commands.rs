@@ -35,7 +35,7 @@ use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError, PyValueError},
     intern,
     prelude::*,
-    types::{PyTuple, PyType},
+    types::{PyList, PyTuple, PyType},
 };
 use smallvec::SmallVec;
 
@@ -44,11 +44,14 @@ use super::{
     component_type::{
         PreparedCustomComponentRegistration, PyComponentType, ValidationIdentity,
         check_custom_component_identity, register_prepared_custom_component,
+        storage_and_shared_layout,
     },
     custom_component::PyCustomComponent,
+    deferred_drop::WorldMutGuard,
     entity_commands::PyEntityCommands,
     helpers::validity_guard::ValidityFlag,
     lazy_wrapper_proxy::PyLazyWrapperProxy,
+    lifecycle_mutation::{despawn_recursive, insert_many_with, remove},
     resource::hierarchy_contains_resource_entity,
     resource_type::PyResourceType,
     world::PyWorld,
@@ -57,7 +60,9 @@ use super::{
 };
 use crate::ecs::{
     batch_spawn::{SpawnBatchCommand, prepare_iter_batch},
-    component_layout::{ComponentStorageType, serialize_to_wrapper},
+    component_layout::{
+        ComponentStorageType, cached_storage_and_layout_match, serialize_to_wrapper,
+    },
     component_wrapper::*,
     dynamic_system::{
         BufferedSystemError, SystemErrorBuffer, SystemErrorReport, lock_or_recover,
@@ -265,11 +270,8 @@ impl CommandErrorSink {
 /// Wrapper around Bevy's Commands system parameter.
 /// Commands queue operations to be applied to the World after the system completes.
 ///
-/// Safety: This type is Send because:
-/// 1. Raw pointers are just addresses (Send if we guarantee validity)
-/// 2. ValidityFlag is Arc<AtomicBool> which is Send + Sync
-/// 3. Runtime validity checking prevents use after the system completes
-/// 4. The optional PyWorld reference is also Send (Py<T> is Send if T is Send)
+/// Scoped validity gates pointer access and expires after execution;
+/// owned World adapters retain the allocation and enforce its thread affinity.
 ///
 /// Invariant: no method here may take `&mut self` or call `borrow_mut()` on
 /// this type. PyO3 holds a PyRef on the receiver for the whole body of a
@@ -313,7 +315,7 @@ struct CachedCustomComponentLayout {
 // owned World handles retain their allocation and scoped handles expire after use.
 unsafe impl Send for PyCommands {}
 
-// SAFETY: validity rejects cross-thread and reentrant access to each command source.
+// SAFETY: pointer use requires the live scoped or owned World capability on its allowed thread.
 unsafe impl Sync for PyCommands {}
 
 impl PyCommands {
@@ -493,7 +495,7 @@ impl PyCommands {
     // The returned guard's scope is a native mutation window: deferred Python
     // drops from the previous mutation drain before it, and drops caused by
     // this window drain when the borrow ends, before returning to Python.
-    fn world_mut(&self) -> PyResult<crate::ecs::deferred_drop::WorldMutGuard<'_>> {
+    fn world_mut(&self) -> PyResult<WorldMutGuard<'_>> {
         self.validity.check()?;
         let pointer = match self.source {
             CommandSource::Immediate(pointer) | CommandSource::WorldQueue(pointer) => pointer,
@@ -506,7 +508,7 @@ impl PyCommands {
         let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
         // SAFETY: validity and the GC gate protect the live World mutation window.
         let world = unsafe { &mut *pointer };
-        Ok(crate::ecs::deferred_drop::WorldMutGuard::with_gc(world, gc))
+        Ok(WorldMutGuard::with_gc(world, gc))
     }
 
     pub(crate) fn check_native_asset_access(&self, operation: &str) -> PyResult<()> {
@@ -519,9 +521,7 @@ impl PyCommands {
     }
 
     /// Get world access if this is world-backed, otherwise return None.
-    pub(crate) fn try_world_mut(
-        &self,
-    ) -> PyResult<Option<crate::ecs::deferred_drop::WorldMutGuard<'_>>> {
+    pub(crate) fn try_world_mut(&self) -> PyResult<Option<WorldMutGuard<'_>>> {
         self.validity.check()?;
         if self.is_immediate() {
             self.world_mut().map(Some)
@@ -702,7 +702,7 @@ pub(crate) fn component_logical_type(
 pub(crate) fn update_entity_logical_type(
     world: &mut World,
     entity: Entity,
-    native_type: std::any::TypeId,
+    native_type: TypeId,
     logical_type: Option<LogicalTypeId>,
 ) {
     match logical_type {
@@ -875,7 +875,7 @@ impl PreparedInsertion {
         validate_bundle_identities(world, entity, registrations, self.spawned)?;
         validate_bundle_links(world, entity, &parents, self.spawned)?;
         let mut result = Ok(());
-        crate::ecs::lifecycle_mutation::insert_many_with(world, entity, &self.types, |world| {
+        insert_many_with(world, entity, &self.types, |world| {
             result = Python::attach(|py| {
                 for (kind, mut value) in self.types.iter().zip(self.values) {
                     ensure_entity_exists(world, entity)?;
@@ -940,16 +940,12 @@ impl PyCommands {
         // Re-read live metadata so class mutations cannot reuse a stale layout.
         if let Some(cached) = self.wrapper_layout_cache.get()
             && cached.type_id == key
-            && crate::ecs::component_layout::cached_storage_and_layout_match(
-                cls,
-                cached.storage,
-                cached.layout.as_deref(),
-            )?
+            && cached_storage_and_layout_match(cls, cached.storage, cached.layout.as_deref())?
         {
             return Ok((cached.storage, cached.layout.clone()));
         }
 
-        let (storage, layout) = crate::ecs::component_type::storage_and_shared_layout(cls)?;
+        let (storage, layout) = storage_and_shared_layout(cls)?;
         if self.wrapper_layout_cache.get().is_none() {
             let cached = CachedCustomComponentLayout {
                 type_id: key,
@@ -1063,32 +1059,27 @@ pub(crate) fn insert_resolved_components_to_entity(
         validate_bundle_identities(&mut world, entity_id, registrations.iter(), spawned)?;
         validate_bundle_links(&mut world, entity_id, &parents, spawned)?;
         let mut insertion_error = None;
-        crate::ecs::lifecycle_mutation::insert_many_with(
-            &mut world,
-            entity_id,
-            &component_types,
-            |world| {
-                // SAFETY: this temporary wrapper is a reborrow of the
-                // adapter's exclusive World for the structural commit only.
-                // It cannot escape this closure and is never used alongside
-                // the adapter's `&mut World`.
-                let temporary =
-                    unsafe { PyCommands::from_world_temporary(world as *mut World, validity) };
-                match insert_components_to_entity(
-                    &temporary,
-                    commands,
-                    entity_id,
-                    components,
-                    &component_types,
-                ) {
-                    Ok(()) => true,
-                    Err(error) => {
-                        insertion_error = Some(error);
-                        false
-                    }
+        insert_many_with(&mut world, entity_id, &component_types, |world| {
+            // SAFETY: this temporary wrapper is a reborrow of the
+            // adapter's exclusive World for the structural commit only.
+            // It cannot escape this closure and is never used alongside
+            // the adapter's `&mut World`.
+            let temporary =
+                unsafe { PyCommands::from_world_temporary(world as *mut World, validity) };
+            match insert_components_to_entity(
+                &temporary,
+                commands,
+                entity_id,
+                components,
+                &component_types,
+            ) {
+                Ok(()) => true,
+                Err(error) => {
+                    insertion_error = Some(error);
+                    false
                 }
-            },
-        );
+            }
+        });
         if let Some(error) = insertion_error {
             return Err(error);
         }
@@ -1128,15 +1119,10 @@ pub(crate) fn insert_resolved_components_to_entity(
                 structural_queue.apply(world);
                 return;
             }
-            crate::ecs::lifecycle_mutation::insert_many_with(
-                world,
-                entity_id,
-                &component_types,
-                |world| {
-                    structural_queue.apply(world);
-                    true
-                },
-            );
+            insert_many_with(world, entity_id, &component_types, |world| {
+                structural_queue.apply(world);
+                true
+            });
         })?;
     }
 
@@ -1309,7 +1295,7 @@ fn insert_components_to_entity(
 
 /// PyBevy rejects resource-entity and cyclic links; Bevy's `ChildOf` hook
 /// drops a missing or self parent with a warning.
-fn validate_inserted_link(
+pub(crate) fn validate_inserted_link(
     world: &World,
     child: Entity,
     parent: Entity,
@@ -1386,20 +1372,32 @@ fn bundle_relationship_parents(
 ) -> PyResult<Vec<(Entity, &'static str)>> {
     let mut parents = Vec::new();
     for (component, kind) in components.iter().zip(component_types) {
-        let PyComponentType::Dynamic(pointer) = kind else {
-            continue;
-        };
-        let Some(bridge) = global_registry::get_bridge_by_py_type(*pointer) else {
-            continue;
-        };
-        if let Some(field) = bridge.relationship_field() {
-            parents.push((
-                component.getattr(field)?.extract::<PyEntity>()?.0,
-                bridge.name(),
-            ));
+        if let Some(parent) = component_relationship_parent(&component, *kind)? {
+            parents.push(parent);
         }
     }
     Ok(parents)
+}
+
+pub(crate) fn component_relationship_parent(
+    component: &Bound<'_, PyAny>,
+    kind: PyComponentType,
+) -> PyResult<Option<(Entity, &'static str)>> {
+    let PyComponentType::Dynamic(pointer) = kind else {
+        return Ok(None);
+    };
+    let Some(bridge) = global_registry::get_bridge_by_py_type(pointer) else {
+        return Ok(None);
+    };
+    bridge
+        .relationship_field()
+        .map(|field| {
+            Ok((
+                component.getattr(field)?.extract::<PyEntity>()?.0,
+                bridge.name(),
+            ))
+        })
+        .transpose()
 }
 
 /// Helper function to add a child to an entity
@@ -1560,7 +1558,7 @@ pub(crate) fn remove_components_from_entity_helper(
             }
             ensure_no_live_asset_access(&world, "entity.remove()")
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            crate::ecs::lifecycle_mutation::remove(&mut world, entity_id, component_type);
+            remove(&mut world, entity_id, component_type);
             if let Some(native_type) = component_type.type_id() {
                 update_entity_logical_type(&mut world, entity_id, native_type, None);
             }
@@ -1571,7 +1569,7 @@ pub(crate) fn remove_components_from_entity_helper(
                 {
                     return;
                 }
-                crate::ecs::lifecycle_mutation::remove(world, entity_id, component_type);
+                remove(world, entity_id, component_type);
                 if let Some(native_type) = component_type.type_id() {
                     update_entity_logical_type(world, entity_id, native_type, None);
                 }
@@ -1645,7 +1643,7 @@ impl PyCommands {
         // A single list or iterator is treated as component bundles.
         if components.len() == 1 && count.is_none() {
             let first = components.get_item(0)?;
-            if first.is_instance_of::<pyo3::types::PyList>() || first.hasattr("__next__")? {
+            if first.is_instance_of::<PyList>() || first.hasattr("__next__")? {
                 self.spawn_batch_iter(py, &first)?;
                 return Ok(py.None());
             }
@@ -1674,7 +1672,7 @@ impl PyCommands {
             PyRuntimeError::new_err("Deferred spawn_batch requires an App-owned error sink")
         })?;
         self.execute_or_queue(move |world: &mut World| {
-            if let Err(e) = command.apply_to(world, entities) {
+            if let Err(e) = SpawnBatchCommand::apply_many_to(world, vec![(command, entities)]) {
                 error_sink.record(e);
             }
         })?;
@@ -1705,11 +1703,8 @@ impl PyCommands {
             PyRuntimeError::new_err("Deferred spawn_batch requires an App-owned error sink")
         })?;
         self.execute_or_queue(move |world: &mut World| {
-            for (command, entities) in batches {
-                if let Err(error) = command.apply_to(world, entities) {
-                    error_sink.record(error);
-                    break;
-                }
+            if let Err(error) = SpawnBatchCommand::apply_many_to(world, batches) {
+                error_sink.record(error);
             }
         })?;
         Ok(())
@@ -1907,7 +1902,7 @@ impl PyCommands {
             if hierarchy_contains_resource_entity(&world, entity_id) {
                 return Err(PyTypeError::new_err(RESOURCE_ENTITY_DESPAWN));
             }
-            crate::ecs::lifecycle_mutation::despawn_recursive(&mut world, entity_id);
+            despawn_recursive(&mut world, entity_id);
         } else {
             let error_sink = self.error_sink.clone();
             self.execute_or_queue(move |world| {
@@ -1920,7 +1915,7 @@ impl PyCommands {
                     );
                     return;
                 }
-                crate::ecs::lifecycle_mutation::despawn_recursive(world, entity_id);
+                despawn_recursive(world, entity_id);
             })?;
         }
 
