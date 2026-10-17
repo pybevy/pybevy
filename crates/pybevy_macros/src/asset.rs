@@ -406,16 +406,22 @@ pub(crate) fn generate_asset_bridge_tokens(
                     .unwrap_or_else(|| messages.get_cursor());
                 let events = cursor
                     .read(messages)
-                    .map(|event| match event {
-                        bevy::asset::AssetEvent::Added { id } => pybevy_core::AssetEventRecord::Added { id: id.untyped() },
-                        bevy::asset::AssetEvent::Modified { id } => pybevy_core::AssetEventRecord::Modified { id: id.untyped() },
-                        bevy::asset::AssetEvent::Removed { id } => pybevy_core::AssetEventRecord::Removed { id: id.untyped() },
-                        bevy::asset::AssetEvent::Unused { id } => pybevy_core::AssetEventRecord::Unused { id: id.untyped() },
-                        bevy::asset::AssetEvent::LoadedWithDependencies { id } => pybevy_core::AssetEventRecord::LoadedWithDependencies { id: id.untyped() },
-                    })
+                    .map(pybevy_core::AssetEventRecord::from)
                     .collect();
                 *cursor_state = Some(Box::new(cursor));
                 events
+            }
+
+            fn read_next_event(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+            ) -> Option<pybevy_core::AssetEventRecord> {
+                pybevy_core::read_next_message(
+                    world.get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>(),
+                    cursor_state,
+                    |event| Ok::<_, std::convert::Infallible>(pybevy_core::AssetEventRecord::from(event)),
+                ).expect("asset event projection is infallible")
             }
 
             fn event_reader_cursor(
@@ -464,14 +470,22 @@ pub(crate) fn generate_asset_bridge_tokens(
                     .unwrap_or_else(|| messages.get_cursor());
                 let events = cursor
                     .read(messages)
-                    .map(|event| pybevy_core::AssetLoadFailedRecord {
-                        id: event.id.untyped(),
-                        path: event.path.clone(),
-                        error: event.error.to_string(),
-                    })
+                    .map(pybevy_core::AssetLoadFailedRecord::from)
                     .collect();
                 *cursor_state = Some(Box::new(cursor));
                 events
+            }
+
+            fn read_next_load_failed_event(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+            ) -> Option<pybevy_core::AssetLoadFailedRecord> {
+                pybevy_core::read_next_message(
+                    world.get_resource::<bevy::ecs::message::Messages<bevy::asset::AssetLoadFailedEvent<#bevy_type>>>(),
+                    cursor_state,
+                    |event| Ok::<_, std::convert::Infallible>(pybevy_core::AssetLoadFailedRecord::from(event)),
+                ).expect("asset load-failure projection is infallible")
             }
 
             fn load_failed_reader_cursor(

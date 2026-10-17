@@ -27,7 +27,6 @@ use pybevy_macros::pyenum;
 use pyo3::{
     IntoPyObjectExt, PyClass,
     exceptions::{PyTypeError, PyValueError},
-    ffi,
     ffi::PyTypeObject,
     prelude::*,
     types::PyType,
@@ -284,25 +283,10 @@ impl PyHandle {
     }
 
     /// Get the Python type of the asset this handle refers to.
-    pub fn asset_type_class(&self) -> PyResult<Py<PyType>> {
-        Python::attach(|py| {
-            if let Some(bridge) = global_registry::get_asset_bridge_by_py_type(self.type_ptr) {
-                return Ok(bridge.py_type(py).unbind());
-            }
-            // SAFETY: type_ptr was captured from a live type object at handle
-            // construction; asset classes are module-level, so their defining
-            // module keeps them alive
-            let type_obj =
-                unsafe { Bound::from_borrowed_ptr(py, self.type_ptr as *mut ffi::PyObject) };
-            type_obj
-                .cast_into::<PyType>()
-                .map(Bound::unbind)
-                .map_err(|_| {
-                    PyValueError::new_err(
-                        "Stored asset type pointer no longer refers to a type object",
-                    )
-                })
-        })
+    pub fn asset_type_class(&self, py: Python<'_>) -> PyResult<Py<PyType>> {
+        global_registry::get_asset_bridge_by_py_type(self.type_ptr)
+            .map(|bridge| bridge.py_type(py).unbind())
+            .ok_or_else(|| PyValueError::new_err(public_error::ASSET_BRIDGE_NOT_FOUND))
     }
 
     /// Get this handle's Bevy asset identifier.
@@ -668,7 +652,7 @@ mod tests {
     use std::sync::Once;
 
     use bevy::reflect::TypePath;
-    use pyo3::types::{PyInt, PyList};
+    use pyo3::types::PyList;
 
     use super::*;
 
@@ -680,10 +664,9 @@ mod tests {
         });
     }
 
-    /// Regression test: a type_ptr that does not point at a type object must
-    /// surface an error, not an unchecked cast to PyType.
+    /// An unregistered type pointer is never dereferenced.
     #[test]
-    fn asset_type_class_rejects_non_type_pointer() {
+    fn asset_type_class_rejects_an_unregistered_type() {
         setup_python();
         Python::attach(|py| {
             let not_a_type = PyList::empty(py);
@@ -692,26 +675,12 @@ mod tests {
                 type_ptr: not_a_type.as_ptr() as *const PyTypeObject,
                 logical_type_id: None,
             };
-            let result = handle.asset_type_class();
-            assert!(result.is_err(), "instance pointer must not cast to PyType");
-        });
-    }
-
-    /// The no-bridge fallback must still revive a genuine type object.
-    #[test]
-    fn asset_type_class_falls_back_to_stored_type_pointer() {
-        setup_python();
-        Python::attach(|py| {
-            let int_type = py.get_type::<PyInt>();
-            let handle = PyHandle {
-                kind: HandleKind::Uuid(Uuid::from_u128(2)),
-                type_ptr: int_type.as_type_ptr(),
-                logical_type_id: None,
-            };
-            let cls = handle
-                .asset_type_class()
-                .expect("real type object must revive via fallback");
-            assert!(cls.bind(py).is(&int_type));
+            let error = handle.asset_type_class(py).unwrap_err();
+            assert!(error.is_instance_of::<PyValueError>(py));
+            assert_eq!(
+                error.value(py).to_string(),
+                public_error::ASSET_BRIDGE_NOT_FOUND
+            );
         });
     }
 

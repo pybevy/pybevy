@@ -14,7 +14,11 @@ use pyo3::{
 
 use crate::public_error;
 
-#[pyclass(name = "_FloatLiveList", skip_from_py_object)]
+#[pyclass(
+    name = "_FloatLiveList",
+    module = "pybevy.collections",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyFloatLiveList {
     storage: FieldStorage<Vec<f32>>,

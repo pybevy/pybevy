@@ -535,9 +535,17 @@ pub(crate) fn register_custom_resource(
     match outcome {
         ResourceRegisterOutcome::Reused(_) => {}
         ResourceRegisterOutcome::Aliased(id) => {
-            if let Some(mut custom_info) = world.get_resource_mut::<CustomResourceInfo>() {
-                custom_info.update_type_ptr(id, type_ptr, retained_type_object(py, type_ptr));
-            }
+            let retired =
+                world
+                    .get_resource_mut::<CustomResourceInfo>()
+                    .and_then(|mut custom_info| {
+                        custom_info.update_type_ptr(
+                            id,
+                            type_ptr,
+                            retained_type_object(py, type_ptr),
+                        )
+                    });
+            drop(retired);
 
             if let Some(qualified_name) = qualified_name {
                 debug!(

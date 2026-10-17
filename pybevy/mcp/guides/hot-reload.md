@@ -364,6 +364,11 @@ Custom Python types defined with `@component` or `@resource` survive hot reloads
 
 This means `reload` with Full mode handles most `@component`/`@resource` changes. Use `run_scene` only when you need a guaranteed clean-slate restart.
 
+Custom message classes are re-aliased by `module.qualname` to the same logical
+channel. Obsolete exact class aliases expire after the supported window of one
+previous successful reload generation. Removed or renamed channels retain their
+neutral identity and ID sequence without retaining their old Python classes.
+
 ## Observers Across Reloads
 
 Where an observer is registered decides how a reload treats it:

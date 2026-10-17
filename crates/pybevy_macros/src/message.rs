@@ -128,12 +128,28 @@ pub(crate) fn generate_message_bridge_tokens(
                 // message is not initialized.
                 let Some(mut messages) = world.get_resource_mut::<Messages<#bevy_type>>() else {
                     return Err(pyo3::exceptions::PyTypeError::new_err(
-                        "Messages resource not initialized for this message type. \
-                         Ensure the plugin providing this message is added before writing.",
+                        pybevy_core::public_error::MESSAGE_RESOURCE_NOT_INITIALIZED,
                     ));
                 };
                 let id = messages.write(native);
                 Ok(id.id as u64)
+            }
+
+            fn write_batch(
+                &self,
+                py: pyo3::Python,
+                world: &mut bevy::ecs::world::World,
+                messages: &[pyo3::Py<pyo3::PyAny>],
+            ) -> pyo3::PyResult<Vec<u64>> {
+                let values = messages.iter().map(|message| {
+                    let value = message.bind(py).extract::<pyo3::PyRef<#py_type>>()?;
+                    #bevy_type::try_from(&*value).map_err(pyo3::PyErr::from)
+                }).collect::<pyo3::PyResult<Vec<#bevy_type>>>()?;
+                pybevy_core::write_native_message_batch(world, values)
+                    .map(|ids| ids.into_iter().map(|id| id as u64).collect())
+                    .ok_or_else(|| pyo3::exceptions::PyTypeError::new_err(
+                        pybevy_core::public_error::MESSAGE_RESOURCE_NOT_INITIALIZED,
+                    ))
             }
         }
     } else {
@@ -142,17 +158,14 @@ pub(crate) fn generate_message_bridge_tokens(
         }
     };
 
-    let materialize_message = if let Some(materialize) = materialize {
+    let materialize_value = if let Some(materialize) = materialize {
         quote! {
-            let py_obj = #materialize(py, event)?;
-            result.push(py_obj);
+            #materialize(py, event)
         }
     } else {
         quote! {
-            let py_event = #py_type::from(event);
-            // Use tuple form for types extending PyMessage
-            let py_obj = pyo3::Py::new(py, (py_event, pybevy_core::PyMessage))?;
-            result.push(py_obj.into_any());
+            pyo3::Py::new(py, (#py_type::from(event), pybevy_core::PyMessage))
+                .map(pyo3::Py::into_any)
         }
     };
 
@@ -191,6 +204,19 @@ pub(crate) fn generate_message_bridge_tokens(
                 self.iter_to_python_with_cursor(py, world, &mut None)
             }
 
+            fn next_to_python(
+                &self,
+                py: pyo3::Python,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+            ) -> pyo3::PyResult<Option<pyo3::Py<pyo3::PyAny>>> {
+                pybevy_core::read_next_message(
+                    world.get_resource::<bevy::ecs::message::Messages<#bevy_type>>(),
+                    cursor_state,
+                    |event| { #materialize_value },
+                )
+            }
+
             fn iter_to_python_with_cursor(
                 &self,
                 py: pyo3::Python,
@@ -211,7 +237,7 @@ pub(crate) fn generate_message_bridge_tokens(
                     .unwrap_or_else(|| messages.get_cursor());
                 let mut result = Vec::new();
                 for event in cursor.read(&*messages) {
-                    #materialize_message
+                    result.push({ #materialize_value }?);
                 }
                 *cursor_storage = Some(Box::new(cursor));
                 Ok(result)

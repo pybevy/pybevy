@@ -32,6 +32,12 @@ class ParallaxMappingMethod:
         def max_steps(self) -> int: ...
         def __init__(self, *, max_steps: int) -> None: ...
 
+class Materializable:
+    """Base of values that `Assets[StandardMaterial].add()` accepts in place of a
+    material, such as `Color`. Not constructible."""
+
+    def materialize(self) -> StandardMaterial: ...
+
 @dataclass(init=False, kw_only=True)
 class Material(Asset):
     """Python surface of Bevy's 3D `Material` trait.

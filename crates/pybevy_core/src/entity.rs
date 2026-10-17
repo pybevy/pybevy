@@ -10,7 +10,7 @@ use pyo3::{
 
 use crate::{
     PyEntityIndex,
-    public_error::{ENTITY_ARGUMENT_INT, invalid_entity_bits},
+    public_error::{ENTITY_ARGUMENT_INT, expected_entity, invalid_entity_bits},
 };
 
 #[pyclass(
@@ -74,14 +74,12 @@ pub fn extract_entity_from_any(value: &Bound<'_, PyAny>) -> PyResult<PyEntity> {
     if value.extract::<u64>().is_ok() {
         return Err(PyTypeError::new_err(ENTITY_ARGUMENT_INT));
     }
-    Err(PyTypeError::new_err(format!(
-        "expected an Entity, got {}",
-        value
-            .get_type()
-            .name()
-            .map(|name| name.to_string())
-            .unwrap_or_else(|_| "an unknown type".to_owned())
-    )))
+    let type_name = value
+        .get_type()
+        .name()
+        .map(|name| name.to_string())
+        .unwrap_or_else(|_| "an unknown type".to_owned());
+    Err(PyTypeError::new_err(expected_entity(&type_name)))
 }
 
 #[cfg(test)]

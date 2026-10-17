@@ -7,7 +7,11 @@ use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
 use crate::app::{app::PyApp, plugin::PyPlugin};
 
 #[pyplugin(ImageCopyPlugin)]
-#[pyclass(name = "ImageCopyPlugin", extends = PyPlugin)]
+#[pyclass(
+    name = "ImageCopyPlugin",
+    module = "pybevy._internal.render_readback",
+    extends = PyPlugin
+)]
 pub struct PyImageCopyPlugin;
 
 #[pymethods]

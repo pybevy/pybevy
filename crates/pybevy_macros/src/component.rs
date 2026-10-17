@@ -1042,7 +1042,9 @@ fn generate_bridge_tokens(
                 let array_var = quote::format_ident!("{}_array", field.python_name);
                 let values_var = quote::format_ident!("{}_values", field.python_name);
                 let slice_var = quote::format_ident!("{}_slice", field.python_name);
+                let integers_var = quote::format_ident!("{}_integers", field.python_name);
                 quote! {
+                    let #integers_var = batch.get_field_integers(#name_str);
                     let #array_var: Option<numpy::PyReadonlyArray2<f32>> = batch
                         .get_field_array(py, #name_str)
                         .map(|a| -> pyo3::PyResult<_> { Ok(a.extract()?) })
@@ -1059,9 +1061,12 @@ fn generate_bridge_tokens(
             .iter()
             .map(|field| {
                 let slice_var = quote::format_ident!("{}_slice", field.python_name);
+                let integers_var = quote::format_ident!("{}_integers", field.python_name);
                 let accessor = &field.rust_accessor;
                 quote! {
-                    if let Some(data) = #slice_var {
+                    if let Some(data) = #integers_var {
+                        pybevy_core::set_field_from_integers(&mut component #accessor, data, i);
+                    } else if let Some(data) = #slice_var {
                         pybevy_core::set_field_from_numpy(&mut component #accessor, data, i);
                     }
                 }
@@ -1098,6 +1103,19 @@ fn generate_bridge_tokens(
                     }
                 })
             };
+            let integer_value_validation = field_domain(field).map(|entry| {
+                let const_ident = entry.const_ident();
+                quote! {
+                    pybevy_core::check_integer_batch_field(
+                        &default_val #accessor,
+                        #component_name,
+                        #name_str,
+                        &integer_values,
+                        #py_type::#const_ident,
+                    )
+                    .map_err(pyo3::PyErr::from)?;
+                }
+            });
             let portable_value_validation = domain_check(quote! { &portable_values });
             let numpy_value_validation = domain_check(quote! { normalized_values }).map(|check| {
                 quote! {
@@ -1108,11 +1126,28 @@ fn generate_bridge_tokens(
             });
             quote! {
                 if let Some(arr) = kwargs.get_item(#name_str)? {
-                    // Integer inputs are checked before the f32 normalization can saturate them.
-                    if let Some(column) = pybevy_core::batch_integer_column_of(&default_val #accessor) {
-                        pybevy_core::check_f32_integer_batch_column(&arr, #qualified_name, column)?;
-                    }
-                    if let Some((shape, portable_values)) =
+                    // Integer fields keep exact integer columns.
+                    let integer_column =
+                        match pybevy_core::batch_integer_column_of(&default_val #accessor) {
+                            Some(column) => {
+                                pybevy_core::integer_batch_column(&arr, #qualified_name, column)?
+                            }
+                            None => None,
+                        };
+                    if let Some((shape, integer_values)) = integer_column {
+                        let ndim = shape.len();
+                        let rows = pybevy_core::batch_columns::plan_column(
+                            #name_str,
+                            #cols_var,
+                            ndim,
+                            &shape,
+                        )
+                        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                        #integer_value_validation
+                        count_agreement.observe(#name_str, rows)
+                            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+                        field_integers.insert(#name_str.to_string(), integer_values);
+                    } else if let Some((shape, portable_values)) =
                         pybevy_core::portable_f32_batch_column(&arr)?
                     {
                         let ndim = shape.len();
@@ -1222,6 +1257,7 @@ fn generate_bridge_tokens(
 
                 let mut field_arrays = std::collections::HashMap::new();
                 let mut field_values = std::collections::HashMap::new();
+                let mut field_integers = std::collections::HashMap::new();
                 let mut count_agreement = pybevy_core::batch_columns::CountAgreement::default();
 
                 #(#field_normalize_stmts)*
@@ -1241,6 +1277,7 @@ fn generate_bridge_tokens(
                     component_type_ptr: type_ptr,
                     field_arrays,
                     field_values,
+                    field_integers,
                     count,
                     component_name: #component_name.to_string(),
                 };

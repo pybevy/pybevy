@@ -57,6 +57,7 @@ _apply_constant_descriptors()
 # names match their Cargo features, such as ``mcp``. Fixed per compiled binary.
 FEATURES: Final[frozenset[str]] = _pybevy.features()
 
+
 # Report the loaded backend's version, including under editable installs.
 __version__: Final[str] = _pybevy.__version__
 
@@ -154,3 +155,4 @@ __all__ = [
     "winit",
     "world_serialization",
 ]
+

@@ -167,6 +167,10 @@ class MessageWriter(Generic[M]):
     A system cannot contain a writer and another reader or writer for the same
     message channel; split that work into ordered systems or distinct message types.
 
+    Custom writes store a shallow copy. Fallback copying bypasses the class
+    constructor and ``__new__``. A custom ``__copy__`` must return the exact class.
+    Copy failures or callbacks that expire the writer commit no messages.
+
     Example:
         @system
         def my_system(writer: MessageWriter[AppExit]) -> None:
@@ -188,6 +192,7 @@ class MessageReader(Generic[M]):
 
     Custom Python messages are yielded as read-only views that expire with the
     system run; ``copy.copy(message)`` returns an owned, writable copy.
+    Native values are owned snapshots, but their iterator expires with the run.
 
     Example:
         @system

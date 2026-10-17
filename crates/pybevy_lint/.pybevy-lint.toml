@@ -15,6 +15,10 @@ reason = "The message mirror converts PathBuf through to_string_lossy into a Pyt
 # Types borrowed as a shared PyRef across calls back into Python.
 # See docs/safety.md, "Shared-Borrow Proxies".
 [[validation.shared_borrow_types]]
+path = "assets.Assets"
+reason = "input conversion and material projections call arbitrary Python that can re-enter the same collection"
+
+[[validation.shared_borrow_types]]
 path = "ecs.Commands"
 reason = "its &self methods hold the receiver borrow across component conversion, which is arbitrary Python and can re-enter the same Commands"
 
@@ -3002,11 +3006,6 @@ path = "core.RustComponentBatch"
 reason = "macro-generated native batch transport returned through component batch factories"
 
 [[validation.exceptions]]
-code = "E001"
-path = "core.Materializable"
-reason = "semantic runtime MRO marker discovered through concrete classes, not a module-exported stub symbol"
-
-[[validation.exceptions]]
 code = "E006"
 path = "light.ScatteringMedium"
 reason = "private generated indexed adapter structurally implements the public LiveList[ScatteringTerm] protocol"
@@ -3395,91 +3394,6 @@ reason = "legacy plain value enum predating the pyenum convention; migration tra
 code = "W013"
 path = "render.TextureFormat"
 reason = "legacy plain value enum predating the pyenum convention; migration tracked by ISSUE-012"
-
-
-# W016: declarations that still leave __module__ as 'builtins'. Each is a
-# recorded defect in internal/state/bugs/core.md core-010, not an approved
-# shape; delete the entry when the declaration names its module.
-
-[[validation.exceptions]]
-code = "W016"
-path = "core.Materializable"
-reason = "core-010: runtime MRO marker still reports builtins.Materializable"
-
-[[validation.exceptions]]
-code = "W016"
-path = "core.LogicalComponentParam"
-reason = "core-010: descriptor still reports builtins.LogicalComponentParam in TypeError text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "core.RustComponentBatch"
-reason = "core-010: native batch transport reaches users through component batch factories"
-
-[[validation.exceptions]]
-code = "W016"
-path = "core._FloatLiveList"
-reason = "core-010: private live sequence visible through repr and index errors"
-
-[[validation.exceptions]]
-code = "W016"
-path = "core._NumpyViewGuard"
-reason = "core-010: private array view guard visible through repr and error text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "time._TimeFixed"
-reason = "core-010: private Time context class visible through repr and error text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "time._TimeVirtual"
-reason = "core-010: private Time context class visible through repr and error text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "time._TimeReal"
-reason = "core-010: private Time context class visible through repr and error text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "app._FileWatcher"
-reason = "core-010: private hot-reload watcher visible through repr and error text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.CustomComponentBatch"
-reason = "core-010: custom batch transport reaches users through component batch factories"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.MessageReaderIter"
-reason = "core-010: iterator implementation type, also a reviewed tests/surface/_exceptions.py entry"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.RemovedComponentsIter"
-reason = "iterator implementation type, also a reviewed tests/surface/_exceptions.py entry"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.MessageTypeParam"
-reason = "core-010: unregistered shadow of the exported ecs.MessageTypeParam; the ledger routes it to removal"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs._LogicalTypeMap"
-reason = "core-010: private logical-type component visible through repr and error text"
-
-[[validation.exceptions]]
-code = "W016"
-path = "ecs.SystemConfig"
-reason = "core-010: instance __module__ proxies the wrapped callable, but the type itself still reports builtins"
-
-[[validation.exceptions]]
-code = "W016"
-path = "render.ImageCopyPlugin"
-reason = "core-010: registered plugin class still reports builtins.ImageCopyPlugin"
 
 [[validation.exceptions]]
 code = "W017"

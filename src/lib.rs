@@ -180,6 +180,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Main crate modules (local code)
     app::add_module(m)?;
+
     assets::add_module(m)?;
     ecs::add_module(m)?;
     ecs::state::add_module(m)?;

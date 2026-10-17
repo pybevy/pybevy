@@ -5,7 +5,7 @@ use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 #[pycomponent(LogicalTypeMap, no_clone, no_insert, no_reflect, bridge)]
-#[pyclass(name = "_LogicalTypeMap", extends = PyComponent)]
+#[pyclass(name = "_LogicalTypeMap", module = "pybevy.ecs", extends = PyComponent)]
 pub struct PyLogicalTypeMap {
     #[allow(dead_code)]
     storage: ComponentStorage<LogicalTypeMap>,

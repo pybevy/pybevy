@@ -12,7 +12,6 @@ use std::{
 
 /// Value-domain violations carry their canonical wording in `Display`.
 pub use pybevy_storage::domain::{DURATION_INPUT_TYPES, DomainViolation};
-
 pub const LOAD_BUILDER_TYPE_REQUIRED: &str = "LoadBuilder.load() requires keyword-only asset_type when no settings establish the type; use load(path, asset_type=Image)";
 pub const LOAD_WITH_SETTINGS_DEPRECATED: &CStr = c"AssetServer.load_with_settings() is deprecated; use load_builder().with_settings(settings).load(path) instead";
 pub const LOADER_SETTINGS_BRIDGE_MISSING: &str = "Loader settings asset bridge is not registered";
@@ -220,6 +219,10 @@ pub fn observer_parameter_outside_observer(system: &str, parameter: usize) -> St
         "System `{system}` parameter {parameter} uses On[...] outside an observer; use @observer with add_observer()"
     )
 }
+pub fn expected_entity(type_name: &str) -> String {
+    format!("expected an Entity, got {type_name}")
+}
+
 pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
 
 pub fn one_shot_parameter_validation_skip(reason: impl Display) -> String {
@@ -742,6 +745,12 @@ pub const ASSET_LOAD_FAILED_NO_DEFAULT: &str =
     "AssetLoadFailedEvent messages have no default value";
 pub const COMPONENT_BRIDGE_NOT_FOUND: &str = "Component bridge not found";
 
+pub fn message_copy_type_mismatch(expected: &str, actual: &str) -> String {
+    format!("Message copy must return {expected}, got {actual}")
+}
+
+pub const MESSAGE_RESOURCE_NOT_INITIALIZED: &str = "Messages resource not initialized for this message type. Ensure the plugin providing this message is added before writing.";
+
 pub const RESOURCE_BRIDGE_NOT_FOUND: &str = "Resource bridge not found for dynamic type";
 pub const MESSAGES_RESOURCE_READ_ONLY: &str =
     "Messages from World.resource() are read-only; use World.resource_mut() to clear them";
@@ -1219,7 +1228,7 @@ pub fn pipe_input_type_mismatch(
 }
 
 pub fn invalid_entity_bits(bits: u64) -> String {
-    format!("{bits} is not a valid entity bit pattern: the entity index cannot be zero")
+    format!("{bits} is not a valid entity bit pattern: its low 32 bits cannot be zero")
 }
 
 pub fn custom_component_wrapper_storage(component: impl Display) -> String {

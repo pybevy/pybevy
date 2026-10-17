@@ -422,6 +422,17 @@ impl WrapperComponentSchema {
             .collect()
     }
 
+    /// Attach an interpreter type identity to this schema.
+    pub fn to_layout(&self, py_type_ptr: *const c_void, name: String) -> ComponentLayout {
+        ComponentLayout::new(
+            py_type_ptr,
+            name,
+            self.fields.clone(),
+            self.data_size,
+            self.wrapper_size,
+        )
+    }
+
     /// Read all declared values from a wrapper component.
     ///
     /// # Safety
@@ -1188,6 +1199,25 @@ mod tests {
             PrimitiveValue::from_f32_lanes(PrimitiveType::Mat3, &[0.0; 4]),
             None
         );
+    }
+
+    #[test]
+    fn schema_to_layout_keeps_fields_and_attaches_identity() {
+        let fields = vec![
+            ("active".to_string(), PrimitiveType::Bool),
+            ("speed".to_string(), PrimitiveType::F64),
+        ];
+        let layout =
+            ComponentLayout::from_fields(ptr::null(), "Before".to_string(), &fields).unwrap();
+        let identity = 0x1000 as *const c_void;
+
+        let restored = layout.schema().to_layout(identity, "After".to_string());
+
+        assert_eq!(restored.py_type_ptr, identity);
+        assert_eq!(restored.name, "After");
+        assert_eq!(restored.fields, layout.fields);
+        assert_eq!(restored.data_size, layout.data_size);
+        assert_eq!(restored.wrapper_size, layout.wrapper_size);
     }
 
     #[test]

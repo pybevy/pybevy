@@ -249,7 +249,7 @@ impl PyAssets {
     }
 
     /// Get a mutable reference to the world
-    fn world_mut(&mut self) -> PyResult<WorldMutGuard<'_>> {
+    fn world_mut(&self) -> PyResult<WorldMutGuard<'_>> {
         self.runtime.check_write().map_err(asset_runtime_py_error)?;
 
         let gc = self.gc_state.as_ref().map(WorldGcState::suspend);
@@ -294,7 +294,8 @@ impl PyAssets {
         param.into_py_any(cls.py())
     }
 
-    pub fn add(&mut self, asset: Bound<'_, PyAny>) -> PyResult<PyHandle> {
+    pub fn add(&self, asset: Bound<'_, PyAny>) -> PyResult<PyHandle> {
+        self.runtime.check_write().map_err(asset_runtime_py_error)?;
         let py = asset.py();
         let bridge = self.bridge()?;
         self.check_no_live_asset_borrows()?;
@@ -393,7 +394,7 @@ impl PyAssets {
         Ok(true)
     }
 
-    pub fn remove(&mut self, py: Python, id: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
+    pub fn remove(&self, py: Python, id: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
         let id = extract_asset_id_from_any(id)?;
         self.check_id_type(&id)?;
         self.check_no_live_asset_borrows()?;
@@ -442,7 +443,7 @@ impl PyAssets {
         self.wrap_result(py, raw, "from_ref")
     }
 
-    pub fn get_mut(&mut self, py: Python, id: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
+    pub fn get_mut(&self, py: Python, id: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
         let id = extract_asset_id_from_any(id)?;
         self.check_id_type(&id)?;
         self.runtime.check_write().map_err(asset_runtime_py_error)?;

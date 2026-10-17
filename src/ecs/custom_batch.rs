@@ -35,7 +35,7 @@ use super::{
 /// Created via `MyComponent.batch(x=xs, y=ys)` where xs and ys are arrays or
 /// sequences. Stores owned portable columns or normalized NumPy arrays, then
 /// bulk-inserts into wrapper storage during spawn_batch.
-#[pyclass(name = "CustomComponentBatch")]
+#[pyclass(name = "CustomComponentBatch", module = "pybevy.ecs")]
 pub struct PyCustomComponentBatch {
     /// Python class for type identity and registration
     component_cls: Py<PyType>,

@@ -126,6 +126,9 @@ impl CustomComponentRegistry {
     }
 
     /// The storage type a `ComponentId` was registered with, if known.
+    ///
+    /// A `ComponentId`'s storage and schema never change, so read paths use
+    /// these instead of re-deriving them from a live class.
     pub fn storage_type(&self, id: ComponentId) -> Option<ComponentStorageType> {
         self.storage_types.get(&id).copied()
     }
@@ -376,13 +379,10 @@ pub fn register_custom_component_guarded<D: PythonObjectDescriptor>(
         }
     }
 
-    // Drop the orphaned entry from the neutral maps before inserting the fresh
-    // one so lookups don't resolve to a column the new id no longer owns. The
-    // `by_name` entry (if any) is overwritten below.
+    // Unlink the orphaned id from every type identity so lookups resolve to the
+    // fresh id. Its storage and schema stay: they still describe its column.
     if let Some(stale) = evicted {
         let mut reg = world.resource_mut::<CustomComponentRegistry>();
-        reg.storage_types.remove(&stale);
-        reg.wrapper_schemas.remove(&stale);
         let stale_type_ids = reg
             .by_id
             .iter()
@@ -578,8 +578,9 @@ mod tests {
         assert_ne!(a.id(), b.id());
         let reg = world.resource::<CustomComponentRegistry>();
         assert_eq!(reg.get(0x1000), Some(b.id()));
-        // The orphaned id's storage entry is dropped.
-        assert_eq!(reg.storage_type(a.id()), None);
+        // The orphaned id keeps describing its own column.
+        assert_eq!(reg.storage_type(a.id()), Some(w8()));
+        assert_eq!(reg.storage_type(b.id()), Some(pyobj()));
     }
 
     #[test]

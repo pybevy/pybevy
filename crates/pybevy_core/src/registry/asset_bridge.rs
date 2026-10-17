@@ -10,7 +10,10 @@
 use std::any::{Any, TypeId};
 
 use bevy::{
-    asset::{AssetPath, AssetServer, UntypedAssetId, UntypedHandle},
+    asset::{
+        Asset, AssetEvent, AssetLoadFailedEvent, AssetPath, AssetServer, UntypedAssetId,
+        UntypedHandle,
+    },
     ecs::{
         component::ComponentId,
         world::{World, unsafe_world_cell::UnsafeWorldCell},
@@ -29,6 +32,20 @@ pub enum AssetEventRecord {
     LoadedWithDependencies { id: UntypedAssetId },
 }
 
+impl<A: Asset> From<&AssetEvent<A>> for AssetEventRecord {
+    fn from(event: &AssetEvent<A>) -> Self {
+        match event {
+            AssetEvent::Added { id } => Self::Added { id: id.untyped() },
+            AssetEvent::Modified { id } => Self::Modified { id: id.untyped() },
+            AssetEvent::Removed { id } => Self::Removed { id: id.untyped() },
+            AssetEvent::Unused { id } => Self::Unused { id: id.untyped() },
+            AssetEvent::LoadedWithDependencies { id } => {
+                Self::LoadedWithDependencies { id: id.untyped() }
+            }
+        }
+    }
+}
+
 /// A failed asset load, flattened for the type-erased bridge boundary.
 ///
 /// `error` is `AssetLoadError`'s `Display` text: its variants carry loader
@@ -38,6 +55,16 @@ pub struct AssetLoadFailedRecord {
     pub id: UntypedAssetId,
     pub path: AssetPath<'static>,
     pub error: String,
+}
+
+impl<A: Asset> From<&AssetLoadFailedEvent<A>> for AssetLoadFailedRecord {
+    fn from(event: &AssetLoadFailedEvent<A>) -> Self {
+        Self {
+            id: event.id.untyped(),
+            path: event.path.clone(),
+            error: event.error.to_string(),
+        }
+    }
 }
 
 /// Trait that bridges a Bevy asset to its Python wrapper.
@@ -95,6 +122,13 @@ pub trait AssetBridge: Send + Sync + 'static {
         cursor: &mut Option<Box<dyn Any + Send + Sync>>,
     ) -> Vec<AssetEventRecord>;
 
+    /// Read and consume only one event for an incremental Python iterator.
+    fn read_next_event(
+        &self,
+        world: &World,
+        cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+    ) -> Option<AssetEventRecord>;
+
     /// Apply a reader cursor operation to an `AssetEvent<T>` reader's cursor.
     fn event_reader_cursor(
         &self,
@@ -118,6 +152,13 @@ pub trait AssetBridge: Send + Sync + 'static {
         world: &World,
         cursor: &mut Option<Box<dyn Any + Send + Sync>>,
     ) -> Vec<AssetLoadFailedRecord>;
+
+    /// Read and consume only one load failure for an incremental iterator.
+    fn read_next_load_failed_event(
+        &self,
+        world: &World,
+        cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+    ) -> Option<AssetLoadFailedRecord>;
 
     /// Apply a reader cursor operation to an `AssetLoadFailedEvent<T>` reader's cursor.
     fn load_failed_reader_cursor(
@@ -312,6 +353,14 @@ mod tests {
             unreachable!("not exercised by the trait-default tests")
         }
 
+        fn read_next_event(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Option<AssetEventRecord> {
+            None
+        }
+
         fn event_reader_cursor(
             &self,
             _world: &World,
@@ -343,6 +392,14 @@ mod tests {
             _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             unreachable!("not exercised by the trait-default tests")
+        }
+
+        fn read_next_load_failed_event(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Option<AssetLoadFailedRecord> {
+            None
         }
 
         fn load_failed_reader_cursor(
@@ -491,6 +548,14 @@ mod tests {
             unreachable!("not exercised by the registry-key tests")
         }
 
+        fn read_next_event(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Option<AssetEventRecord> {
+            None
+        }
+
         fn event_reader_cursor(
             &self,
             _world: &World,
@@ -522,6 +587,14 @@ mod tests {
             _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             unreachable!("not exercised by the registry-key tests")
+        }
+
+        fn read_next_load_failed_event(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        ) -> Option<AssetLoadFailedRecord> {
+            None
         }
 
         fn load_failed_reader_cursor(

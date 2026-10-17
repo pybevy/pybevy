@@ -3,19 +3,22 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use bevy::ecs::world::World;
 // Re-export base classes from pybevy_core
 pub use pybevy_core::{PyMessage, PyMessageId};
 use pybevy_core::{
     ReaderCursorOp,
     public_error::{
         ASSET_EVENT_NO_DEFAULT, ASSET_EVENT_READ_ONLY, ASSET_LOAD_FAILED_NO_DEFAULT,
-        ASSET_LOAD_FAILED_READ_ONLY, injected_system_parameter, read_only_message_attribute,
+        ASSET_LOAD_FAILED_READ_ONLY, injected_system_parameter, message_copy_type_mismatch,
+        read_only_message_attribute,
     },
     registry::global_registry,
 };
 use pybevy_ecs::shared::{
     message_store::{
-        MessageConsumeOutcome, MessageStoreError, SharedMessageCursor, new_message_cursor,
+        MessageChannelId, MessageConsumeOutcome, MessageStoreError, SharedMessageCursor,
+        new_message_cursor,
     },
     parity_trace::{ParityOpKind, ParityRunHandle, PendingParityOp},
 };
@@ -29,7 +32,7 @@ use pyo3::{
 
 use super::{
     messages::{MessageType, MessageWorld, PyMessages},
-    python_message::{ResolvedPythonMessage, resolve_from_world},
+    python_message::{ResolvedPythonMessage, WeakPythonMessageStore, resolve_from_world},
     world::PyWorld,
 };
 use crate::ecs::{
@@ -49,9 +52,18 @@ fn detached_message<'py>(message: &Bound<'py, PyAny>) -> PyResult<Py<PyAny>> {
     let py = message.py();
     let class = message.get_type();
     if let Some(copy) = class.getattr_opt(intern!(py, "__copy__"))? {
-        return copy.call1((message,)).map(Bound::unbind);
+        let copied = copy.call1((message,))?;
+        if !copied.get_type().is(&class) {
+            return Err(PyTypeError::new_err(message_copy_type_mismatch(
+                &class.name()?.to_string(),
+                &copied.get_type().name()?.to_string(),
+            )));
+        }
+        return Ok(copied.unbind());
     }
-    let copied = class.call_method1(intern!(py, "__new__"), (&class,))?;
+    let copied = py
+        .get_type::<PyMessage>()
+        .call_method1(intern!(py, "__new__"), (&class,))?;
     if let Some(state) = message.getattr_opt(intern!(py, "__dict__"))? {
         copied
             .getattr(intern!(py, "__dict__"))?
@@ -100,7 +112,12 @@ pub enum MessageClass {
     Mutator,
 }
 
-#[pyclass(frozen, from_py_object)]
+#[pyclass(
+    name = "MessageTypeParam",
+    module = "pybevy.ecs",
+    frozen,
+    from_py_object
+)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageTypeParam {
     pub(crate) ty: MessageClass,
@@ -255,7 +272,7 @@ impl PyMessageWriter {
                 let writer = self.python_writer()?;
                 writer
                     .validity
-                    .check_read()
+                    .check_write()
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
                 // Verify the message is an instance of the registered type
                 let msg_type = bound_message.get_type();
@@ -268,13 +285,15 @@ impl PyMessageWriter {
                     )));
                 }
 
+                let copied = detached_message(bound_message)?;
+                writer
+                    .validity
+                    .check_write()
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
                 let id = writer
                     .resolved
                     .store
-                    .append(
-                        writer.resolved.channel,
-                        Arc::new(detached_message(bound_message)?),
-                    )
+                    .append(writer.resolved.channel, Arc::new(copied))
                     .map_err(store_error)?;
                 self.record_trace_op(trace_operation);
                 Ok(PyMessageId::new(
@@ -318,7 +337,7 @@ impl PyMessageWriter {
             let writer = self.python_writer()?;
             writer
                 .validity
-                .check_read()
+                .check_write()
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             let expected_type = writer.resolved.class.bind(py);
             for message in &messages {
@@ -336,6 +355,10 @@ impl PyMessageWriter {
                 .iter()
                 .map(|message| detached_message(message.bind(py)).map(Arc::new))
                 .collect::<PyResult<Vec<_>>>()?;
+            writer
+                .validity
+                .check_write()
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
             let ids: Vec<PyMessageId> = writer
                 .resolved
                 .store
@@ -350,6 +373,30 @@ impl PyMessageWriter {
                 self.record_trace_op(operation);
             }
             return Ok(ids);
+        }
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+        if let MessageType::Dynamic(type_ptr) = &self.message_type {
+            let bridge =
+                global_registry::get_message_bridge_by_py_type(*type_ptr).ok_or_else(|| {
+                    PyTypeError::new_err("Message type not registered in global registry")
+                })?;
+            let operations = messages
+                .iter()
+                .map(|message| self.prepare_trace_op(message.bind(py)))
+                .collect::<PyResult<Vec<_>>>()?;
+            let ids = {
+                let mut world = self.native_world()?.world_mut()?;
+                bridge.write_batch(py, &mut world, &messages)?
+            };
+            for operation in operations {
+                self.record_trace_op(operation);
+            }
+            return Ok(ids
+                .into_iter()
+                .map(|id| PyMessageId::native(bridge.bevy_type_id(), bridge.name(), id))
+                .collect());
         }
         let mut message_ids = Vec::new();
         for message in messages {
@@ -570,7 +617,7 @@ impl PyMessageReader {
                 .map_err(store_error)?;
             return Ok(PyMessageReaderIter {
                 cursor: AtomicUsize::new(0),
-                cached_messages: Vec::new(),
+                native: None,
                 python: Some(PythonMessageIterator {
                     store: reader.resolved.store.clone(),
                     channel: reader.resolved.channel,
@@ -589,12 +636,12 @@ impl PyMessageReader {
             });
         }
 
-        // Native Bevy messages retain their existing eager adapter behavior.
-        let cached_messages = self.native_messages()?.iter_to_python(py)?;
+        let source = self.native_messages()?;
+        source.check_valid()?;
 
         Ok(PyMessageReaderIter {
             cursor: AtomicUsize::new(0),
-            cached_messages,
+            native: Some(source.clone()),
             python: None,
         })
     }
@@ -604,17 +651,16 @@ impl PyMessageReader {
     }
 }
 
-#[pyclass(name = "MessageReaderIter")]
+#[pyclass(name = "MessageReaderIter", module = "pybevy.ecs")]
 pub struct PyMessageReaderIter {
     cursor: AtomicUsize,
-    // Cache all messages at creation time for iteration
-    cached_messages: Vec<Py<PyAny>>,
+    native: Option<PyMessages>,
     python: Option<PythonMessageIterator>,
 }
 
 struct PythonMessageIterator {
-    store: crate::ecs::python_message::WeakPythonMessageStore,
-    channel: pybevy_ecs::shared::message_store::MessageChannelId,
+    store: WeakPythonMessageStore,
+    channel: MessageChannelId,
     cursor: SharedMessageCursor,
     records: Vec<PythonMessageIteratorRecord>,
     validity: ValidityFlag,
@@ -631,8 +677,8 @@ struct PythonMessageIteratorRecord {
 impl PyMessageReaderIter {
     /// Report held Python objects to the cyclic GC; see docs/safety.md.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        for message in &self.cached_messages {
-            visit.call(message)?;
+        if let Some(source) = &self.native {
+            source.message_type.traverse(&visit)?;
         }
         if let Some(iterator) = &self.python {
             for record in &iterator.records {
@@ -647,6 +693,11 @@ impl PyMessageReaderIter {
     }
 
     pub fn __next__(&self, py: Python) -> PyResult<Py<PyAny>> {
+        if let Some(source) = &self.native {
+            return source
+                .next_to_python(py)?
+                .ok_or_else(|| PyStopIteration::new_err(""));
+        }
         if let Some(iterator) = &self.python {
             iterator
                 .validity
@@ -679,13 +730,7 @@ impl PyMessageReaderIter {
                 }
             }
         }
-        let index = self.cursor.fetch_add(1, Ordering::Relaxed);
-
-        if index < self.cached_messages.len() {
-            Ok(self.cached_messages[index].clone_ref(py))
-        } else {
-            Err(PyStopIteration::new_err(""))
-        }
+        Err(PyStopIteration::new_err(""))
     }
 }
 
@@ -867,7 +912,7 @@ impl PyMessageMutator {
 /// Write a Python message to its App-local custom channel.
 /// Called from external crates via `global_registry::write_python_message`.
 fn write_custom_python_message(
-    world: &mut bevy::ecs::world::World,
+    world: &mut World,
     _py: Python,
     msg: &Bound<'_, PyAny>,
 ) -> PyResult<()> {

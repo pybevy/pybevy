@@ -23,16 +23,18 @@ pub use batch_bridge::{
 };
 pub use batchable_field::{
     BatchFieldMeta, BatchableField, batch_field_meta_for, batch_integer_column_of,
-    check_batch_field, field_type_of, set_field_from_numpy,
+    check_batch_field, check_integer_batch_field, field_type_of, set_field_from_integers,
+    set_field_from_numpy,
 };
 pub use component_bridge::{ComponentBridge, ExtractFn};
 pub use global_registry::{ComponentBatchInsertFn, ComponentBatchMeta, ComponentBatchPrepareFn};
 pub use message_bridge::{
-    MessageBridge, ReaderCursorOp, apply_cursor_op, apply_reader_cursor, register_native_message,
+    MessageBridge, ReaderCursorOp, apply_cursor_op, apply_reader_cursor, read_next_message,
+    register_native_message, write_native_message_batch,
 };
 pub use registries::PluginConfigs;
 pub use resource_bridge::ResourceBridge;
 pub use rust_batch::{
-    PyRustComponentBatch, check_f32_integer_batch_column, check_integer_batch_column,
+    PyRustComponentBatch, check_integer_batch_column, integer_batch_column,
     portable_f32_batch_column,
 };
