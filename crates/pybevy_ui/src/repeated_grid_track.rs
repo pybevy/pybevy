@@ -5,16 +5,23 @@ use bevy::{
 use pybevy_core::{
     FieldStorage,
     domain::{FINITE, check_for},
-    public_error::grid_template_track_type,
+    public_error::{REPEATED_GRID_TRACK_EMPTY, grid_template_track_type},
 };
-use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
+use pyo3::{
+    exceptions::{PyTypeError, PyValueError},
+    prelude::*,
+    types::PyList,
+};
 
 use crate::{
     grid_track::{PyGridTrack, grid_track_factory},
     grid_track_repetition::{PyGridTrackRepetition, extract_grid_track_repetition_from_any},
+    track_sizing_function::{
+        PyMaxTrackSizingFunction, PyMinTrackSizingFunction, checked_max, checked_min,
+    },
 };
 
-const REPEATED_FACTORIES: [&str; 11] = [
+const REPEATED_FACTORIES: [&str; 15] = [
     "px",
     "percent",
     "em",
@@ -26,6 +33,10 @@ const REPEATED_FACTORIES: [&str; 11] = [
     "max_content",
     "fit_content_px",
     "fit_content_percent",
+    "vmin",
+    "vmax",
+    "vh",
+    "vw",
 ];
 
 fn repeated_grid_track_repr(track: &RepeatedGridTrack) -> Option<String> {
@@ -226,6 +237,74 @@ impl PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_percent(
                 repetition,
                 check_for::<Self, _>("fit_content_percent", limit, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn minmax(
+        repetition: &Bound<'_, PyAny>,
+        min: PyMinTrackSizingFunction,
+        max: PyMaxTrackSizingFunction,
+    ) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::minmax(
+                extract_grid_track_repetition_from_any(repetition)?,
+                checked_min(min)?,
+                checked_max(max)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn vmin(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::vmin(
+                extract_grid_track_repetition_from_any(repetition)?,
+                check_for::<Self, _>("vmin", value, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn vmax(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::vmax(
+                extract_grid_track_repetition_from_any(repetition)?,
+                check_for::<Self, _>("vmax", value, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn vh(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::vh(
+                extract_grid_track_repetition_from_any(repetition)?,
+                check_for::<Self, _>("vh", value, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn vw(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::vw(
+                extract_grid_track_repetition_from_any(repetition)?,
+                check_for::<Self, _>("vw", value, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn repeat_many(repetition: &Bound<'_, PyAny>, tracks: Vec<PyGridTrack>) -> PyResult<Self> {
+        if tracks.is_empty() {
+            return Err(PyValueError::new_err(REPEATED_GRID_TRACK_EMPTY));
+        }
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::repeat_many(
+                extract_grid_track_repetition_from_any(repetition)?,
+                tracks.into_iter().map(GridTrack::from).collect::<Vec<_>>(),
             ),
         })
     }

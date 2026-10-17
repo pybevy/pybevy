@@ -371,8 +371,11 @@ class Image(Asset):
 
         Raises:
             ValueError: If width or height is not a positive 32-bit integer,
-                width * height exceeds 2**32 - 1, or the format cannot be used
-                for a render target.
+                width * height exceeds 2**32 - 1, or the format is not a float,
+                unorm or snorm colour format: integer, depth, stencil,
+                compressed and `Rgb9e5Ufloat` formats cannot be camera targets.
+                A camera whose image target has such a format (an image built
+                another way) is deactivated with a logged error.
 
         Example:
             >>> # Create a render target for post-processing
@@ -1531,20 +1534,44 @@ class ImageLoaderSettings:
         self,
         *,
         format: ImageFormatSetting = ...,
+        texture_format: TextureFormat | None = None,
         is_srgb: bool = True,
         sampler: ImageSampler = ImageSampler.Default(),
+        asset_usage: RenderAssetUsages = ...,
+        array_layout: ImageArrayLayout | None = None,
         expand_grayscale: bool = True
     ) -> None:
         """Create new image loader settings.
 
         Args:
             format: How the image format is chosen (default: ImageFormatSetting.FromExtension()).
+                Use ImageFormatSetting.Guess() for paths without a file extension.
+            texture_format: Force this texture format for the loaded data, for
+                example R16Snorm for R16Uint data sampled as floats (default: None).
             is_srgb: Whether to interpret image data as sRGB (default: True).
             sampler: Sampler to use for the loaded image (default: Default sampler).
+            asset_usage: Where the loaded image is kept (default: RenderAssetUsages.default()).
+            array_layout: Interpret the image as a 2D array texture, from a vertical
+                stack or a grid of tiles (default: None). Every count and pixel size
+                must be at least 1; ValueError otherwise.
             expand_grayscale: Whether grayscale images expand to RGBA. When False they
                 load as R8Unorm, Rg8Unorm, R16Unorm or Rg16Unorm and is_srgb is ignored
                 (default: True).
         """
+
+    @property
+    def texture_format(self) -> TextureFormat | None:
+        """The texture format forced on the loaded data, or None."""
+
+    @texture_format.setter
+    def texture_format(self, value: TextureFormat | None) -> None: ...
+
+    @property
+    def array_layout(self) -> ImageArrayLayout | None:
+        """How the image is split into array layers, or None."""
+
+    @array_layout.setter
+    def array_layout(self, value: ImageArrayLayout | None) -> None: ...
 
     @property
     def is_srgb(self) -> bool:

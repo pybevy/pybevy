@@ -12,7 +12,8 @@ use bevy::{
 };
 use pybevy_core::public_error::{
     SCREENSHOT_CAMERA3D_REQUIRED, TURNAROUND_CAMERA3D_REQUIRED, capture_inactive_cameras,
-    capture_no_camera, capture_no_target, capture_target_exceeds_gpu_limit,
+    capture_no_camera, capture_no_target, capture_readback_exceeds_gpu_limit,
+    capture_target_exceeds_gpu_limit,
 };
 
 use crate::{
@@ -121,17 +122,32 @@ pub(super) fn oversized_target_error(
     let RenderTarget::Image(target) = target else {
         return None;
     };
-    let limit = world
-        .get_resource::<RenderDevice>()?
-        .limits()
-        .max_texture_dimension_2d;
+    let limits = world.get_resource::<RenderDevice>()?.limits();
     let image = world.get_resource::<Assets<Image>>()?.get(&target.handle)?;
     let (width, height) = (image.width(), image.height());
-    (width > limit || height > limit).then(|| {
-        ControlError::invalid_params(capture_target_exceeds_gpu_limit(
-            operation, width, height, limit,
+    let limit = limits.max_texture_dimension_2d;
+    if width > limit || height > limit {
+        return Some(ControlError::invalid_params(
+            capture_target_exceeds_gpu_limit(operation, width, height, limit),
+        ));
+    }
+    let pixel_size = image.texture_descriptor.format.block_copy_size(None)?;
+    let readback = readback_bytes(width, height, pixel_size);
+    (readback > limits.max_buffer_size).then(|| {
+        ControlError::invalid_params(capture_readback_exceeds_gpu_limit(
+            operation,
+            width,
+            height,
+            readback,
+            limits.max_buffer_size,
         ))
     })
+}
+
+/// Bevy's screenshot readback pads each row to wgpu's 256-byte copy alignment.
+fn readback_bytes(width: u32, height: u32, pixel_size: u32) -> u64 {
+    let row = u64::from(width) * u64::from(pixel_size);
+    row.div_ceil(256) * 256 * u64::from(height)
 }
 
 pub(super) fn selected_camera_screenshot_target(
@@ -425,6 +441,13 @@ mod tests {
             make_test_image, spawn_structurally_valid_headless_camera, world_with_gizmos,
         },
     };
+
+    #[test]
+    fn readback_rows_are_padded_to_the_copy_alignment() {
+        assert_eq!(readback_bytes(64, 2, 4), 512);
+        assert_eq!(readback_bytes(65, 2, 4), 1024);
+        assert_eq!(readback_bytes(30_000, 30_000, 16), 14_400_000_000);
+    }
 
     #[test]
     fn capture_camera_validation_distinguishes_missing_inactive_and_target_errors() {
@@ -962,6 +985,7 @@ mod tests {
                 response_kind: CaptureResponseKind::Screenshot,
                 baseline_headless_sequence: None,
                 frames_waited: 0,
+                required_render_epoch: None,
             }],
         });
         world.insert_resource(PendingScreenshots::default());

@@ -52,6 +52,7 @@ use pybevy_render::{
     cache_cleanup::RenderCacheCleanupPlugin,
     pipeline_drain::{PipelineCompilationDrainPlugin, drain_app_pipeline_compilation},
     shadow_map_limits::ShadowMapLimitPlugin,
+    target_format_guard::TargetFormatGuardPlugin,
     upload_guard::UploadGuardPlugin,
 };
 use pyo3::{
@@ -967,6 +968,7 @@ impl PyApp {
             PipelineCompilationDrainPlugin,
             ShadowMapLimitPlugin,
             UploadGuardPlugin,
+            TargetFormatGuardPlugin,
         ));
         // Reload can configure agents without the App, so capture readiness is always present.
 

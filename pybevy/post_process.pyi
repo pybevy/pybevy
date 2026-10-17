@@ -84,7 +84,13 @@ class Bloom(Component):
 
     @property
     def max_mip_dimension(self) -> int:
-        """Largest bloom mip dimension, in pixels; 8 to 16384."""
+        """Largest bloom mip dimension, in pixels; 8 to 16384.
+
+        The mip texture is `round(width * max_mip_dimension / height)` texels wide
+        for the camera's viewport, and must fit the GPU's 2D texture limit
+        (commonly 16384 or 32768). Lower the value for very wide viewports, such
+        as an 8192x64 target; otherwise the camera renders black with wgpu errors.
+        """
 
     @max_mip_dimension.setter
     def max_mip_dimension(self, value: int) -> None:

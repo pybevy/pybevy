@@ -176,6 +176,18 @@ pub fn capture_target_exceeds_gpu_limit(
     )
 }
 
+pub fn capture_readback_exceeds_gpu_limit(
+    operation: &str,
+    width: u32,
+    height: u32,
+    bytes: u64,
+    limit: u64,
+) -> String {
+    format!(
+        "{operation} target image is {width}x{height}, whose {bytes}-byte readback exceeds this GPU's maximum buffer size of {limit}; use a smaller target or a format with fewer bytes per pixel"
+    )
+}
+
 pub fn camera_main_texture_usages_invalid(usages: &str) -> String {
     format!(
         "CameraMainTextureUsages must include RENDER_ATTACHMENT and TEXTURE_BINDING and must not include TRANSIENT_ATTACHMENT (got {usages})"
@@ -342,6 +354,12 @@ pub fn reload_schedule_rejected(schedule: &str, detail: &str) -> String {
 
 pub const WGPU_VALIDATION_FRAME_HINT: &str = "A pipeline that fails wgpu validation stays in use and invalidates the command encoder recording it, so the whole frame can render black, not just the affected mesh. Prepass and shadow pipelines lack forward-only view bindings such as bevy_pbr::mesh_view_bindings::globals. Fix the named pipeline's shader, then reload; get_last_error reports these errors under wgpu_validation.";
 
+pub fn wgpu_out_of_memory_log(message: &str) -> String {
+    format!(
+        "wgpu out of memory (non-fatal): the GPU could not allocate a resource, so the texture or buffer that needed it is unusable and frames that use it can render black. Reduce the size that created it (a shadow map, LUT, render target, image or buffer), then reload; get_last_error reports it under wgpu_validation.\n{message}"
+    )
+}
+
 pub fn wgpu_validation_log(label: Option<&str>, is_pipeline: bool, message: &str) -> String {
     let subject = match (label, is_pipeline) {
         (Some(label), true) => format!("pipeline '{label}'"),
@@ -507,6 +525,10 @@ pub fn mcp_enum_component_unknown_fields(
         "Failed to set '{component}': {subject}. Enum components use the synthetic 'variant' field: {{\"variant\": \"<name>\"}}. Allowed variants: {}.",
         variants.join(", ")
     )
+}
+
+pub fn run_code_output_truncated(omitted: usize) -> String {
+    format!("[run_code output truncated: {omitted} characters omitted]")
 }
 
 pub const RUN_CODE_EXECUTION_DEADLINE: &str = "run_code exceeded its execution deadline";
@@ -815,6 +837,8 @@ pub fn message_copy_type_mismatch(expected: &str, actual: &str) -> String {
     format!("Message copy must return {expected}, got {actual}")
 }
 
+pub const WINDOW_EVENT_NO_DEFAULT: &str =
+    "WindowEvent has no default value; write a variant such as WindowEvent.CursorMoved";
 pub const MESSAGE_RESOURCE_NOT_INITIALIZED: &str = "Messages resource not initialized for this message type. Ensure the plugin providing this message is added before writing.";
 
 pub const RESOURCE_BRIDGE_NOT_FOUND: &str = "Resource bridge not found for dynamic type";
@@ -1025,6 +1049,9 @@ pub fn missing_gizmo_config_group(name: &str) -> String {
     )
 }
 /// Keeps PyO3's "is not an instance of" wording, which MCP reads to find the element class.
+pub const REPEATED_GRID_TRACK_EMPTY: &str =
+    "RepeatedGridTrack.repeat_many needs at least one GridTrack, like CSS repeat()";
+
 pub fn grid_template_track_type(type_name: &str) -> String {
     format!("'{type_name}' object is not an instance of 'RepeatedGridTrack' or 'GridTrack'")
 }
@@ -1818,6 +1845,10 @@ pub const IMAGE_NO_DATA: &str = "Image has no data";
 
 pub const RENDER_CREATION_MANUAL_UNSUPPORTED: &str = "RenderCreation.Manual carries live GPU device handles and cannot be represented in Python; use RenderCreation.Automatic(WgpuSettings(...))";
 pub const IMAGE_INVALID_PIXEL_COORDINATES: &str = "Invalid pixel coordinates or no image data";
+
+pub fn image_array_layout_zero(field: &str) -> String {
+    format!("ImageArrayLayout.{field} must be at least 1 and fit in a u32")
+}
 
 pub fn image_allocation_failed(byte_len: usize) -> String {
     format!("cannot allocate {byte_len} bytes of image data")

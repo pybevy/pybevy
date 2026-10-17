@@ -77,7 +77,7 @@ pub enum DiagnosticCode {
     W013,
     /// W014: shared-borrow proxy type takes a mutable borrow of itself
     W014,
-    /// W015: payload-free immutable value enum omits upstream-supported hashing
+    /// W015: immutable value type omits upstream-supported hashing
     W015,
     /// W016: pyclass declares no `module = "pybevy...."`, so `__module__` is
     /// `builtins`
@@ -153,6 +153,8 @@ pub enum DiagnosticCode {
     W041,
     /// W042: exposed enum variant shape or payload type differs from Bevy
     W042,
+    /// W043: class defines `__copy__` but no `__deepcopy__`
+    W043,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -223,6 +225,7 @@ impl DiagnosticCode {
             DiagnosticCode::W040 => "W040",
             DiagnosticCode::W041 => "W041",
             DiagnosticCode::W042 => "W042",
+            DiagnosticCode::W043 => "W043",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -288,7 +291,8 @@ impl DiagnosticCode {
             | DiagnosticCode::W039
             | DiagnosticCode::W040
             | DiagnosticCode::W041
-            | DiagnosticCode::W042 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W042
+            | DiagnosticCode::W043 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -343,9 +347,7 @@ impl DiagnosticCode {
             DiagnosticCode::W014 => {
                 "shared-borrow proxy takes a mutable borrow of itself (re-entrant borrow panics)"
             }
-            DiagnosticCode::W015 => {
-                "payload-free immutable value enum omits upstream-supported hashing"
-            }
+            DiagnosticCode::W015 => "immutable value type omits upstream-supported hashing",
             DiagnosticCode::W016 => "pyclass declares no module, so __module__ is builtins",
             DiagnosticCode::W017 => {
                 "field-derived constructor parameter accepts None but the Bevy field is not optional"
@@ -397,6 +399,7 @@ impl DiagnosticCode {
             DiagnosticCode::W040 => "Bevy enum wrapped as an ordinary class",
             DiagnosticCode::W041 => "wrapper lacks a Bevy contract trait method",
             DiagnosticCode::W042 => "enum variant shape or payload type differs from Bevy",
+            DiagnosticCode::W043 => "__copy__ without __deepcopy__",
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",
             DiagnosticCode::T003 => "member not tested",

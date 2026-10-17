@@ -41,5 +41,13 @@ available at their recorded paths. Keep a strong handle in a component, resource
 or live Python variable while an asset is needed; an `AssetId` alone does not
 keep it loaded.
 
+Loading a `.scn.ron` writes component values through Bevy's reflection and
+does not run PyBevy's value checks. A hand-edited or generated file can
+therefore load values that constructors and setters reject, such as
+`Bloom.max_mip_dimension = 1` or a negative `PointLight.radius`, and the
+defects those checks prevent (a black camera, unlit surfaces) return. Validate
+generated scene files before loading them, or reassign suspect fields through
+their setters after spawning.
+
 These APIs require exclusive `World` access. Do not retain an injected `World`
 parameter after its callback or system finishes.

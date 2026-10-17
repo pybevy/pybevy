@@ -4,8 +4,10 @@ GPU rendering without a window or display server - for CI, remote servers, conta
 
 `capture_screenshot` and `capture_stats` with `position` work in a scene with
 no camera: they render through a temporary `Camera3d` with a 768x432 image
-target and remove both afterwards. Author a camera with an image target for
-another resolution or projection.
+target and remove both afterwards. The capture waits until the pipelines that
+camera needs have compiled, so the first answer shows the scene rather than
+the clear colour. Author a camera with an image target for another resolution
+or projection.
 
 `Image.new_render_target` creates an RGBA8 sRGB target with `TEXTURE_BINDING`,
 `COPY_SRC`, `COPY_DST`, and `RENDER_ATTACHMENT`. It is a convenience for
@@ -212,7 +214,9 @@ A camera's first readback frame can be blank (all zeros), because Bevy does not 
 
 A capture whose image target is wider or taller than the GPU's 2D texture
 limit (commonly 8192 or 16384) fails at once with an error naming the size and
-the limit, since the GPU rejects such a texture and nothing renders into it. If
+the limit, since the GPU rejects such a texture and nothing renders into it.
+A target whose readback (rows padded to 256 bytes, times the height) exceeds
+the GPU's maximum buffer size fails the same way, naming both sizes. If
 the GPU rejects a render target or its readback buffer for another reason,
 PyBevy logs the mapping error and disables readback for that camera. Capture may
 then time out; use a target within the device's supported dimensions and restart

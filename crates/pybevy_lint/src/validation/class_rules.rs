@@ -437,52 +437,38 @@ pub fn validate_match_args_conformance(rust: &PyClassDef, python: &PyClassDef) -
     diagnostics
 }
 
-/// Flags payload-free immutable value enums that omit Python hashing even
-/// though both the wrapper and upstream contracts define compatible values.
-pub fn validate_enum_hashability(rust: &PyClassDef, bevy: &BevyItem) -> Vec<Diagnostic> {
-    let ordinary_pyenum = matches!(
-        &rust.macro_info,
-        Some(MacroInfo::BevyEnum {
-            manual: false,
-            message: false,
-            component: false,
-            resource: false,
-            ..
-        })
-    );
-    // Legacy plain `#[pyclass]` enums with a resolved upstream enum get the same
-    // parity check; the upstream resolution is the guard against non-Bevy enums.
-    let ordinary = ordinary_pyenum || rust.macro_info.is_none();
+/// Flags immutable value wrappers (payload-free enums and frozen structs) that
+/// omit Python hashing even though both the wrapper and upstream contracts
+/// define compatible values.
+pub fn validate_value_hashability(rust: &PyClassDef, bevy: &BevyItem) -> Vec<Diagnostic> {
     let upstream_hashes = bevy
         .trait_impls
         .iter()
         .any(|trait_name| trait_name == "Hash" || trait_name.ends_with("::Hash"));
-    let payload_free = !rust.enum_variants.is_empty()
-        && rust.enum_variants.iter().all(|variant| {
-            matches!(
-                variant.kind,
-                EnumVariantKind::Unit | EnumVariantKind::EmptyTuple
-            )
-        });
     let wrapper_hashes = rust.hash || rust.methods.iter().any(|method| method.name == "__hash__");
-
-    if !ordinary
-        || !rust.is_enum
-        || bevy.kind != BevyItemKind::Enum
-        || !rust.frozen
-        || !rust.eq
-        || rust.eq_int
-        || !payload_free
-        || !upstream_hashes
-        || wrapper_hashes
-    {
+    if !rust.frozen || !rust.eq || rust.eq_int || !upstream_hashes || wrapper_hashes {
+        return Vec::new();
+    }
+    let eligible = match &rust.macro_info {
+        // Component, resource and message enums can be live views of changing values.
+        Some(MacroInfo::BevyEnum {
+            manual,
+            message,
+            component,
+            resource,
+            ..
+        }) => !(*manual || *message || *component || *resource) && is_payload_free_enum(rust, bevy),
+        None if rust.is_enum => is_payload_free_enum(rust, bevy),
+        None => matches!(bevy.kind, BevyItemKind::Struct | BevyItemKind::Enum),
+    };
+    if !eligible {
         return Vec::new();
     }
 
     let mut diagnostic = Diagnostic::warning(
         DiagnosticCode::W015,
         format!(
-            "payload-free immutable value enum '{}' has value equality and upstream Hash but omits Python hashing",
+            "immutable value type '{}' has value equality and upstream Hash but omits Python hashing",
             rust.python_name
         ),
     )
@@ -497,6 +483,18 @@ pub fn validate_enum_hashability(rust: &PyClassDef, bevy: &BevyItem) -> Vec<Diag
     }
 
     vec![diagnostic]
+}
+
+fn is_payload_free_enum(rust: &PyClassDef, bevy: &BevyItem) -> bool {
+    rust.is_enum
+        && bevy.kind == BevyItemKind::Enum
+        && !rust.enum_variants.is_empty()
+        && rust.enum_variants.iter().all(|variant| {
+            matches!(
+                variant.kind,
+                EnumVariantKind::Unit | EnumVariantKind::EmptyTuple
+            )
+        })
 }
 
 /// Flags wrappers that expose Python hashing while the resolved upstream type

@@ -131,3 +131,34 @@ pub fn validate_protocols(
     }
     diagnostics
 }
+
+/// Report a class whose `copy.copy` works but whose `copy.deepcopy` falls back to pickling.
+pub fn validate_copy_pairing(
+    class: &PyClassDef,
+    classes: &[PyClassDef],
+    native: bool,
+) -> Vec<Diagnostic> {
+    let Some(copy) = class
+        .methods
+        .iter()
+        .find(|method| method.name == "__copy__")
+    else {
+        return Vec::new();
+    };
+    if has_protocol(class, "__deepcopy__", classes, native) {
+        return Vec::new();
+    }
+    let side = if native { "pyclass" } else { "stub class" };
+    let mut diagnostic = Diagnostic::warning(
+        DiagnosticCode::W043,
+        format!(
+            "{side} '{}' defines __copy__ but no __deepcopy__",
+            class.python_name
+        ),
+    )
+    .with_note("copy.deepcopy then falls back to pickling and raises TypeError; add __deepcopy__(memo) returning the same copy");
+    if let Some(location) = &copy.location {
+        diagnostic = diagnostic.with_location(location.clone());
+    }
+    vec![diagnostic]
+}

@@ -13,6 +13,7 @@ pub mod readback;
 pub mod render_creation;
 pub mod shader_buffer;
 pub mod shadow_map_limits;
+pub mod target_format_guard;
 pub mod temporal_jitter;
 pub mod texture_aspect;
 pub mod texture_descriptor;

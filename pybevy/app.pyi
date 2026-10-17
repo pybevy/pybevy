@@ -464,6 +464,12 @@ class App:
     `update()`, `run()`, or `run_schedule()`. Discard the App afterward:
     bevy takes a schedule out of the world to run it and puts it back only
     on success, so that schedule is gone and later calls skip it or panic.
+
+    An App belongs to the thread that created it. Systems run on worker
+    threads, so calling `update()`, `run()` or `add_systems()` from a system,
+    condition or observer, or from another Python thread, raises PyO3's
+    `PanicException`, which `except Exception` does not catch. Change the world
+    through the system's parameters or Commands instead.
     """
 
     def __init__(self) -> None: ...

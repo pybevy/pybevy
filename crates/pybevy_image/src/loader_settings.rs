@@ -1,18 +1,57 @@
 use bevy::{
     asset::RenderAssetUsages,
-    image::{ImageFormatSetting, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor},
+    image::{
+        ImageArrayLayout, ImageFormatSetting, ImageLoaderSettings, ImageSampler,
+        ImageSamplerDescriptor,
+    },
 };
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, Omittable, StorageRef, computed_owned,
-    enum_comparison::compare_values, public_error::enum_variant_changed,
+    enum_comparison::compare_values,
+    public_error::{enum_variant_changed, image_array_layout_zero},
 };
 use pybevy_macros::{pyenum, pyfield};
-use pyo3::{exceptions::PyRuntimeError, prelude::*, pyclass::CompareOp, types::PyTuple};
+use pybevy_render::texture_format::PyTextureFormat;
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+    pyclass::CompareOp,
+    types::PyTuple,
+};
 
 use crate::{
-    image::PyRenderAssetUsages, image_format_setting::PyImageFormatSetting,
-    sampler_descriptor::PyImageSamplerDescriptor,
+    image::PyRenderAssetUsages, image_array_layout::PyImageArrayLayout,
+    image_format_setting::PyImageFormatSetting, sampler_descriptor::PyImageSamplerDescriptor,
 };
+
+/// Bevy's loader divides the image size by these values, so zero panics it.
+fn checked_array_layout(layout: Option<PyImageArrayLayout>) -> PyResult<Option<ImageArrayLayout>> {
+    let Some(layout) = layout else {
+        return Ok(None);
+    };
+    let layout = ImageArrayLayout::from(layout);
+    let zero = match layout {
+        ImageArrayLayout::RowCount { rows } => (rows == 0).then_some("rows"),
+        ImageArrayLayout::RowHeight { pixels } => (pixels == 0).then_some("pixels"),
+        ImageArrayLayout::GridCount { columns, rows } => (columns == 0)
+            .then_some("columns")
+            .or((rows == 0).then_some("rows"))
+            .or(columns
+                .checked_mul(rows)
+                .is_none()
+                .then_some("columns * rows")),
+        ImageArrayLayout::GridSize {
+            tile_width_pixels,
+            tile_height_pixels,
+        } => (tile_width_pixels == 0)
+            .then_some("tile_width_pixels")
+            .or((tile_height_pixels == 0).then_some("tile_height_pixels")),
+    };
+    match zero {
+        Some(field) => Err(PyValueError::new_err(image_array_layout_zero(field))),
+        None => Ok(Some(layout)),
+    }
+}
 
 #[pyenum(ImageSampler, manual)]
 #[pyclass(
@@ -279,14 +318,21 @@ impl PyImageLoaderSettings {
     #[pyo3(signature = (
         *,
         format = Omittable::default(),
+        texture_format = None,
         is_srgb = true,
         sampler = PyImageSampler::from(ImageSampler::Default),
+        asset_usage = PyRenderAssetUsages::from(RenderAssetUsages::default()),
+        array_layout = None,
         expand_grayscale = true
     ))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         format: Omittable<PyRef<'_, PyImageFormatSetting>>,
+        texture_format: Option<PyTextureFormat>,
         is_srgb: bool,
         sampler: PyImageSampler,
+        asset_usage: PyRenderAssetUsages,
+        array_layout: Option<PyImageArrayLayout>,
         expand_grayscale: bool,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(ImageLoaderSettings {
@@ -295,13 +341,39 @@ impl PyImageLoaderSettings {
                 .map_or(ImageFormatSetting::FromExtension, |format| {
                     (*format).clone().into()
                 }),
-            texture_format: None,
+            texture_format: texture_format.map(Into::into),
             is_srgb,
             sampler: ImageSampler::try_from(sampler)?,
-            asset_usage: RenderAssetUsages::default(),
-            array_layout: None,
+            asset_usage: RenderAssetUsages::try_from(asset_usage)?,
+            array_layout: checked_array_layout(array_layout)?,
             expand_grayscale,
         }))
+    }
+
+    #[getter]
+    pub fn texture_format(&self) -> PyResult<Option<PyTextureFormat>> {
+        self.as_ref()?
+            .texture_format
+            .map(PyTextureFormat::try_from)
+            .transpose()
+    }
+
+    #[setter]
+    pub fn set_texture_format(&mut self, value: Option<PyTextureFormat>) -> PyResult<()> {
+        self.as_mut()?.texture_format = value.map(Into::into);
+        Ok(())
+    }
+
+    #[getter]
+    pub fn array_layout(&self) -> PyResult<Option<PyImageArrayLayout>> {
+        Ok(self.as_ref()?.array_layout.map(Into::into))
+    }
+
+    #[setter]
+    pub fn set_array_layout(&mut self, value: Option<PyImageArrayLayout>) -> PyResult<()> {
+        let layout = checked_array_layout(value)?;
+        self.as_mut()?.array_layout = layout;
+        Ok(())
     }
 
     #[getter]
@@ -369,8 +441,16 @@ impl PyImageLoaderSettings {
 
     pub fn __repr__(&self) -> PyResult<String> {
         let settings = self.as_ref()?;
+        let texture_format = match settings.texture_format {
+            Some(format) => format!("TextureFormat.{format:?}"),
+            None => "None".to_string(),
+        };
+        let array_layout = match settings.array_layout {
+            Some(layout) => PyImageArrayLayout::from(layout).__repr__(),
+            None => "None".to_string(),
+        };
         Ok(format!(
-            "ImageLoaderSettings(format={}, is_srgb={}, sampler={}, expand_grayscale={})",
+            "ImageLoaderSettings(format={}, texture_format={texture_format}, is_srgb={}, sampler={}, array_layout={array_layout}, expand_grayscale={})",
             PyImageFormatSetting::from(settings.format.clone()).__repr__(),
             if settings.is_srgb { "True" } else { "False" },
             PyImageSampler::from(settings.sampler.clone()).__repr__()?,
