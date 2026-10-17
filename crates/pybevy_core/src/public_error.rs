@@ -352,6 +352,10 @@ pub fn reload_schedule_rejected(schedule: &str, detail: &str) -> String {
     )
 }
 
+pub const CAPTURE_WGPU_ERRORS_WARNING: &str = "wgpu reported validation or out-of-memory errors while this capture was in flight, so the image can be incomplete or black; get_last_error lists them under wgpu_validation.";
+
+pub const WGPU_VALIDATION_OBJECT_HINT: &str = "The GPU operation that used this object was skipped, so frames that depend on it can render incomplete or black. get_last_error reports these errors under wgpu_validation.";
+
 pub const WGPU_VALIDATION_FRAME_HINT: &str = "A pipeline that fails wgpu validation stays in use and invalidates the command encoder recording it, so the whole frame can render black, not just the affected mesh. Prepass and shadow pipelines lack forward-only view bindings such as bevy_pbr::mesh_view_bindings::globals. Fix the named pipeline's shader, then reload; get_last_error reports these errors under wgpu_validation.";
 
 pub fn wgpu_out_of_memory_log(message: &str) -> String {
@@ -366,9 +370,12 @@ pub fn wgpu_validation_log(label: Option<&str>, is_pipeline: bool, message: &str
         (Some(label), false) => format!("'{label}'"),
         (None, _) => "an unlabeled wgpu object".to_string(),
     };
-    format!(
-        "wgpu validation error in {subject} (non-fatal): {WGPU_VALIDATION_FRAME_HINT}\n{message}"
-    )
+    let hint = if is_pipeline {
+        WGPU_VALIDATION_FRAME_HINT
+    } else {
+        WGPU_VALIDATION_OBJECT_HINT
+    };
+    format!("wgpu validation error in {subject} (non-fatal): {hint}\n{message}")
 }
 
 pub const RELOAD_NAME_ERROR_HINT: &str = "NameError: A variable or import is missing. Check if you need to add an import (e.g., `from pybevy.prelude import *`) or if a variable name is misspelled.";

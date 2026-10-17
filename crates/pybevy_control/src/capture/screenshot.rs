@@ -10,6 +10,7 @@ use bevy::{
     render::view::window::screenshot::{Screenshot, ScreenshotCaptured},
 };
 use image::{ImageFormat, RgbImage, imageops::crop_imm};
+use pybevy_core::{gpu_validation::WgpuValidationErrorState, public_error};
 use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
@@ -187,6 +188,7 @@ pub fn process_pending_screenshots(world: &mut World) {
         }
 
         let mut hold = CaptureHold::with_gizmo_restore(mem::take(&mut screenshot.gizmo_restore));
+        hold.wgpu_error_baseline = screenshot.wgpu_error_baseline;
         let selected_depth_camera = screenshot
             .depth_analysis
             .as_ref()
@@ -446,7 +448,12 @@ pub fn process_pending_screenshots(world: &mut World) {
                 } else {
                     // Headless fallback
                     let result = capture_headless_frame(world, s.max_width, s.response_kind);
-                    let result = merge_extra_response(result, s.extra_response);
+                    let mut result = merge_extra_response(result, s.extra_response);
+                    report_wgpu_errors(
+                        &mut result,
+                        s.hold.wgpu_error_baseline,
+                        world.get_resource::<WgpuValidationErrorState>(),
+                    );
                     let _ = s.response_tx.send(result);
                     s.hold.release(world);
                 }
@@ -525,6 +532,7 @@ pub fn screenshot_captured_observer(
     mut turnaround_captures: ResMut<TurnaroundCaptures>,
     mut captured_frames: ResMut<CapturedFrames>,
     hot_reload_generation: Option<Res<HotReloadGeneration>>,
+    wgpu_errors: Option<Res<WgpuValidationErrorState>>,
     mut commands: Commands,
 ) {
     let entity = trigger.entity;
@@ -584,9 +592,44 @@ pub fn screenshot_captured_observer(
         &mut captured_frames,
         hot_reload_generation.map(|generation| generation.current),
     );
-    let result = merge_extra_response(result, responder.extra_response);
+    let mut result = merge_extra_response(result, responder.extra_response);
+    report_wgpu_errors(
+        &mut result,
+        responder.hold.wgpu_error_baseline,
+        wgpu_errors.as_deref(),
+    );
     let _ = responder.response_tx.send(result);
     responder.hold.queue_release(&mut commands);
+}
+
+/// Names the wgpu validation errors recorded since the capture was queued,
+/// which can leave the captured frame incomplete or black.
+fn report_wgpu_errors(
+    result: &mut Result<serde_json::Value, ControlError>,
+    baseline: Option<u64>,
+    state: Option<&WgpuValidationErrorState>,
+) {
+    let (Ok(serde_json::Value::Object(response)), Some(before), Some(state)) =
+        (result, baseline, state)
+    else {
+        return;
+    };
+    let Some(summary) = state.summary() else {
+        return;
+    };
+    // A reload clears the log, so a count below the baseline started from zero.
+    let during = summary.count.checked_sub(before).unwrap_or(summary.count);
+    if during == 0 {
+        return;
+    }
+    response.insert(
+        "wgpu_validation".into(),
+        serde_json::json!({
+            "errors_during_capture": during,
+            "last_label": summary.last.label,
+            "warning": public_error::CAPTURE_WGPU_ERRORS_WARNING,
+        }),
+    );
 }
 
 /// Without `extra`, returns the screenshot result unchanged. With it, returns
@@ -779,6 +822,7 @@ mod tests {
         window::{PrimaryWindow, WindowRef},
     };
     use image::{Rgb, RgbImage};
+    use pybevy_core::gpu_validation::WgpuValidationEntry;
     use tokio::sync::oneshot;
 
     use super::*;
@@ -827,6 +871,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
         (world, rx)
@@ -852,6 +897,7 @@ mod tests {
             depth_analysis: None,
             extra_response: None,
             response_kind: CaptureResponseKind::Screenshot,
+            wgpu_error_baseline: None,
         };
         (screenshot, rx)
     }
@@ -1085,6 +1131,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1131,6 +1178,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1294,6 +1342,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1353,6 +1402,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1395,6 +1445,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1432,6 +1483,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1469,6 +1521,7 @@ mod tests {
                 depth_analysis: None,
                 extra_response: None,
                 response_kind: CaptureResponseKind::Screenshot,
+                wgpu_error_baseline: None,
             }],
         });
 
@@ -1855,6 +1908,44 @@ mod tests {
 
         assert_eq!(result["width"], 2);
         assert_eq!(result["height"], 1);
+    }
+
+    #[test]
+    fn report_wgpu_errors_counts_only_errors_after_the_baseline() {
+        let state = WgpuValidationErrorState::default();
+        let entry = |label: &str| {
+            WgpuValidationEntry::from_message(format!(
+                "In Device::create_bind_group, label = '{label}'"
+            ))
+        };
+        state.record(&entry("before"));
+        let baseline = Some(state.count());
+        let ok = || Ok(serde_json::json!({"image": "abc"}));
+
+        let mut quiet = ok();
+        report_wgpu_errors(&mut quiet, baseline, Some(&state));
+        assert!(quiet.unwrap().get("wgpu_validation").is_none());
+
+        state.record(&entry("during"));
+        state.record(&entry("during"));
+        let mut noisy = ok();
+        report_wgpu_errors(&mut noisy, baseline, Some(&state));
+        let report = noisy.unwrap()["wgpu_validation"].clone();
+        assert_eq!(report["errors_during_capture"], 2);
+        assert_eq!(report["last_label"], "during");
+
+        state.clear();
+        state.record(&entry("after reload"));
+        let mut cleared = ok();
+        report_wgpu_errors(&mut cleared, Some(5), Some(&state));
+        assert_eq!(
+            cleared.unwrap()["wgpu_validation"]["errors_during_capture"],
+            1
+        );
+
+        let mut unbaselined = ok();
+        report_wgpu_errors(&mut unbaselined, None, Some(&state));
+        assert!(unbaselined.unwrap().get("wgpu_validation").is_none());
     }
 
     #[test]

@@ -161,6 +161,7 @@ pub struct CaptureHold {
     pub(super) gizmo_restore: GizmoEnabledRestore,
     pub(super) entity_isolation: Option<EntityCaptureIsolation>,
     pub(super) debug_cleanup: Option<DebugCameraCleanup>,
+    pub(super) wgpu_error_baseline: Option<u64>,
 }
 
 impl CaptureHold {

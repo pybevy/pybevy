@@ -868,6 +868,10 @@ class Image(Asset):
         Use `resize_in_place` to keep the 2-D arrangement, and an image library
         to scale the contents.
 
+        A Sprite, ColorMaterial or StandardMaterial that samples the image keeps
+        its previous size on screen; add the resized image as a new asset and
+        assign the new handle.
+
         Args:
             size: New dimensions for the image
 
@@ -880,6 +884,10 @@ class Image(Asset):
 
         More memory-efficient than resize() as it reuses the existing buffer.
         Copies overlapping pixel data from the old size to the new size.
+
+        A Sprite, ColorMaterial or StandardMaterial that samples the image keeps
+        its previous size on screen; add the resized image as a new asset and
+        assign the new handle.
 
         Args:
             size: New dimensions for the image
@@ -1551,6 +1559,8 @@ class ImageLoaderSettings:
                 Use ImageFormatSetting.Guess() for paths without a file extension.
             texture_format: Force this texture format for the loaded data, for
                 example R16Snorm for R16Uint data sampled as floats (default: None).
+                The decoded bytes are kept unchanged, so the format needs the
+                decoded data's texel size and channel layout.
             is_srgb: Whether to interpret image data as sRGB (default: True).
             sampler: Sampler to use for the loaded image (default: Default sampler).
             asset_usage: Where the loaded image is kept (default: RenderAssetUsages.default()).

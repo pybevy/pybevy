@@ -12,14 +12,18 @@ class CorePipelinePlugin(Plugin):
     - Post-processing setup
 
     Required when using rendering features with materials and meshes.
-    Must be added after RenderPlugin in the plugin chain.
+    DefaultPlugins includes it. A custom plugin set adds it after AssetPlugin,
+    ImagePlugin and RenderPlugin.
 
     Example:
         >>> from pybevy.app import App
-        >>> from pybevy.render import RenderPlugin
+        >>> from pybevy.assets import AssetPlugin
         >>> from pybevy.core_pipeline import CorePipelinePlugin
+        >>> from pybevy.image import ImagePlugin
+        >>> from pybevy.prelude import MinimalPlugins
+        >>> from pybevy.render import RenderPlugin
         >>> app = App()
-        >>> app.add_plugins(RenderPlugin, CorePipelinePlugin)
+        >>> app.add_plugins(MinimalPlugins, AssetPlugin, ImagePlugin, RenderPlugin, CorePipelinePlugin)
     """
 
     def __init__(self) -> None:

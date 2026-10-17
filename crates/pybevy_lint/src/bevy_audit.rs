@@ -69,9 +69,14 @@ pub struct GeneratedAudit {
     pub coverage_markdown: String,
 }
 
+/// The managed pinned Bevy checkout inside an audit cache directory.
+pub fn pinned_checkout_path(cache_root: &Path) -> PathBuf {
+    cache_root.join(format!("bevy-{}", &BEVY_REVISION[..12]))
+}
+
 /// Clone the immutable pinned Bevy tag into a repository-owned build cache.
 pub fn prepare_pinned_bevy(cache_root: &Path) -> Result<PathBuf> {
-    let checkout = cache_root.join(format!("bevy-{}", &BEVY_REVISION[..12]));
+    let checkout = pinned_checkout_path(cache_root);
     if !checkout.exists() {
         fs::create_dir_all(cache_root).with_context(|| {
             format!("failed to create Bevy audit cache {}", cache_root.display())

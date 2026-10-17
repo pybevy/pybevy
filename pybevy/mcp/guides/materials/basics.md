@@ -150,6 +150,18 @@ leaves = materials.add(StandardMaterial(
 | `AlphaMode.Add()` | Additive blending (particles, laser beams) |
 | `AlphaMode.Multiply()` | Darkening blend (shadows, tinted glass) |
 
+## Texture Slots
+
+Every `StandardMaterial` texture slot, `ColorMaterial.texture`, `Sprite.image`
+and `ImageNode` samples a single-layer 2D image (`TextureDimension.D2`) through
+a filtering sampler without `compare`. Volume, array and cube images go into a
+custom `@material` field declared with `TextureBinding(dimension=...)` (see
+`guide://shaders`).
+
+Pixel edits through `images.get_mut(handle)` show on these slots while the
+image keeps its size. To change the size, add the resized image as a new asset
+and assign the new handle to the material field or sprite.
+
 ## Double-Sided Rendering
 
 By default, back faces are culled. Set `cull_mode=None` for double-sided materials:

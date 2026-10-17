@@ -262,11 +262,14 @@ mesh = (
 | `Mesh.ATTRIBUTE_POSITION` | float32 | (N, 3) |
 | `Mesh.ATTRIBUTE_NORMAL` | float32 | (N, 3) |
 | `Mesh.ATTRIBUTE_UV_0` | float32 | (N, 2) |
-| `Mesh.ATTRIBUTE_UV_1` | float32 | (N, 2) |
+| `Mesh.ATTRIBUTE_UV_1` | float32 | (N, 2), with `ATTRIBUTE_UV_0` present |
 | `Mesh.ATTRIBUTE_TANGENT` | float32 | (N, 4) |
 | `Mesh.ATTRIBUTE_COLOR` | float32 | (N, 4) - RGBA |
 | `Mesh.ATTRIBUTE_JOINT_WEIGHT` | float32 | (N, 4) |
 | `Mesh.ATTRIBUTE_JOINT_INDEX` | uint16 | (N, 4) |
+
+A skinned mesh carries both joint attributes and its entity a `SkinnedMesh`
+component; a mesh without either joint attribute uses no `SkinnedMesh`.
 
 ### Vertex Colors
 

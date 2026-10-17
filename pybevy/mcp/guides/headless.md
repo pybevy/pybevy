@@ -4,10 +4,10 @@ GPU rendering without a window or display server - for CI, remote servers, conta
 
 `capture_screenshot` and `capture_stats` with `position` work in a scene with
 no camera: they render through a temporary `Camera3d` with a 768x432 image
-target and remove both afterwards. The capture waits until the pipelines that
-camera needs have compiled, so the first answer shows the scene rather than
-the clear colour. Author a camera with an image target for another resolution
-or projection.
+target and remove both afterwards. The first such capture of a fresh scene can
+finish before that camera's pipelines are ready and show only the clear colour;
+repeat the capture, or author a camera with an image target, which also sets
+another resolution or projection.
 
 `Image.new_render_target` creates an RGBA8 sRGB target with `TEXTURE_BINDING`,
 `COPY_SRC`, `COPY_DST`, and `RENDER_ATTACHMENT`. It is a convenience for

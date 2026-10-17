@@ -36,6 +36,10 @@ warnings, truncation text, and the subprocess-exit notice. With
 space shows the newest matching stderr lines in their original order, then
 distinct warnings that fit. A duplicate stderr traceback is omitted without
 hiding independent Bevy, asset, or render errors from the same capture.
+Each captured output line keeps its first 4,096 bytes and ends with
+`[line truncated: N more bytes]`, so print large data over several lines.
+`run_code` keeps up to 100,000 characters of each of `stdout` and `stderr`: the
+first and last halves around `[run_code output truncated: N characters omitted]`.
 
 After a failed reload, `run_code` uses the restored previous scene namespace;
 `running_previous_generation` in the response says whether its World is still

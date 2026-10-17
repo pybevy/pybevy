@@ -79,9 +79,10 @@ value has no opaque fields; a `spawn_example`
 may also come from a Bevy reflected default when the Python enum base is not
 constructible. An enum without a replayable default has no example. Native
 lifecycle or plugin requirements can still make a syntactically valid spawn
-fail in a particular scene. Components whose default cannot render, such as
-`IrradianceVolume` (its default voxel image is 2D, the shader needs 3D), keep
-their `defaults` but offer no example. A relationship such as `ChildOf` offers
+fail in a particular scene. Components whose default cannot render keep their `defaults` but offer no
+example: `IrradianceVolume` and `EnvironmentMapLight` (placeholder images of the
+wrong dimension), `Lightmap` (a placeholder image on a mesh that may lack
+`UV_1`) and `SkinnedMesh` (no joints for a mesh without joint attributes). A relationship such as `ChildOf` offers
 `{"ChildOf": "<packed entity id>"}`; `spawn_example_placeholders` says what to
 put in place of the placeholder before spawning.
 
@@ -513,11 +514,20 @@ set_component {
 Unfiltered discovery omits entities with `Disabled`, as Bevy's default queries
 do. Use `query_entities {"with": ["Disabled"]}` to find them; name-based
 component access can still address a disabled entity to remove `Disabled`.
+Cameras and lights leave play through their own switches: `Camera.is_active`
+for a camera and `Visibility.Hidden` for a light (see `guide://camera`,
+Changing a Live Camera).
 
 ## Screenshots
 
 Capture tools hide authored UI by default. Pass `hide_ui=false` when the UI is
 part of the result; internal PyBevy overlays remain hidden.
+
+When wgpu reports validation or out-of-memory errors while a
+`capture_screenshot` or `capture_stats` request is in flight,
+the result carries `wgpu_validation` with `errors_during_capture`, the
+`last_label` of the failing GPU object and a warning; the image can then be
+incomplete or black. `get_last_error` lists the errors themselves.
 
 Captures run one at a time. A capture that arrives while another one holds the
 camera pose, camera activity, or UI visibility waits until that capture has

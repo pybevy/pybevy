@@ -1,5 +1,5 @@
 use bevy::reflect::enums::VariantInfo;
-use pybevy_core::public_error;
+use pybevy_core::{PyEntity, public_error};
 use pyo3::{
     prelude::*,
     types::{PyBool, PyDict, PyFloat, PyInt, PyModule, PyString, PyType},
@@ -10,7 +10,7 @@ use crate::{
     pyo3::{
         enum_names,
         from_json::{
-            field::{convert_field_value, json_to_py},
+            field::{convert_field_value, entity_from_json, json_to_py},
             lists::{constructible_representative, find_pybevy_class},
         },
         to_json::py_value_to_json,
@@ -277,6 +277,29 @@ fn construct_wrapped_variant_payload<'py>(
         .map_err(|error| format!("invalid payload for variant '{variant_name}': {error}"))
 }
 
+// A switched-to variant has no current payload, so type the JSON by the payload class.
+fn convert_scalar_payload(
+    py: Python<'_>,
+    payload_type: &Bound<'_, PyType>,
+    value: &serde_json::Value,
+) -> Result<Py<PyAny>, String> {
+    if payload_type.is(py.get_type::<PyEntity>()) {
+        return entity_from_json(py, value);
+    }
+    let Some(prototype) = constructible_representative(payload_type) else {
+        return json_to_py(py, value);
+    };
+    let holder = PyModule::import(py, "types")
+        .and_then(|types| types.getattr("SimpleNamespace"))
+        .and_then(|ns| {
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("value", prototype)?;
+            ns.call((), Some(&kwargs))
+        })
+        .map_err(|error| error.to_string())?;
+    convert_field_value(py, &holder, "value", value)
+}
+
 pub(crate) fn construct_enum_variant(
     py: Python<'_>,
     current: &Bound<'_, PyAny>,
@@ -423,7 +446,14 @@ pub(crate) fn construct_enum_variant_for_owner(
         }
     }
 
-    let argument = json_to_py(py, variant_value)?;
+    let payload_type = (!variant_value.is_object())
+        .then(|| variant_payload_type(py, owner, &variant, &native_name))
+        .flatten();
+    let argument = match payload_type {
+        Some(payload_type) => convert_scalar_payload(py, &payload_type, variant_value)
+            .map_err(|error| format!("invalid payload for variant '{variant_name}': {error}"))?,
+        None => json_to_py(py, variant_value)?,
+    };
     match variant.call1((argument,)) {
         Ok(result) => Ok(Some(result.unbind())),
         Err(_) if variant_value.is_object() => Err(format!(

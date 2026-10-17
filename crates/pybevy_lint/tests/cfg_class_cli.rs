@@ -4,6 +4,8 @@ use std::{
     process::Command,
 };
 
+use pybevy_lint::bevy_audit::pinned_checkout_path;
+
 const WRAPPERS: &str = r#"
 #[cfg(feature = "gpu")]
 #[pyclass(name = "Diagnostics", module = "pybevy.gpu", frozen)]
@@ -40,7 +42,7 @@ fn pinned_bevy_source() -> PathBuf {
         .unwrap()
         .parent()
         .unwrap();
-    let source = root.join("target/bevy-api-audit/bevy-b56fc29d3016");
+    let source = pinned_checkout_path(&root.join("target/bevy-api-audit"));
     assert!(
         source.join("Cargo.toml").exists(),
         "pinned audit source is required"

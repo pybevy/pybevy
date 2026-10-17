@@ -6,7 +6,7 @@ use pybevy_core::{
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
 
-#[pycomponent(SkinnedMesh, bridge)]
+#[pycomponent(SkinnedMesh, bridge, no_spawn_example)]
 #[pyclass(name = "SkinnedMesh", module = "pybevy.mesh", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySkinnedMesh {
