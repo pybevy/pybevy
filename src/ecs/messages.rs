@@ -13,6 +13,7 @@ use bevy::{
     window::{WindowClosing, WindowCreated, WindowEvent, WindowResized, WindowScaleFactorChanged},
 };
 use pybevy_core::{
+    ReaderCursorOp, apply_reader_cursor,
     public_error::{
         ASSET_BRIDGE_NOT_FOUND, ASSET_EVENT_TYPE_REQUIRED, ASSET_LOAD_FAILED_TYPE_REQUIRED,
     },
@@ -136,6 +137,47 @@ impl PyMessages {
         } else {
             Ok(Vec::new())
         }
+    }
+
+    /// Apply a `MessageReader` cursor operation and return the reader's unread
+    /// count before it. Only the reader's cursor changes, as in Bevy.
+    pub(crate) fn reader_cursor(&self, op: ReaderCursorOp) -> PyResult<usize> {
+        let world = self.world.world_mut()?;
+        let world: &World = &world;
+        let mut guard = self.lock_cursor();
+        let mut detached = None;
+        let cursor_state = match guard.as_mut() {
+            Some(state) => &mut **state,
+            None => &mut detached,
+        };
+        Ok(match &self.message_type {
+            MessageType::WindowEvent => apply_reader_cursor::<WindowEvent>(world, cursor_state, op),
+            MessageType::WorldInstanceReady => {
+                apply_reader_cursor::<WorldInstanceReadyMessage>(world, cursor_state, op)
+            }
+            MessageType::AssetEvent(type_ptr) => {
+                global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?
+                    .event_reader_cursor(world, cursor_state, op)
+            }
+            MessageType::AssetLoadFailed(type_ptr) => {
+                global_registry::get_asset_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(ASSET_BRIDGE_NOT_FOUND))?
+                    .load_failed_reader_cursor(world, cursor_state, op)
+            }
+            MessageType::Custom(_) => {
+                return Err(PyTypeError::new_err(
+                    "custom messages use the shared Python message store",
+                ));
+            }
+            MessageType::Dynamic(type_ptr) => {
+                global_registry::get_message_bridge_by_py_type(*type_ptr)
+                    .ok_or_else(|| {
+                        PyTypeError::new_err("Message type not registered in global registry")
+                    })?
+                    .reader_cursor(world, cursor_state, op)
+            }
+        })
     }
 
     /// Lock cursor storage (if available) and return a mutable reference to the inner state.

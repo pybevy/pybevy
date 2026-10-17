@@ -1,6 +1,6 @@
 use std::{error::Error, ffi::c_void, fmt};
 
-use bevy::math::{Vec2, Vec3};
+use bevy::math::{Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 
 use super::component_wrapper::WrapperSize;
 
@@ -19,6 +19,11 @@ pub enum PrimitiveType {
     Bool,
     Vec3,
     Vec2,
+    Vec4,
+    Quat,
+    Mat2,
+    Mat3,
+    Mat4,
 }
 
 impl PrimitiveType {
@@ -30,6 +35,11 @@ impl PrimitiveType {
             "bool" => Some(Self::Bool),
             "Vec3" | "pybevy.math.Vec3" => Some(Self::Vec3),
             "Vec2" | "pybevy.math.Vec2" => Some(Self::Vec2),
+            "Vec4" | "pybevy.math.Vec4" => Some(Self::Vec4),
+            "Quat" | "pybevy.math.Quat" => Some(Self::Quat),
+            "Mat2" | "pybevy.math.Mat2" => Some(Self::Mat2),
+            "Mat3" | "pybevy.math.Mat3" => Some(Self::Mat3),
+            "Mat4" | "pybevy.math.Mat4" => Some(Self::Mat4),
             _ => None,
         }
     }
@@ -44,8 +54,13 @@ impl PrimitiveType {
             PrimitiveType::U32 => 4,
             PrimitiveType::U64 => 8,
             PrimitiveType::Bool => 1,
-            PrimitiveType::Vec3 => 12, // 3 × f32
-            PrimitiveType::Vec2 => 8,  // 2 × f32
+            PrimitiveType::Vec3 => size_of::<Vec3>(),
+            PrimitiveType::Vec2 => size_of::<Vec2>(),
+            PrimitiveType::Vec4 => size_of::<Vec4>(),
+            PrimitiveType::Quat => size_of::<Quat>(),
+            PrimitiveType::Mat2 => size_of::<Mat2>(),
+            PrimitiveType::Mat3 => size_of::<Mat3>(),
+            PrimitiveType::Mat4 => size_of::<Mat4>(),
         }
     }
 
@@ -59,25 +74,46 @@ impl PrimitiveType {
             PrimitiveType::U32 => 4,
             PrimitiveType::U64 => 8,
             PrimitiveType::Bool => 1,
-            PrimitiveType::Vec3 => 4, // f32 alignment
-            PrimitiveType::Vec2 => 4, // f32 alignment
+            // Query borrows hand out `&T` into wrapper bytes, so SIMD glam types
+            // need their native (16-byte on SIMD targets) alignment.
+            PrimitiveType::Vec3 => align_of::<Vec3>(),
+            PrimitiveType::Vec2 => align_of::<Vec2>(),
+            PrimitiveType::Vec4 => align_of::<Vec4>(),
+            PrimitiveType::Quat => align_of::<Quat>(),
+            PrimitiveType::Mat2 => align_of::<Mat2>(),
+            PrimitiveType::Mat3 => align_of::<Mat3>(),
+            PrimitiveType::Mat4 => align_of::<Mat4>(),
         }
     }
 
-    /// Whether this type is a composite (multi-element) type like Vec3/Vec2
+    /// Whether this type is a composite of f32 lanes (vector, quaternion, or matrix)
     pub const fn is_composite(&self) -> bool {
-        matches!(self, PrimitiveType::Vec3 | PrimitiveType::Vec2)
+        self.element_count() > 1
     }
 
-    /// Number of elements for composite types (1 for scalars)
+    /// Whether this type is a matrix, stored as column-major f32 lanes
+    pub const fn is_matrix(&self) -> bool {
+        matches!(
+            self,
+            PrimitiveType::Mat2 | PrimitiveType::Mat3 | PrimitiveType::Mat4
+        )
+    }
+
+    /// Number of f32 lanes for composite types (1 for scalars)
     pub const fn element_count(&self) -> usize {
         match self {
             PrimitiveType::Vec3 => 3,
             PrimitiveType::Vec2 => 2,
+            PrimitiveType::Vec4 | PrimitiveType::Quat | PrimitiveType::Mat2 => 4,
+            PrimitiveType::Mat3 => 9,
+            PrimitiveType::Mat4 => 16,
             _ => 1,
         }
     }
 }
+
+/// Largest composite lane count (`Mat4`).
+pub const MAX_COMPOSITE_LANES: usize = 16;
 
 /// A component-field value already coerced from Python to a plain Rust value, ready
 /// to write into wrapper bytes. One variant per [`PrimitiveType`].
@@ -99,6 +135,11 @@ pub enum PrimitiveValue {
     Bool(bool),
     Vec3(Vec3),
     Vec2(Vec2),
+    Vec4(Vec4),
+    Quat(Quat),
+    Mat2(Mat2),
+    Mat3(Mat3),
+    Mat4(Mat4),
 }
 
 impl PrimitiveValue {
@@ -114,7 +155,68 @@ impl PrimitiveValue {
             PrimitiveValue::Bool(_) => PrimitiveType::Bool,
             PrimitiveValue::Vec3(_) => PrimitiveType::Vec3,
             PrimitiveValue::Vec2(_) => PrimitiveType::Vec2,
+            PrimitiveValue::Vec4(_) => PrimitiveType::Vec4,
+            PrimitiveValue::Quat(_) => PrimitiveType::Quat,
+            PrimitiveValue::Mat2(_) => PrimitiveType::Mat2,
+            PrimitiveValue::Mat3(_) => PrimitiveType::Mat3,
+            PrimitiveValue::Mat4(_) => PrimitiveType::Mat4,
         }
+    }
+
+    /// The f32 lanes of a composite value (column-major for matrices, xyzw for
+    /// quaternions) and their count; `None` for scalars.
+    pub fn f32_lanes(&self) -> Option<([f32; MAX_COMPOSITE_LANES], usize)> {
+        let mut lanes = [0.0; MAX_COMPOSITE_LANES];
+        let count = match self {
+            PrimitiveValue::Vec3(v) => {
+                lanes[..3].copy_from_slice(&v.to_array());
+                3
+            }
+            PrimitiveValue::Vec2(v) => {
+                lanes[..2].copy_from_slice(&v.to_array());
+                2
+            }
+            PrimitiveValue::Vec4(v) => {
+                lanes[..4].copy_from_slice(&v.to_array());
+                4
+            }
+            PrimitiveValue::Quat(v) => {
+                lanes[..4].copy_from_slice(&v.to_array());
+                4
+            }
+            PrimitiveValue::Mat2(v) => {
+                lanes[..4].copy_from_slice(&v.to_cols_array());
+                4
+            }
+            PrimitiveValue::Mat3(v) => {
+                lanes[..9].copy_from_slice(&v.to_cols_array());
+                9
+            }
+            PrimitiveValue::Mat4(v) => {
+                lanes[..16].copy_from_slice(&v.to_cols_array());
+                16
+            }
+            _ => return None,
+        };
+        Some((lanes, count))
+    }
+
+    /// Build a composite value from its f32 lanes in [`Self::f32_lanes`] order.
+    /// Returns `None` for scalar types or a lane-count mismatch.
+    pub fn from_f32_lanes(field_type: PrimitiveType, lanes: &[f32]) -> Option<Self> {
+        if !field_type.is_composite() || lanes.len() != field_type.element_count() {
+            return None;
+        }
+        Some(match field_type {
+            PrimitiveType::Vec3 => Self::Vec3(Vec3::from_slice(lanes)),
+            PrimitiveType::Vec2 => Self::Vec2(Vec2::from_slice(lanes)),
+            PrimitiveType::Vec4 => Self::Vec4(Vec4::from_slice(lanes)),
+            PrimitiveType::Quat => Self::Quat(Quat::from_slice(lanes)),
+            PrimitiveType::Mat2 => Self::Mat2(Mat2::from_cols_slice(lanes)),
+            PrimitiveType::Mat3 => Self::Mat3(Mat3::from_cols_slice(lanes)),
+            PrimitiveType::Mat4 => Self::Mat4(Mat4::from_cols_slice(lanes)),
+            _ => return None,
+        })
     }
 
     /// Write this value into wrapper bytes at `dst`. Does no Python interaction, so the
@@ -137,14 +239,13 @@ impl PrimitiveValue {
                 PrimitiveValue::U32(v) => (dst as *mut u32).write_unaligned(v),
                 PrimitiveValue::U64(v) => (dst as *mut u64).write_unaligned(v),
                 PrimitiveValue::Bool(v) => dst.write_unaligned(v as u8),
-                PrimitiveValue::Vec3(v) => {
-                    (dst as *mut f32).write_unaligned(v.x);
-                    (dst as *mut f32).add(1).write_unaligned(v.y);
-                    (dst as *mut f32).add(2).write_unaligned(v.z);
-                }
-                PrimitiveValue::Vec2(v) => {
-                    (dst as *mut f32).write_unaligned(v.x);
-                    (dst as *mut f32).add(1).write_unaligned(v.y);
+                composite => {
+                    let (lanes, count) = composite
+                        .f32_lanes()
+                        .expect("non-scalar primitive values are composite");
+                    for (index, lane) in lanes[..count].iter().enumerate() {
+                        (dst as *mut f32).add(index).write_unaligned(*lane);
+                    }
                 }
             }
         }
@@ -169,15 +270,15 @@ impl PrimitiveValue {
                 PrimitiveType::U32 => Self::U32((src as *const u32).read_unaligned()),
                 PrimitiveType::U64 => Self::U64((src as *const u64).read_unaligned()),
                 PrimitiveType::Bool => Self::Bool(src.read_unaligned() != 0),
-                PrimitiveType::Vec3 => Self::Vec3(Vec3::new(
-                    (src as *const f32).read_unaligned(),
-                    (src as *const f32).add(1).read_unaligned(),
-                    (src as *const f32).add(2).read_unaligned(),
-                )),
-                PrimitiveType::Vec2 => Self::Vec2(Vec2::new(
-                    (src as *const f32).read_unaligned(),
-                    (src as *const f32).add(1).read_unaligned(),
-                )),
+                composite => {
+                    let count = composite.element_count();
+                    let mut lanes = [0.0; MAX_COMPOSITE_LANES];
+                    for (index, lane) in lanes[..count].iter_mut().enumerate() {
+                        *lane = (src as *const f32).add(index).read_unaligned();
+                    }
+                    Self::from_f32_lanes(composite, &lanes[..count])
+                        .expect("non-scalar primitive types are composite")
+                }
             }
         }
     }
@@ -192,14 +293,13 @@ impl PrimitiveValue {
             PrimitiveValue::U32(v) => dst.copy_from_slice(&v.to_le_bytes()),
             PrimitiveValue::U64(v) => dst.copy_from_slice(&v.to_le_bytes()),
             PrimitiveValue::Bool(v) => dst[0] = u8::from(v),
-            PrimitiveValue::Vec3(v) => {
-                dst[0..4].copy_from_slice(&v.x.to_le_bytes());
-                dst[4..8].copy_from_slice(&v.y.to_le_bytes());
-                dst[8..12].copy_from_slice(&v.z.to_le_bytes());
-            }
-            PrimitiveValue::Vec2(v) => {
-                dst[0..4].copy_from_slice(&v.x.to_le_bytes());
-                dst[4..8].copy_from_slice(&v.y.to_le_bytes());
+            composite => {
+                let (lanes, count) = composite
+                    .f32_lanes()
+                    .expect("non-scalar primitive values are composite");
+                for (chunk, lane) in dst.chunks_exact_mut(4).zip(&lanes[..count]) {
+                    chunk.copy_from_slice(&lane.to_le_bytes());
+                }
             }
         }
     }
@@ -1003,6 +1103,90 @@ mod tests {
         assert_eq!(
             PrimitiveType::from_annotation_name("pybevy.math.Vec2"),
             Some(PrimitiveType::Vec2)
+        );
+    }
+
+    #[test]
+    fn quaternion_vec4_and_matrix_types_use_glam_layout() {
+        for (name, field_type, lanes) in [
+            ("pybevy.math.Vec4", PrimitiveType::Vec4, 4),
+            ("Quat", PrimitiveType::Quat, 4),
+            ("Mat2", PrimitiveType::Mat2, 4),
+            ("pybevy.math.Mat3", PrimitiveType::Mat3, 9),
+            ("Mat4", PrimitiveType::Mat4, 16),
+        ] {
+            assert_eq!(PrimitiveType::from_annotation_name(name), Some(field_type));
+            assert!(field_type.is_composite());
+            assert_eq!(field_type.element_count(), lanes);
+            assert_eq!(field_type.size_bytes(), lanes * 4);
+        }
+        assert_eq!(PrimitiveType::Quat.alignment(), align_of::<Quat>());
+        assert_eq!(PrimitiveType::Mat4.alignment(), align_of::<Mat4>());
+        assert_eq!(PrimitiveType::Mat3.alignment(), 4);
+        assert!(PrimitiveType::Mat3.is_matrix());
+        assert!(!PrimitiveType::Quat.is_matrix());
+    }
+
+    #[test]
+    fn simd_fields_are_placed_at_their_native_alignment() {
+        let layout = ComponentLayout::from_fields(
+            ptr::null(),
+            "Pose".to_string(),
+            &[
+                ("weight".to_string(), PrimitiveType::F32),
+                ("rotation".to_string(), PrimitiveType::Quat),
+                ("basis".to_string(), PrimitiveType::Mat3),
+                ("model".to_string(), PrimitiveType::Mat4),
+            ],
+        )
+        .unwrap();
+        for field in &layout.fields {
+            assert_eq!(field.offset % field.field_type.alignment(), 0);
+        }
+        let quat_align = align_of::<Quat>();
+        assert_eq!(
+            layout.fields[1].offset,
+            4usize.div_ceil(quat_align) * quat_align
+        );
+        assert!(layout.wrapper_size.mem_layout().align() >= align_of::<Mat4>());
+    }
+
+    #[test]
+    fn composite_values_roundtrip_through_lanes_and_bytes() {
+        let values = [
+            PrimitiveValue::Vec4(Vec4::new(1.0, 2.0, 3.0, 4.0)),
+            PrimitiveValue::Quat(Quat::from_xyzw(0.0, 0.6, 0.0, 0.8)),
+            PrimitiveValue::Mat2(Mat2::from_cols_array(&[1.0, 2.0, 3.0, 4.0])),
+            PrimitiveValue::Mat3(Mat3::from_cols_array(&[
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
+            ])),
+            PrimitiveValue::Mat4(Mat4::from_cols_array(&std::array::from_fn(|i| i as f32))),
+        ];
+        for value in values {
+            let field_type = value.field_type();
+            let (lanes, count) = value.f32_lanes().unwrap();
+            assert_eq!(count, field_type.element_count());
+            assert_eq!(
+                PrimitiveValue::from_f32_lanes(field_type, &lanes[..count]),
+                Some(value)
+            );
+
+            let mut bytes = vec![0u8; field_type.size_bytes() + 1];
+            // SAFETY: the buffer holds the value at an odd, unaligned offset.
+            let read = unsafe {
+                value.write_to_ptr(bytes.as_mut_ptr().add(1));
+                PrimitiveValue::read_from_ptr(field_type, bytes.as_ptr().add(1))
+            };
+            assert_eq!(read, value);
+
+            let mut slice = vec![0u8; field_type.size_bytes()];
+            value.write_to_slice(&mut slice);
+            assert_eq!(slice, bytes[1..]);
+        }
+        assert_eq!(PrimitiveValue::F32(1.0).f32_lanes(), None);
+        assert_eq!(
+            PrimitiveValue::from_f32_lanes(PrimitiveType::Mat3, &[0.0; 4]),
+            None
         );
     }
 

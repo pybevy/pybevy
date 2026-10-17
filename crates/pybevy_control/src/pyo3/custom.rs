@@ -82,6 +82,21 @@ fn primitive_to_json(value: PrimitiveValue) -> serde_json::Value {
             float_to_json(f64::from(value.x)),
             float_to_json(f64::from(value.y)),
         ]),
+        composite @ (PrimitiveValue::Vec4(_)
+        | PrimitiveValue::Quat(_)
+        | PrimitiveValue::Mat2(_)
+        | PrimitiveValue::Mat3(_)
+        | PrimitiveValue::Mat4(_)) => {
+            let (lanes, count) = composite
+                .f32_lanes()
+                .expect("vector, quaternion, and matrix values have f32 lanes");
+            serde_json::Value::Array(
+                lanes[..count]
+                    .iter()
+                    .map(|lane| float_to_json(f64::from(*lane)))
+                    .collect(),
+            )
+        }
     }
 }
 
@@ -118,6 +133,15 @@ fn primitive_from_json(
         PrimitiveType::Vec2 => {
             let values = json_vector(value, 2)?;
             PrimitiveValue::Vec2(Vec2::new(values[0], values[1]))
+        }
+        composite @ (PrimitiveType::Vec4
+        | PrimitiveType::Quat
+        | PrimitiveType::Mat2
+        | PrimitiveType::Mat3
+        | PrimitiveType::Mat4) => {
+            let values = json_vector(value, composite.element_count())?;
+            PrimitiveValue::from_f32_lanes(composite, &values)
+                .expect("json_vector returned the field's lane count")
         }
     })
 }

@@ -285,7 +285,7 @@ def damage_players(query: Query[Mut[Player]]) -> None:
 ```
 
 **Storage modes:**
-- **Default (wrapper)**: `int`, `float`, `bool`, `Vec3`, `Vec2` - fast, supports View batch execution and Numba JIT
+- **Default (wrapper)**: `int`, `float`, `bool`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat2`, `Mat3`, `Mat4` - fast, supports View batch execution and Numba JIT. Matrix fields work through Query and `batch()` but are not View columns.
 - **Python storage**: `str`, `list`, `dict`, custom classes - use `@component(storage="python")`. This includes private data fields beginning with `_`. Slower (no View/Numba), but supports any Python type.
 
 Wrapper-storage components support properties, property setters (with `Mut[T]`),

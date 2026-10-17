@@ -1,5 +1,17 @@
 # PyBevy Lint Configuration
 # This file configures the linter's behavior for Bevy API comparison
+[[validation.exceptions]]
+code = "W042"
+path = "window.FileDragAndDrop"
+message = "enum variant 'FileDragAndDrop.DroppedFile' has a different shape or payload type from Bevy"
+reason = "The message mirror converts PathBuf through to_string_lossy into a Python string; the established path_buf API intentionally loses non-UTF-8 path bytes."
+
+[[validation.exceptions]]
+code = "W042"
+path = "window.FileDragAndDrop"
+message = "enum variant 'FileDragAndDrop.HoveredFile' has a different shape or payload type from Bevy"
+reason = "The message mirror converts PathBuf through to_string_lossy into a Python string; the established path_buf API intentionally loses non-UTF-8 path bytes."
+
 # Types borrowed as a shared PyRef across calls back into Python.
 # See docs/safety.md, "Shared-Borrow Proxies".
 [[validation.shared_borrow_types]]
@@ -2502,6 +2514,39 @@ intentional_signature_diffs = [
     { name = "hex", expected_params = { "hex" = "str" } },
 ]
 notes = "hex() takes &str in Python - correct specialization of Bevy's generic T: AsRef<[u8]>"
+
+# Bevy exposes these conversions through From<Color>; Python has no trait conversion syntax.
+[bevy.type_ignores.Hsla]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Hsva]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Hwba]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Laba]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Lcha]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Oklaba]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Oklcha]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
+
+[bevy.type_ignores.Xyza]
+intentional_extra_methods = ["from_color"]
+notes = "from_color maps Bevy's From<Color> implementation to an explicit Python conversion"
 
 
 # Asset loading specializes Rust generics with keyword-only Python asset classes.

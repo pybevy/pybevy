@@ -96,7 +96,7 @@ pub fn collect_all() {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::{
-        any::TypeId,
+        any::{Any, TypeId},
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -116,7 +116,7 @@ mod tests {
     use super::*;
     use crate::{
         AssetBorrowCounter, AssetEventRecord, AssetLoadFailedRecord, ExtractFn,
-        FilteredEntityAccess, ValidityFlagWithMode,
+        FilteredEntityAccess, ReaderCursorOp, ValidityFlagWithMode,
     };
 
     // Unique fake pointers/TypeIds: registry keys are opaque and never dereferenced.
@@ -380,6 +380,15 @@ mod tests {
             unreachable!("identity-only fake bridge")
         }
 
+        fn reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
+        }
+
         fn clear(&self, _world: &mut World) -> PyResult<()> {
             unreachable!("identity-only fake bridge")
         }
@@ -444,6 +453,15 @@ mod tests {
             Vec::new()
         }
 
+        fn event_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
+        }
+
         fn clear_events(&self, _world: &mut World) {}
 
         fn events_is_empty(&self, _world: &World) -> bool {
@@ -464,6 +482,15 @@ mod tests {
             _cursor: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             Vec::new()
+        }
+
+        fn load_failed_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
         }
 
         fn clear_load_failed_events(&self, _world: &mut World) {}

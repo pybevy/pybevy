@@ -677,7 +677,7 @@ mod tests {
     use super::*;
     use crate::{
         AssetBorrowCounter, AssetEventRecord, AssetLoadFailedRecord, ExtractFn,
-        FilteredEntityAccess, PreparedBatchComponent, ValidityFlagWithMode,
+        FilteredEntityAccess, PreparedBatchComponent, ReaderCursorOp, ValidityFlagWithMode,
     };
 
     struct FakeComponent;
@@ -1028,6 +1028,15 @@ mod tests {
             unreachable!()
         }
 
+        fn reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
+        }
+
         fn clear(&self, _world: &mut World) -> PyResult<()> {
             unreachable!()
         }
@@ -1224,6 +1233,15 @@ mod tests {
             Vec::new()
         }
 
+        fn event_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
+        }
+
         fn clear_events(&self, _world: &mut World) {}
 
         fn events_is_empty(&self, _world: &World) -> bool {
@@ -1244,6 +1262,15 @@ mod tests {
             _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             Vec::new()
+        }
+
+        fn load_failed_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
         }
 
         fn clear_load_failed_events(&self, _world: &mut World) {}

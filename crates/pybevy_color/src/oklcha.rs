@@ -1,6 +1,6 @@
 use bevy::{
     color::{
-        Alpha, Gray, Hue, LinearRgba, Luminance, Mix, Oklcha, Srgba,
+        Alpha, Color, Gray, Hue, LinearRgba, Luminance, Mix, Oklcha, Srgba,
         color_difference::EuclideanDistance,
     },
     math::{Vec3, Vec4},
@@ -10,7 +10,7 @@ use pybevy_macros::pyvalue;
 use pybevy_math::{vec3::PyVec3, vec4::PyVec4};
 use pyo3::prelude::*;
 
-use super::{linear_rgba::PyLinearRgba, srgba::PySrgba};
+use super::{color::PyColor, linear_rgba::PyLinearRgba, srgba::PySrgba};
 
 #[pyvalue]
 #[pyclass(name = "Oklcha", module = "pybevy.color", eq, skip_from_py_object)]
@@ -46,6 +46,11 @@ impl From<Oklcha> for PyOklcha {
 
 #[pymethods]
 impl PyOklcha {
+    #[staticmethod]
+    pub fn from_color(color: &PyColor) -> PyResult<Self> {
+        Ok(Self::from_owned(Oklcha::from(Color::try_from(color)?)))
+    }
+
     #[new]
     #[pyo3(signature = (lightness = 1.0, chroma = 0.0, hue = 0.0, alpha = 1.0))]
     pub fn new(lightness: f32, chroma: f32, hue: f32, alpha: f32) -> Self {

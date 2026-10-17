@@ -418,6 +418,15 @@ pub(crate) fn generate_asset_bridge_tokens(
                 events
             }
 
+            fn event_reader_cursor(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+                op: pybevy_core::ReaderCursorOp,
+            ) -> usize {
+                pybevy_core::apply_reader_cursor::<bevy::asset::AssetEvent<#bevy_type>>(world, cursor_state, op)
+            }
+
             fn clear_events(&self, world: &mut bevy::ecs::world::World) {
                 if let Some(mut messages) = world.get_resource_mut::<bevy::ecs::message::Messages<bevy::asset::AssetEvent<#bevy_type>>>() {
                     messages.clear();
@@ -463,6 +472,15 @@ pub(crate) fn generate_asset_bridge_tokens(
                     .collect();
                 *cursor_state = Some(Box::new(cursor));
                 events
+            }
+
+            fn load_failed_reader_cursor(
+                &self,
+                world: &bevy::ecs::world::World,
+                cursor_state: &mut Option<Box<dyn std::any::Any + Send + Sync>>,
+                op: pybevy_core::ReaderCursorOp,
+            ) -> usize {
+                pybevy_core::apply_reader_cursor::<bevy::asset::AssetLoadFailedEvent<#bevy_type>>(world, cursor_state, op)
             }
 
             fn clear_load_failed_events(&self, world: &mut bevy::ecs::world::World) {

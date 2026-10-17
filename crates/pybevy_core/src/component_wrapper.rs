@@ -17,19 +17,19 @@ pub struct ComponentWrapper8 {
     pub data: [u8; 8],
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component, Default)]
 pub struct ComponentWrapper16 {
     pub data: [u8; 16],
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component, Default)]
 pub struct ComponentWrapper32 {
     pub data: [u8; 32],
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component)]
 pub struct ComponentWrapper64 {
     pub data: [u8; 64],
@@ -41,7 +41,7 @@ impl Default for ComponentWrapper64 {
     }
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component)]
 pub struct ComponentWrapper128 {
     pub data: [u8; 128],
@@ -53,7 +53,7 @@ impl Default for ComponentWrapper128 {
     }
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component)]
 pub struct ComponentWrapper256 {
     pub data: [u8; 256],
@@ -65,7 +65,7 @@ impl Default for ComponentWrapper256 {
     }
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component)]
 pub struct ComponentWrapper512 {
     pub data: [u8; 512],
@@ -77,7 +77,7 @@ impl Default for ComponentWrapper512 {
     }
 }
 
-#[repr(C, align(8))]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Component)]
 pub struct ComponentWrapper1024 {
     pub data: [u8; 1024],
@@ -148,9 +148,13 @@ impl WrapperSize {
         }
     }
 
-    /// Get the alignment requirement of this wrapper
+    /// Get the alignment requirement of this wrapper. Wrappers large enough to
+    /// hold a SIMD `Vec4`/`Quat`/`Mat4` field use 16-byte alignment.
     pub const fn alignment(&self) -> usize {
-        8 // All wrappers use 8-byte alignment
+        match self {
+            WrapperSize::W8 => 8,
+            _ => 16,
+        }
     }
 
     /// Get a mutable pointer to the wrapper's data array.
@@ -622,13 +626,13 @@ mod tests {
     #[test]
     fn test_wrapper_alignment() {
         assert_eq!(WrapperSize::W8.alignment(), 8);
-        assert_eq!(WrapperSize::W16.alignment(), 8);
-        assert_eq!(WrapperSize::W32.alignment(), 8);
-        assert_eq!(WrapperSize::W64.alignment(), 8);
-        assert_eq!(WrapperSize::W128.alignment(), 8);
-        assert_eq!(WrapperSize::W256.alignment(), 8);
-        assert_eq!(WrapperSize::W512.alignment(), 8);
-        assert_eq!(WrapperSize::W1024.alignment(), 8);
+        assert_eq!(WrapperSize::W16.alignment(), 16);
+        assert_eq!(WrapperSize::W32.alignment(), 16);
+        assert_eq!(WrapperSize::W64.alignment(), 16);
+        assert_eq!(WrapperSize::W128.alignment(), 16);
+        assert_eq!(WrapperSize::W256.alignment(), 16);
+        assert_eq!(WrapperSize::W512.alignment(), 16);
+        assert_eq!(WrapperSize::W1024.alignment(), 16);
     }
 
     #[test]
@@ -692,25 +696,25 @@ mod tests {
         assert_eq!(align_of::<ComponentWrapper8>(), 8);
 
         assert_eq!(size_of::<ComponentWrapper16>(), 16);
-        assert_eq!(align_of::<ComponentWrapper16>(), 8);
+        assert_eq!(align_of::<ComponentWrapper16>(), 16);
 
         assert_eq!(size_of::<ComponentWrapper32>(), 32);
-        assert_eq!(align_of::<ComponentWrapper32>(), 8);
+        assert_eq!(align_of::<ComponentWrapper32>(), 16);
 
         assert_eq!(size_of::<ComponentWrapper64>(), 64);
-        assert_eq!(align_of::<ComponentWrapper64>(), 8);
+        assert_eq!(align_of::<ComponentWrapper64>(), 16);
 
         assert_eq!(size_of::<ComponentWrapper128>(), 128);
-        assert_eq!(align_of::<ComponentWrapper128>(), 8);
+        assert_eq!(align_of::<ComponentWrapper128>(), 16);
 
         assert_eq!(size_of::<ComponentWrapper256>(), 256);
-        assert_eq!(align_of::<ComponentWrapper256>(), 8);
+        assert_eq!(align_of::<ComponentWrapper256>(), 16);
 
         assert_eq!(size_of::<ComponentWrapper512>(), 512);
-        assert_eq!(align_of::<ComponentWrapper512>(), 8);
+        assert_eq!(align_of::<ComponentWrapper512>(), 16);
 
         assert_eq!(size_of::<ComponentWrapper1024>(), 1024);
-        assert_eq!(align_of::<ComponentWrapper1024>(), 8);
+        assert_eq!(align_of::<ComponentWrapper1024>(), 16);
     }
 
     #[test]

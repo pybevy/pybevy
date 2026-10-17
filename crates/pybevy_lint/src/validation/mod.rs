@@ -234,6 +234,14 @@ pub fn validate_with_bevy(
             ));
         }
 
+        if let Some((_, bevy_item)) = resolved_bevy {
+            policy_diagnostics.extend(class_rules::validate_variant_payload_parity(
+                rust_class,
+                bevy_item,
+                &config.bevy,
+            ));
+        }
+
         // W031: exposed variant names must exist in the resolved upstream
         // enum (renamed/misspelled variant detection).
         if let Some((_, bevy_item)) = resolved_bevy

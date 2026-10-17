@@ -113,6 +113,22 @@ borrows, require mutable access, and expire when the system ends. A later
 layout pass can overwrite your adjustment. `ComputedStackIndex.value` is
 also writable, but the UI stacking system normally recomputes it.
 
+## CSS Grid
+
+`grid_template_rows` and `grid_template_columns` accept both `GridTrack` and
+`RepeatedGridTrack`; a bare track means one repetition. `grid_auto_rows` and
+`grid_auto_columns` accept only `GridTrack`.
+
+```python
+from pybevy.ui import Display, GridTrack, Node, RepeatedGridTrack
+
+grid = Node(
+    display=Display.Grid,
+    grid_template_columns=[GridTrack.px(90.0), RepeatedGridTrack.fr(2, 1.0)],
+    grid_auto_rows=[GridTrack.auto()],
+)
+```
+
 ## Layering
 
 `ZIndex(value)` orders siblings and descendants within a UI stacking context;

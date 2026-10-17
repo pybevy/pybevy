@@ -844,6 +844,19 @@ class QuatExpr:
         return f"QuatField({self.base_field_name})"
 
 
+class Vec4Expr(QuatExpr):
+    """
+    Proxy for Vec4 fields that provides x/y/z/w access.
+
+    `vec4.x` returns a FieldExpr for the x component.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return f"Vec4Field({self.base_field_name})"
+
+
 def const(value: float) -> Expr:
     """Create a constant expression node.
 

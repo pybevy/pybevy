@@ -1,6 +1,7 @@
 mod cfg_classes;
 mod conversions;
 mod declared_property_types;
+mod input_storage;
 mod iterator_returns;
 mod macros;
 mod manual_enum;
@@ -218,6 +219,7 @@ pub fn parse_file(path: &Path) -> Result<Vec<PyClassDef>> {
     }
 
     manual_enum::extract(&syntax, &mut classes);
+    input_storage::annotate(&syntax, &mut classes);
     iterator_returns::annotate_classes(&mut classes);
     declared_property_types::annotate_classes(&mut classes);
     Ok(classes)

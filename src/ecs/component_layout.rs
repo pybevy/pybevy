@@ -5,7 +5,10 @@ pub use pybevy_core::component_layout::{
     ComponentLayout, ComponentSerializationError, ComponentStorageType, PrimitiveType,
     PrimitiveValue,
 };
-use pybevy_math::{vec2::PyVec2, vec3::PyVec3};
+use pybevy_math::{
+    mat2::PyMat2, mat3::PyMat3, mat4::PyMat4, quat::PyQuat, vec2::PyVec2, vec3::PyVec3,
+    vec4::PyVec4,
+};
 use pyo3::{
     PyTypeInfo,
     exceptions::{PyRuntimeError, PyTypeError},
@@ -22,8 +25,8 @@ pub trait PrimitiveTypeExt {
     /// Convert to numpy dtype string
     fn to_numpy_dtype(self) -> &'static str;
 
-    /// Convert to FieldType for bytecode VM
-    fn to_field_type(self) -> FieldType;
+    /// Convert to FieldType for bytecode VM; `None` for matrices, which View does not expose
+    fn to_field_type(self) -> Option<FieldType>;
 }
 
 impl PrimitiveTypeExt for PrimitiveType {
@@ -43,6 +46,21 @@ impl PrimitiveTypeExt for PrimitiveType {
         }
         if ty.is(PyVec2::type_object(py)) {
             return Ok(Some(PrimitiveType::Vec2));
+        }
+        if ty.is(PyVec4::type_object(py)) {
+            return Ok(Some(PrimitiveType::Vec4));
+        }
+        if ty.is(PyQuat::type_object(py)) {
+            return Ok(Some(PrimitiveType::Quat));
+        }
+        if ty.is(PyMat2::type_object(py)) {
+            return Ok(Some(PrimitiveType::Mat2));
+        }
+        if ty.is(PyMat3::type_object(py)) {
+            return Ok(Some(PrimitiveType::Mat3));
+        }
+        if ty.is(PyMat4::type_object(py)) {
+            return Ok(Some(PrimitiveType::Mat4));
         }
 
         let ty_str_bound = ty.str()?;
@@ -67,13 +85,19 @@ impl PrimitiveTypeExt for PrimitiveType {
             PrimitiveType::U32 => "u4",
             PrimitiveType::U64 => "u8",
             PrimitiveType::Bool => "?",
-            PrimitiveType::Vec3 => "f4", // individual element dtype (used with 2D arrays)
-            PrimitiveType::Vec2 => "f4",
+            // individual element dtype (used with 2D arrays)
+            PrimitiveType::Vec3
+            | PrimitiveType::Vec2
+            | PrimitiveType::Vec4
+            | PrimitiveType::Quat
+            | PrimitiveType::Mat2
+            | PrimitiveType::Mat3
+            | PrimitiveType::Mat4 => "f4",
         }
     }
 
-    fn to_field_type(self) -> FieldType {
-        match self {
+    fn to_field_type(self) -> Option<FieldType> {
+        Some(match self {
             PrimitiveType::F32 => FieldType::F32,
             PrimitiveType::F64 => FieldType::F64,
             PrimitiveType::I32 => FieldType::I32,
@@ -83,7 +107,9 @@ impl PrimitiveTypeExt for PrimitiveType {
             PrimitiveType::Bool => FieldType::Bool,
             PrimitiveType::Vec3 => FieldType::Vec3,
             PrimitiveType::Vec2 => FieldType::Vec2,
-        }
+            PrimitiveType::Vec4 | PrimitiveType::Quat => FieldType::Vec4,
+            PrimitiveType::Mat2 | PrimitiveType::Mat3 | PrimitiveType::Mat4 => return None,
+        })
     }
 }
 
@@ -108,6 +134,46 @@ pub(crate) fn extract_primitive_from_py(
             let py_vec2: PyRef<PyVec2> = value.extract()?;
             PrimitiveValue::Vec2((&*py_vec2).try_into()?)
         }
+        PrimitiveType::Vec4 => {
+            let py_vec4: PyRef<PyVec4> = value.extract()?;
+            PrimitiveValue::Vec4((&*py_vec4).try_into()?)
+        }
+        PrimitiveType::Quat => {
+            let py_quat: PyRef<PyQuat> = value.extract()?;
+            PrimitiveValue::Quat((&*py_quat).try_into()?)
+        }
+        PrimitiveType::Mat2 => {
+            let py_mat2: PyRef<PyMat2> = value.extract()?;
+            PrimitiveValue::Mat2((&*py_mat2).try_into()?)
+        }
+        PrimitiveType::Mat3 => {
+            let py_mat3: PyRef<PyMat3> = value.extract()?;
+            PrimitiveValue::Mat3((&*py_mat3).try_into()?)
+        }
+        PrimitiveType::Mat4 => {
+            let py_mat4: PyRef<PyMat4> = value.extract()?;
+            PrimitiveValue::Mat4((&*py_mat4).try_into()?)
+        }
+    })
+}
+
+/// Convert one neutral primitive into an owned, independent Python value.
+pub(crate) fn primitive_to_py(py: Python<'_>, value: PrimitiveValue) -> PyResult<Bound<'_, PyAny>> {
+    Ok(match value {
+        PrimitiveValue::F32(value) => value.into_pyobject(py)?.into_any(),
+        PrimitiveValue::F64(value) => value.into_pyobject(py)?.into_any(),
+        PrimitiveValue::I32(value) => value.into_pyobject(py)?.into_any(),
+        PrimitiveValue::I64(value) => value.into_pyobject(py)?.into_any(),
+        PrimitiveValue::U32(value) => value.into_pyobject(py)?.into_any(),
+        PrimitiveValue::U64(value) => value.into_pyobject(py)?.into_any(),
+        PrimitiveValue::Bool(value) => PyBool::new(py, value).to_owned().into_any(),
+        PrimitiveValue::Vec3(value) => Bound::new(py, PyVec3::from(value))?.into_any(),
+        PrimitiveValue::Vec2(value) => Bound::new(py, PyVec2::from(value))?.into_any(),
+        PrimitiveValue::Vec4(value) => Bound::new(py, PyVec4::from(value))?.into_any(),
+        PrimitiveValue::Quat(value) => Bound::new(py, PyQuat::from(value))?.into_any(),
+        PrimitiveValue::Mat2(value) => Bound::new(py, PyMat2::from(value))?.into_any(),
+        PrimitiveValue::Mat3(value) => Bound::new(py, PyMat3::from(value))?.into_any(),
+        PrimitiveValue::Mat4(value) => Bound::new(py, PyMat4::from(value))?.into_any(),
     })
 }
 
@@ -143,7 +209,8 @@ impl ComponentLayoutExt for ComponentLayout {
                     let type_str = type_str_bound.to_str()?;
                     return Err(PyTypeError::new_err(format!(
                         "Component '{}' field '{}' has non-primitive type '{}'. \
-                         Only float, int, and bool are supported for wrapper storage.",
+                         Wrapper storage supports float, int, bool, Vec2, Vec3, Vec4, Quat, \
+                         Mat2, Mat3, and Mat4; use @component(storage=\"python\") for other types.",
                         name, field_name_str, type_str
                     )));
                 }

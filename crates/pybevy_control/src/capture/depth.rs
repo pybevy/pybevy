@@ -15,6 +15,9 @@ use crate::{
 
 const EXPLICIT_SAMPLE_EXTENT: i64 = 800;
 pub const MAX_DEPTH_GRID_DENSITY: u32 = 32;
+/// The sample count of the densest grid.
+pub const MAX_DEPTH_SAMPLE_POINTS: usize =
+    (MAX_DEPTH_GRID_DENSITY * MAX_DEPTH_GRID_DENSITY) as usize;
 
 #[derive(Debug)]
 pub struct PendingDepthAnalysis {
@@ -81,6 +84,12 @@ fn projection_ray(
 }
 
 fn validate_sample_points(sample_points: &[[i64; 2]]) -> Result<Vec<[u32; 2]>, ControlError> {
+    if sample_points.len() > MAX_DEPTH_SAMPLE_POINTS {
+        return Err(ControlError::invalid_params(format!(
+            "sample_points must contain at most {MAX_DEPTH_SAMPLE_POINTS} entries (got {})",
+            sample_points.len()
+        )));
+    }
     sample_points
         .iter()
         .enumerate()
@@ -879,6 +888,21 @@ mod tests {
         assert_eq!(
             error.message,
             "sample_points[0] must be within [0, 800) on both axes (got [99999, -50])"
+        );
+    }
+
+    #[test]
+    fn validate_depth_sampling_bounds_explicit_point_count() {
+        let maximum = Some(vec![[400, 400]; MAX_DEPTH_SAMPLE_POINTS]);
+        assert!(validate_depth_sampling(&maximum, &None).is_ok());
+
+        let oversized = Some(vec![[400, 400]; MAX_DEPTH_SAMPLE_POINTS + 1]);
+        let error = validate_depth_sampling(&oversized, &None)
+            .expect_err("more points than the densest grid must be rejected");
+        assert_eq!(error.code, ErrorCode::InvalidParams);
+        assert_eq!(
+            error.message,
+            "sample_points must contain at most 1024 entries (got 1025)"
         );
     }
 

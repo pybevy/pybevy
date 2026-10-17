@@ -41,7 +41,7 @@ use pybevy_core::{
     batch_columns::check_view_assignment,
     component_fields::declared_annotations,
     domain::FieldDomain,
-    public_error::{RESOURCE_VIEW_DATA, VIEW_COLUMN_READ_ONLY_ASSIGNMENT},
+    public_error::{self, RESOURCE_VIEW_DATA, VIEW_COLUMN_READ_ONLY_ASSIGNMENT},
     registry::global_registry,
 };
 use pyo3::{
@@ -396,6 +396,14 @@ impl PyView {
     }
 }
 
+/// A custom component's matrix field has no View column representation.
+pub(crate) fn matrix_view_field_error(field: &str, field_type: PrimitiveType) -> PyErr {
+    PyTypeError::new_err(public_error::view_matrix_field_unsupported(
+        field,
+        format!("{field_type:?}"),
+    ))
+}
+
 /// Get field offset and type information for a component field
 ///
 /// For custom components, returns VM FieldType (F32, I64, etc.)
@@ -426,42 +434,27 @@ pub(crate) fn get_component_field_info(
                                 for field in &layout.fields {
                                     if field.name == base {
                                         match field.field_type {
-                                            PrimitiveType::Vec3 => {
-                                                let sub_offset = match sub {
-                                                    "x" => 0,
-                                                    "y" => 4,
-                                                    "z" => 8,
-                                                    _ => {
-                                                        return Err(PyAttributeError::new_err(
-                                                            format!(
-                                                                "Vec3 has no sub-field '{}'",
-                                                                sub
-                                                            ),
-                                                        ));
-                                                    }
-                                                };
+                                            vector @ (PrimitiveType::Vec2
+                                            | PrimitiveType::Vec3
+                                            | PrimitiveType::Vec4
+                                            | PrimitiveType::Quat) => {
+                                                let lane = ["x", "y", "z", "w"]
+                                                    [..vector.element_count()]
+                                                    .iter()
+                                                    .position(|lane| *lane == sub)
+                                                    .ok_or_else(|| {
+                                                        PyAttributeError::new_err(format!(
+                                                            "{:?} has no sub-field '{}'",
+                                                            vector, sub
+                                                        ))
+                                                    })?;
                                                 return Ok((
-                                                    field.offset + sub_offset,
+                                                    field.offset + lane * 4,
                                                     VmFieldType::F32,
                                                 ));
                                             }
-                                            PrimitiveType::Vec2 => {
-                                                let sub_offset = match sub {
-                                                    "x" => 0,
-                                                    "y" => 4,
-                                                    _ => {
-                                                        return Err(PyAttributeError::new_err(
-                                                            format!(
-                                                                "Vec2 has no sub-field '{}'",
-                                                                sub
-                                                            ),
-                                                        ));
-                                                    }
-                                                };
-                                                return Ok((
-                                                    field.offset + sub_offset,
-                                                    VmFieldType::F32,
-                                                ));
+                                            matrix if matrix.is_matrix() => {
+                                                return Err(matrix_view_field_error(base, matrix));
                                             }
                                             _ => {
                                                 return Err(PyAttributeError::new_err(format!(
@@ -484,7 +477,10 @@ pub(crate) fn get_component_field_info(
                             // Find the field in the layout
                             for field in &layout.fields {
                                 if field.name == field_name {
-                                    let vm_field_type = field.field_type.to_field_type();
+                                    let vm_field_type =
+                                        field.field_type.to_field_type().ok_or_else(|| {
+                                            matrix_view_field_error(field_name, field.field_type)
+                                        })?;
                                     return Ok((field.offset, vm_field_type));
                                 }
                             }
@@ -601,6 +597,18 @@ pub(crate) fn native_view_field_domains(
 
 /// Shared __getattr__ implementation for both read-only and mutable column proxies
 /// Returns the appropriate field proxy (FieldExpr, Vec3Expr, or QuatExpr)
+/// The declared primitive type of one wrapper-stored custom component field.
+fn custom_field_primitive(
+    py: Python<'_>,
+    type_ptr: *const pyo3::ffi::PyTypeObject,
+    field_name: &str,
+) -> Option<PrimitiveType> {
+    // SAFETY: registered type pointers live for the interpreter lifetime.
+    let py_type = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
+    let layout = ComponentLayout::from_annotations(py_type.cast::<PyType>().ok()?).ok()?;
+    layout.get_field(field_name).map(|field| field.field_type)
+}
+
 fn create_field_proxy<'py>(
     py: Python<'py>,
     component_type: &PyComponentType,
@@ -614,8 +622,20 @@ fn create_field_proxy<'py>(
     let (offset, field_type) = get_component_field_info(component_type, field_name)?;
     let field_type_str = format!("{:?}", field_type); // FieldType Debug prints as "F32", "I64", etc.
 
-    // For Vec3/Vec2 fields (any component, including custom), return composite proxy
-    // Vec4 fields fall through to `_` - no Vec4Expr proxy yet
+    // For Vec3/Vec2 fields (any component, including custom), return composite proxy.
+    // Custom Vec4/Quat fields get x/y/z/w lane proxies; native quaternions are
+    // resolved through their bridge below.
+    if let (pybevy_bytecodevm::bytecode::FieldType::Vec4, PyComponentType::Custom(type_ptr)) =
+        (field_type, component_type)
+    {
+        let proxy_name = match custom_field_primitive(py, *type_ptr, field_name) {
+            Some(PrimitiveType::Quat) => "QuatExpr",
+            _ => "Vec4Expr",
+        };
+        let lane_proxy = expr_module.getattr(proxy_name)?;
+        let args = (component_id.index(), field_name, offset);
+        return Ok(lane_proxy.call1(args)?.unbind());
+    }
     match field_type {
         pybevy_bytecodevm::bytecode::FieldType::Vec3 => {
             let vec3_proxy = expr_module.getattr("Vec3Expr")?;

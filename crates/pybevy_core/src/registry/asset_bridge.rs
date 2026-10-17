@@ -18,7 +18,7 @@ use bevy::{
 };
 use pyo3::{ffi::PyTypeObject, prelude::*, types::PyType};
 
-use crate::{AssetBorrowCounter, ValidityFlagWithMode};
+use crate::{AssetBorrowCounter, ReaderCursorOp, ValidityFlagWithMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetEventRecord {
@@ -95,6 +95,14 @@ pub trait AssetBridge: Send + Sync + 'static {
         cursor: &mut Option<Box<dyn Any + Send + Sync>>,
     ) -> Vec<AssetEventRecord>;
 
+    /// Apply a reader cursor operation to an `AssetEvent<T>` reader's cursor.
+    fn event_reader_cursor(
+        &self,
+        world: &World,
+        cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        op: ReaderCursorOp,
+    ) -> usize;
+
     fn clear_events(&self, world: &mut World);
 
     fn events_is_empty(&self, world: &World) -> bool;
@@ -110,6 +118,14 @@ pub trait AssetBridge: Send + Sync + 'static {
         world: &World,
         cursor: &mut Option<Box<dyn Any + Send + Sync>>,
     ) -> Vec<AssetLoadFailedRecord>;
+
+    /// Apply a reader cursor operation to an `AssetLoadFailedEvent<T>` reader's cursor.
+    fn load_failed_reader_cursor(
+        &self,
+        world: &World,
+        cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+        op: ReaderCursorOp,
+    ) -> usize;
 
     fn clear_load_failed_events(&self, world: &mut World);
 
@@ -296,6 +312,15 @@ mod tests {
             unreachable!("not exercised by the trait-default tests")
         }
 
+        fn event_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
+        }
+
         fn clear_events(&self, _world: &mut World) {
             unreachable!("not exercised by the trait-default tests")
         }
@@ -318,6 +343,15 @@ mod tests {
             _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             unreachable!("not exercised by the trait-default tests")
+        }
+
+        fn load_failed_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
         }
 
         fn clear_load_failed_events(&self, _world: &mut World) {
@@ -457,6 +491,15 @@ mod tests {
             unreachable!("not exercised by the registry-key tests")
         }
 
+        fn event_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
+        }
+
         fn clear_events(&self, _world: &mut World) {
             unreachable!("not exercised by the registry-key tests")
         }
@@ -479,6 +522,15 @@ mod tests {
             _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
         ) -> Vec<AssetLoadFailedRecord> {
             unreachable!("not exercised by the registry-key tests")
+        }
+
+        fn load_failed_reader_cursor(
+            &self,
+            _world: &World,
+            _cursor: &mut Option<Box<dyn Any + Send + Sync>>,
+            _op: ReaderCursorOp,
+        ) -> usize {
+            0
         }
 
         fn clear_load_failed_events(&self, _world: &mut World) {

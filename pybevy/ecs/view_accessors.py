@@ -104,14 +104,24 @@ class QuatViewColumn:
             object.__setattr__(self, name, value)  # type: ignore[assignment]
         else:
             raise AttributeError(
-                f"QuatViewColumn has no field '{name}' (available: x, y, z, w)"
+                f"{type(self).__name__} has no field '{name}' (available: x, y, z, w)"
             )
 
     def __getitem__(self, _index: object) -> None:
         raise TypeError(
-            "QuatViewColumn indexing is not supported; select .x, .y, .z, or .w "
+            f"{type(self).__name__} indexing is not supported; select .x, .y, .z, or .w "
             "first, then use integer indexing or to_numpy() on that ViewColumn"
         )
+
+
+class Vec4ViewColumn(QuatViewColumn):
+    """Wrapper for ViewColumn pointing to a Vec4 field.
+
+    Provides `.x`, `.y`, `.z`, `.w` properties that return ViewColumn handles
+    for individual components. Supports assignment via `__setattr__`.
+    """
+
+    __slots__ = ()
 
 
 class Vec2ViewColumn:
@@ -154,4 +164,4 @@ class Vec2ViewColumn:
         )
 
 
-__all__ = ["QuatViewColumn", "Vec2ViewColumn", "Vec3ViewColumn"]
+__all__ = ["QuatViewColumn", "Vec2ViewColumn", "Vec3ViewColumn", "Vec4ViewColumn"]

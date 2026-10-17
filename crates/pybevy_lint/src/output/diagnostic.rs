@@ -151,6 +151,8 @@ pub enum DiagnosticCode {
     /// W041: wrapper lacks a method of a configured contract trait the Bevy
     /// type implements
     W041,
+    /// W042: exposed enum variant shape or payload type differs from Bevy
+    W042,
 
     // Test coverage info (T-codes)
     /// T001: Class has no test coverage
@@ -220,6 +222,7 @@ impl DiagnosticCode {
             DiagnosticCode::W039 => "W039",
             DiagnosticCode::W040 => "W040",
             DiagnosticCode::W041 => "W041",
+            DiagnosticCode::W042 => "W042",
             DiagnosticCode::T001 => "T001",
             DiagnosticCode::T002 => "T002",
             DiagnosticCode::T003 => "T003",
@@ -284,7 +287,8 @@ impl DiagnosticCode {
             | DiagnosticCode::W038
             | DiagnosticCode::W039
             | DiagnosticCode::W040
-            | DiagnosticCode::W041 => DiagnosticSeverity::Warning,
+            | DiagnosticCode::W041
+            | DiagnosticCode::W042 => DiagnosticSeverity::Warning,
 
             DiagnosticCode::T001 | DiagnosticCode::T002 | DiagnosticCode::T003 => {
                 DiagnosticSeverity::Info
@@ -392,6 +396,7 @@ impl DiagnosticCode {
             DiagnosticCode::W039 => "method return type differs from Bevy",
             DiagnosticCode::W040 => "Bevy enum wrapped as an ordinary class",
             DiagnosticCode::W041 => "wrapper lacks a Bevy contract trait method",
+            DiagnosticCode::W042 => "enum variant shape or payload type differs from Bevy",
             DiagnosticCode::T001 => "class has no test coverage",
             DiagnosticCode::T002 => "constructor not tested",
             DiagnosticCode::T003 => "member not tested",
