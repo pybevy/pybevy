@@ -129,7 +129,7 @@ pure column math. Measure the actual workload; see `guide://performance`.
 
 ## Gotcha: Resource Entities
 
-Resources live on entities (bevy 0.19), so a bare `Query[Entity]` also matches them. Use `Without[IsResource]` when an operation applies to every ordinary entity, or scope the query with a domain component:
+Resources live on entities (bevy 0.20), so a bare `Query[Entity]` also matches them. Use `Without[IsResource]` when an operation applies to every ordinary entity, or scope the query with a domain component:
 
 ```python
 from pybevy.ecs import IsResource, system
@@ -160,7 +160,7 @@ def inspect_time(query: Query[tuple[Entity, Time]]) -> None:
         print(resource_entity, time.elapsed_secs())
 ```
 
-This mirrors Bevy 0.19's `Query<(Entity, &Time)>` behavior for resource
+This mirrors Bevy 0.20's `Query<(Entity, &Time)>` behavior for resource
 entities.
 
 Parameterized asset collections use the same resource-entity path. Query them

@@ -112,12 +112,12 @@ mod tests {
         let mut list = list(vec![1.0, 2.0, 3.0]);
 
         assert_eq!(list.__len__().unwrap(), 3);
-        assert_eq!(list.__getitem__(0).unwrap(), 1.0);
-        assert_eq!(list.__getitem__(-1).unwrap(), 3.0);
-        assert!(list.__getitem__(-4).is_err());
+        assert_eq!(list.item(0).unwrap(), 1.0);
+        assert_eq!(list.item(-1).unwrap(), 3.0);
+        assert!(list.item(-4).is_err());
 
         list.__setitem__(0, 9.0).unwrap();
-        assert_eq!(list.__getitem__(0).unwrap(), 9.0);
+        assert_eq!(list.item(0).unwrap(), 9.0);
         assert!(list.__setitem__(5, 0.0).is_err());
 
         list.append(4.0).unwrap();

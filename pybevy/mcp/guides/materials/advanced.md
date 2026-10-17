@@ -164,11 +164,10 @@ commands.spawn(
 by the baker. The lightmap contribution is multiplied by the material's
 `base_color`, so a black or very dark base colour renders black at any
 `lightmap_exposure`. Do not attach `Lightmap` to a mesh without `ATTRIBUTE_UV_1`:
-Bevy 0.19 selects its lightmap shader from the component and that pipeline is
-invalid without the corresponding vertex attribute. Spawn succeeds and
-`get_last_error` stays null, but the mesh can appear flat white. Look for a
-`bevy_render::render_resource::pipeline_cache` shader error mentioning `uv_b`
-in the Rust logs; it may appear only once per material specialization.
+Bevy 0.20 selects its lightmap shader from the component and that pipeline is
+invalid without the corresponding vertex attribute. Spawn succeeds, but the mesh
+is not drawn, and `get_last_error.shader_errors` reports an invalid field
+accessor `uv_b`.
 
 ## UV Transform (Tiling)
 

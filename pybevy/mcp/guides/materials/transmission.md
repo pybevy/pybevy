@@ -45,6 +45,8 @@ commands.spawn(Mesh3d(sphere_mesh), MeshMaterial3d(glass))
 ```
 
 Screen-space specular transmission requires a non-blended material; use `AlphaMode.Opaque()`.
+The camera must also carry `ScreenSpaceTransmission()`; see
+[Camera-side settings](#camera-side-settings).
 
 ### Frosted Glass
 
@@ -127,8 +129,10 @@ commands.spawn(
 
 ### Camera-side settings
 
-PBR's transmission plugin registers `pybevy.pbr.ScreenSpaceTransmission` as a
-required `Camera3d` component, defaulting to `steps=1` and Medium quality. Each
+Specular transmission is opt-in per camera: add `pybevy.pbr.ScreenSpaceTransmission`
+to the `Camera3d`, as in `commands.spawn(Camera3d(), ScreenSpaceTransmission())`.
+Without it, glass and water render dark and opaque with no error or log line.
+It defaults to `steps=1` and Medium quality. Each
 step roughly supports another overlapping transmissive layer at the cost of a
 texture copy; `0` disables screen-space refraction. Quality controls blur on
 rough transmissive materials, so changing it has no visible effect at

@@ -1,19 +1,27 @@
 //! Finish in-flight pipeline compilation before an App releases its renderer,
 //! so no async compute worker drops the last render device reference later.
+//!
+//! A runner can also drop the App itself, with no exit request, while
+//! compilation is still running. The last released device is therefore parked
+//! until the next App releases its own, and is never destroyed at process exit.
+
+use std::sync::Mutex;
 
 use bevy::{
-    app::{App, AppExit, Plugin},
+    app::{App, AppExit, First, Plugin},
     ecs::{
+        change_detection::DetectChanges,
         message::Messages,
         resource::Resource,
         schedule::IntoScheduleConfigs,
-        system::{Res, ResMut},
+        system::{Commands, Res, ResMut},
         world::World,
     },
     render::{
         Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
         pipelined_rendering::RenderAppChannels,
         render_resource::{CachedPipelineState, CachedRenderPipelineId, PipelineCache},
+        renderer::RenderDevice,
     },
     tasks::block_on,
 };
@@ -22,7 +30,9 @@ use bevy::{
 pub struct PipelineCompilationDrainPlugin;
 
 impl Plugin for PipelineCompilationDrainPlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.add_systems(First, retain_render_device);
+    }
 
     fn finish(&self, app: &mut App) {
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
@@ -31,6 +41,37 @@ impl Plugin for PipelineCompilationDrainPlugin {
                 .add_systems(ExtractSchedule, extract_exit_requested)
                 .add_systems(Render, drain_on_exit_request.in_set(RenderSystems::Cleanup));
         }
+    }
+}
+
+static PARKED_RENDER_DEVICE: Mutex<Option<RenderDevice>> = Mutex::new(None);
+
+/// The App's render device, parked when the App drops.
+#[derive(Resource)]
+struct RetainedRenderDevice(Option<RenderDevice>);
+
+impl Drop for RetainedRenderDevice {
+    fn drop(&mut self) {
+        let Some(device) = self.0.take() else {
+            return;
+        };
+        let previous = PARKED_RENDER_DEVICE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(device);
+        drop(previous);
+    }
+}
+
+fn retain_render_device(
+    mut commands: Commands,
+    device: Option<Res<RenderDevice>>,
+    retained: Option<Res<RetainedRenderDevice>>,
+) {
+    if let Some(device) = device
+        && (retained.is_none() || device.is_changed())
+    {
+        commands.insert_resource(RetainedRenderDevice(Some(device.clone())));
     }
 }
 

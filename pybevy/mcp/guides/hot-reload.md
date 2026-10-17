@@ -66,6 +66,9 @@ helpers from the project root.
 - Auto-escalates to Full when Startup systems, observers, the set of resource
   types, a custom `@component`/`@resource` field layout, or the active or
   pending `@state` member changed since the previous successful reload.
+  Only a Startup system's own code counts: editing a module constant or helper
+  function it reads stays Partial and does not rerun it, so call
+  `reload {"mode": "full"}` after changing such data
   Component layout includes private (`_`-prefixed) stored fields
 - Startup condition changes include predicate code and AND/OR/NOT structure,
   for both fluent `run_if` configurations and `ConditionalSystem` expressions
@@ -253,7 +256,7 @@ def main(app: App) -> App:
 
 | Scenario | Mode | Why |
 |----------|------|-----|
-| Changed Startup system (scene setup) | Full | Need to re-run Startup to apply |
+| Changed Startup system (scene setup), or data and helpers it reads | Full | Need to re-run Startup to apply |
 | Changed Update system logic | Partial | Faster, keeps scene state |
 | Added new `@component`/`@resource` types | Full | Need fresh registration |
 | Changed `@component` fields or storage mode | Full | Partial reload auto-escalates before applying the new layout |

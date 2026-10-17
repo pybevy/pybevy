@@ -5,6 +5,7 @@ Glass sphere, frosted panel, and backlit leaf.
 ```python
 from pybevy.prelude import *
 from pybevy.light import TransmittedShadowReceiver
+from pybevy.pbr import ScreenSpaceTransmission
 
 @entrypoint
 def main(app: App) -> App:
@@ -19,9 +20,10 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    # Camera - bloom helps glass reflections pop
+    # Camera - transmission is opt-in per camera; bloom helps glass reflections pop
     commands.spawn(
         Camera3d(),
+        ScreenSpaceTransmission(),
         Transform.from_xyz(6, 4, 6).looking_at(Vec3(0, 1, 0), Vec3.Y),
         Bloom(intensity=0.15, low_frequency_boost=0.5),
         Name("camera"),
@@ -121,4 +123,5 @@ if __name__ == "__main__":
 - **TransmittedShadowReceiver** shows shadows on the back side of leaves
 - Place a lit reference behind glass on `sphere_pos + distance * normalize(sphere_pos - camera_pos)`.
 - Use bright lighting for transmission.
-- Refraction quality is per-camera: `ScreenSpaceTransmission(steps=2, quality=ScreenSpaceTransmissionQuality.High)` (pybevy.pbr) on the camera; `steps=0` disables refraction
+- The camera needs `ScreenSpaceTransmission()` (pybevy.pbr); without it glass renders dark and opaque, with no error
+- Refraction quality is per-camera: `ScreenSpaceTransmission(steps=2, quality=ScreenSpaceTransmissionQuality.High)`; `steps=0` disables refraction

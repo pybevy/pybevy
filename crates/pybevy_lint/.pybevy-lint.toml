@@ -3553,6 +3553,7 @@ paths = [
     "render.Tonemapping",
     "pbr.WireframeTopology",
     "render.Msaa",
+    "render.DebandDither",
 ]
 
 # API drift (W037-W041) that existed when the checks landed. Delete entries
@@ -3591,7 +3592,7 @@ paths = [
 
 [[validation.exceptions]]
 code = "W038"
-reason = "NextState is a live resource handle whose variant set, set_if_neq and reset change in place (see its W040 entry), so the Pending/PendingIfNeq payload Bevy code matches on is read through these accessors"
+reason = "NextState is a live resource handle whose variant set, set_if_different and reset change in place (see its W040 entry), so the Pending/PendingIfDifferent payload Bevy code matches on is read through these accessors"
 paths = [
     "ecs.NextState.is_pending",
     "ecs.NextState.peek_pending",
@@ -3661,7 +3662,7 @@ paths = [
 
 [[validation.exceptions]]
 code = "W040"
-reason = "NextState is a live, mutable resource handle: set, set_if_neq and reset change its Unchanged/Pending/PendingIfNeq variant in place, which frozen exact-variant objects cannot represent; repr reports the Bevy variant"
+reason = "NextState is a live, mutable resource handle: set, set_if_different and reset change its Unchanged/Pending/PendingIfDifferent variant in place, which frozen exact-variant objects cannot represent; repr reports the Bevy variant"
 paths = [
     "ecs.NextState",
 ]

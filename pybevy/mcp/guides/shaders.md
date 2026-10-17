@@ -497,7 +497,7 @@ restore the removed asset under its old handle. Update entity material handles
 to the returned handle when re-adding.
 
 `Assets.remove()` removes the CPU-side asset; it is not a visibility command.
-Bevy 0.19 can keep rendering its last uploaded values while an entity or another
+Bevy 0.20 can keep rendering its last uploaded values while an entity or another
 owner retains a strong handle. To stop drawing, hide/despawn the entity or
 remove/change its material component. Generated shaders remain available until
 Bevy reports the owning material unused, so removing the last CPU-side instance
@@ -547,7 +547,7 @@ The first version accepts `float` (`f32`), `int` (`i32`), `U32` (`u32`), and `Ve
 Import `U32` from `pybevy.material`: `indices: StorageBinding[U32] = StorageBinding()`
 declares an unsigned index buffer. In shader structs, `index: U32` accepts ordinary
 Python integers; packing checks the range `0..2**32 - 1`.
-Struct members must end in a letter or underscore. Conflicting generated names are rejected before rendering.
+Conflicting generated names are rejected before rendering.
 
 Packing validates value types, finite f32 ranges and signed/unsigned 32-bit integer ranges.
 It writes little-endian bytes, zeroes padding and uses Naga's field offsets,
@@ -853,6 +853,7 @@ import. Packages are Bevy's built-in modules, the generated `pybevy::gen`
 bindings, and shaders registered from Rust; an asset file cannot declare one.
 Until a package module exists Bevy keeps the material's pipeline waiting, the
 mesh draws nothing, and `get_last_error.shader_errors` names the missing module.
+A missing helper file is reported the same way, with the `.wesl` path it expects.
 
 ### Migrating naga_oil shaders
 
@@ -1341,8 +1342,10 @@ Different bool combinations produce different compiled shader pipelines (cached 
 Shader definition names must be unique after uppercasing bool fields. Engine-owned
 names such as `PREPASS_PIPELINE`, `DEFERRED_PREPASS`, `VERTEX_*` and `PYBEVY_*`
 are reserved. Existing vertex/fragment pipeline definitions are also checked at
-specialization time, including disabled material switches. Definitions introduced
-later by shader composition or other hooks are outside that runtime check.
+specialization time, including disabled material switches: a conflicting material
+draws nothing, and `get_last_error.shader_errors` names the define and the
+material. Definitions introduced later by shader composition or other hooks are
+outside that runtime check.
 
 ## Texture Slots
 

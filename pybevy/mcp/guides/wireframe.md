@@ -4,6 +4,7 @@ Debug wireframe overlays on 3D meshes. Requires explicit `WireframePlugin` regis
 
 ```python
 from pybevy.pbr import Wireframe, WireframeColor, NoWireframe, WireframeConfig, WireframePlugin
+from pybevy.prelude import *
 
 @entrypoint
 def main(app: App) -> App:
@@ -86,7 +87,7 @@ commands.spawn(
 triangles); `Triangles` shows every triangle edge. Both topology values are
 components and can override the global default per entity.
 
-**Wide-line clipping limitation:** Bevy 0.19's wide-wireframe shader can fill
+**Wide-line clipping limitation:** Bevy 0.20's wide-wireframe shader can fill
 a triangle that crosses the camera plane, with vertices both in front of and
 behind the camera, instead of drawing only its visible edges. Widths above
 `1.0` select this shader, as does `WireframeTopology.Quads` at any width. For

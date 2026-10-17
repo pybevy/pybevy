@@ -28,14 +28,14 @@ commands.spawn(
 )
 ```
 
-`Hdr` presence must match the base camera because it selects the intermediate
-color format. Mirror the base camera's `Msaa` value as well; if sample counts
-differ, preservation depends on `Camera.msaa_writeback` remaining `Auto`.
-For an LDR base camera, omit `Hdr` from both cameras. Keep
-`Tonemapping.None_` on the overlay even when both cameras use `Hdr`, otherwise
-the base camera's output is tone-mapped a second time. A shared target and
-`ClearColorConfig.None_()` are not sufficient when the intermediate buffers
-are incompatible.
+Match the base camera's `Hdr` presence. Bevy composites a stack that mixes
+`Hdr` and non-`Hdr` cameras, but there the overlay's semi-transparent pixels,
+such as anti-aliased glyph edges, lose their alpha. For an LDR base camera, omit
+`Hdr` from both cameras. Mirror the base camera's `Msaa` value as well; if
+sample counts differ, preservation depends on `Camera.msaa_writeback` remaining
+`Auto`. Do not give the overlay a curve tonemapper such as `TonyMcMapface`,
+which tone-maps the base camera's output a second time; `Tonemapping.None_`, or
+`Camera2d`'s default `Tonemapping.Linear`, leaves it unchanged.
 
 For HUDs use UI `Text` + `Node`; world-anchored labels require projecting
 world positions into the viewport.
@@ -284,7 +284,7 @@ commands.spawn(
 ```
 
 For long world-space strings, provide an explicit `TextBounds(width=...)` to
-control wrapping. In Bevy 0.19, the camera target still clips rendered text and
+control wrapping. In Bevy 0.20, the camera target still clips rendered text and
 `TextBounds.height` does not truncate laid-out lines. Use width, explicit line
 breaks, or UI `Text` when content must remain fully visible within a screen
 region.

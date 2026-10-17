@@ -79,7 +79,7 @@ commands.spawn(
 | 100,000 | Bright lamp |
 | 500,000+ | Very bright point source |
 
-**Render-layer limitation:** Bevy 0.19's GPU light-clustering path does not
+**Render-layer limitation:** Bevy 0.20's GPU light-clustering path does not
 filter point lights by each camera's `RenderLayers`. In a multi-view scene, a
 light assigned to one camera layer can illuminate geometry in another view
 whose frustum overlaps it. CPU clustering respects the layers, but PyBevy does

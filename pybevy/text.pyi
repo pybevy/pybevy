@@ -586,10 +586,9 @@ class LineBreak:
 class TextBounds(Component):
     """Width and height constraints supplied to world-space text layout.
 
-    Width controls line wrapping. Bevy 0.19 does not use height to clip or
-    truncate laid-out lines. Rendering is still clipped by the camera target,
-    so explicitly set a sufficiently wide bound when a long unwrapped Text2d
-    string must extend beyond the viewport-sized default layout area.
+    Width controls line wrapping. Bevy 0.20 does not use height to clip or
+    truncate laid-out lines. Text2d defaults to ``UNBOUNDED``, so an unwrapped
+    line is as long as its text; the camera target still clips what renders.
     """
 
     UNBOUNDED: ClassVar[TextBounds]

@@ -545,6 +545,18 @@ impl PyApp {
     }
 
     #[cfg(feature = "native-plugin")]
+    pub(crate) fn install_native_runtime(
+        native: &mut App,
+    ) -> (Arc<Mutex<Vec<PyErr>>>, SystemErrorBuffer) {
+        let needs_error_drain = !native.world().contains_resource::<ObserverRuntimeSinks>();
+        let sinks = Self::install_python_runtime(native);
+        if needs_error_drain {
+            native.add_systems(Last, report_native_system_errors);
+        }
+        sinks
+    }
+
+    #[cfg(feature = "native-plugin")]
     pub(crate) fn configure_native(
         py: Python<'_>,
         native: &mut App,
@@ -552,11 +564,7 @@ impl PyApp {
     ) -> PyResult<()> {
         let allocated = allocate_id().map_err(app_store_error)?;
         configure_standard_schedules(native);
-        let needs_error_drain = !native.world().contains_resource::<ObserverRuntimeSinks>();
-        let (errors, buffer) = Self::install_python_runtime(native);
-        if needs_error_drain {
-            native.add_systems(Last, report_native_system_errors);
-        }
+        let (errors, buffer) = Self::install_native_runtime(native);
         let app_id = BEVY_APPS
             .with(|apps| apps.borrow_mut().insert_with_id(allocated, App::empty()))
             .map_err(app_store_error)?;

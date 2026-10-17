@@ -135,6 +135,16 @@ commands.spawn(Camera3d(), Tonemapping.TonyMcMapface)
 
 Common options: `Tonemapping.TonyMcMapface` (cinematic), `Tonemapping.AcesFitted` (film), `Tonemapping.BlenderFilmic` (matches Blender renders).
 
+`Camera3d` also requires `DebandDither.Enabled` (from `pybevy.render`), which the
+tonemapping pass applies. With `Tonemapping.None_` that pass does not run, and
+Bevy logs a warning until the camera gets `DebandDither.Disabled`:
+
+```python
+from pybevy.render import DebandDither, Tonemapping
+
+commands.spawn(Camera3d(), Tonemapping.None_, DebandDither.Disabled)
+```
+
 ### Wireframe
 
 ```python
@@ -166,8 +176,10 @@ camera frustum `Sphere` likewise requires a finite, non-negative radius.
 
 On non-HDR cameras, only global exposure and post-saturation apply. Full color
 grading requires `Hdr()` and a `Tonemapping` other than `Tonemapping.None_`.
-`Camera3d` defaults to an enabled tonemapper; `Camera2d` does not. A
-component such as `Bloom` that requires `Hdr` also adds `Hdr`:
+`Camera3d` defaults to `Tonemapping.TonyMcMapface` and `Camera2d` to
+`Tonemapping.Linear`, an identity curve that still runs the tonemapping pass,
+so both grade fully with `Hdr()`. A component such as `Bloom` that requires
+`Hdr` also adds `Hdr`:
 
 ```python
 from pybevy.render import ColorGrading, ColorGradingSection
@@ -179,9 +191,6 @@ commands.spawn(
     ColorGrading(midtones=ColorGradingSection(saturation=0.7)),
 )
 ```
-
-For full grading on `Camera2d`, spawn an enabled `Tonemapping` alongside
-`Hdr()`; `Hdr()` with the default `Tonemapping.None_` applies no grading.
 
 Color grading also requires an enabled tonemapper. With `Hdr()` and
 `Tonemapping.None_`, bevy skips the tonemapping pass, so none of the
@@ -251,13 +260,14 @@ Other cameras in an app using deferred rendering add `DepthPrepass()`,
 forced-deferred meshes. A camera missing `DeferredPrepass()` leaves those meshes
 out of its frame while forward-rendered objects stay visible. A camera with
 `DepthPrepass()`, `NormalPrepass()` or `MotionVectorPrepass()` that sees a
-deferred mesh needs `DeferredPrepass()` as well, because Bevy 0.19 panics on the
+deferred mesh needs `DeferredPrepass()` as well, because Bevy 0.20 panics on the
 render thread for that combination. Give such a camera `DeferredPrepass()`, or
 render the material forward with
 `opaque_render_method=OpaqueRendererMethod.Forward`.
 
 ```python
 from pybevy.pbr import DefaultOpaqueRendererMethod
+from pybevy.prelude import *
 
 @entrypoint
 def main(app: App) -> App:

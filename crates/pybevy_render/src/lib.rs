@@ -1,6 +1,7 @@
 pub mod cache_cleanup;
 pub mod color_grading;
 pub mod color_grading_component;
+pub mod deband_dither;
 pub mod extent3d;
 pub mod face;
 pub mod mip_bias;
@@ -70,6 +71,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<texture_view_dimension::PyTextureViewDimension>()?;
     m.add_class::<vertex_format::PyVertexFormat>()?;
     m.add_class::<msaa::PyMsaa>()?;
+    m.add_class::<deband_dither::PyDebandDither>()?;
     m.add_class::<mip_bias::PyMipBias>()?;
     m.add_class::<color_grading_component::PyColorGrading>()?;
     m.add_class::<color_grading::PyColorGradingSection>()?;

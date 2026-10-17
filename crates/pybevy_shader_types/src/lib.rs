@@ -480,12 +480,13 @@ impl MaterialExtension for ShaderMaterialExtension {
 
         let names = shader_def_registry::get_names(data.def_names_id);
         if let Some(name) = shader_def_registry::pipeline_collision(&names, descriptor) {
-            error!(
-                "Material pipeline {:?}: shader define '{name}' conflicts with an existing pipeline definition (prepass={is_prepass}, deferred={is_deferred})",
-                descriptor.label
-            );
+            error!("{}", define_conflict(descriptor, name));
             // Bevy only exposes a missing-vertex-attribute specialization error.
             descriptor.vertex.shader = material_shader_variants::rejected_material_shader();
+            descriptor.vertex.shader_defs.push(ShaderDefVal::Bool(
+                format!("{REJECTED_DEFINE_PREFIX}{name}").into(),
+                true,
+            ));
             return Ok(());
         }
 
@@ -508,6 +509,41 @@ impl MaterialExtension for ShaderMaterialExtension {
 
         Ok(())
     }
+}
+
+const REJECTED_DEFINE_PREFIX: &str = "PYBEVY_REJECTED_DEFINE_";
+
+fn define_conflict(descriptor: &RenderPipelineDescriptor, name: &str) -> String {
+    let is_def = |wanted: &str| {
+        descriptor
+            .vertex
+            .shader_defs
+            .iter()
+            .any(|def| matches!(def, ShaderDefVal::Bool(name, true) if name == wanted))
+    };
+    let is_prepass = is_def(PREPASS_PIPELINE_DEF);
+    let is_deferred = is_prepass && is_def("DEFERRED_PREPASS");
+    format!(
+        "Material pipeline {:?}: shader define '{name}' conflicts with an existing pipeline definition (prepass={is_prepass}, deferred={is_deferred})",
+        descriptor.label
+    )
+}
+
+/// Why a material pipeline was replaced by the rejection placeholder, if it was.
+pub fn rejected_define_conflict(descriptor: &RenderPipelineDescriptor) -> Option<String> {
+    if descriptor.vertex.shader != material_shader_variants::rejected_material_shader() {
+        return None;
+    }
+    descriptor
+        .vertex
+        .shader_defs
+        .iter()
+        .find_map(|def| match def {
+            ShaderDefVal::Bool(name, true) => name
+                .strip_prefix(REJECTED_DEFINE_PREFIX)
+                .map(|name| define_conflict(descriptor, name)),
+            _ => None,
+        })
 }
 
 /// The complete material type: StandardMaterial + ShaderMaterialExtension.
@@ -757,6 +793,30 @@ mod tests {
             shader_def_registry::get_names(key.def_names_id),
             vec!["FLAG_103"],
             "a class with no fragment shader must still resolve its own def names"
+        );
+    }
+
+    #[test]
+    fn a_rejected_pipeline_names_its_conflicting_define() {
+        let mut descriptor = RenderPipelineDescriptor {
+            label: Some("pbr_opaque_mesh_pipeline".into()),
+            ..Default::default()
+        };
+        assert_eq!(rejected_define_conflict(&descriptor), None);
+
+        descriptor.vertex.shader = material_shader_variants::rejected_material_shader();
+        descriptor.vertex.shader_defs.push(ShaderDefVal::Bool(
+            format!("{REJECTED_DEFINE_PREFIX}TONEMAP_IN_SHADER").into(),
+            true,
+        ));
+
+        assert_eq!(
+            rejected_define_conflict(&descriptor).as_deref(),
+            Some(
+                "Material pipeline Some(\"pbr_opaque_mesh_pipeline\"): shader define \
+                 'TONEMAP_IN_SHADER' conflicts with an existing pipeline definition \
+                 (prepass=false, deferred=false)"
+            )
         );
     }
 }

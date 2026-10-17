@@ -183,10 +183,9 @@ with its depth rays.
 
 - **"No display server" error**: Make sure `WinitPlugin` is disabled and `headless=True` is passed to `run_scene`
 - **Black screenshots**: Ensure the camera has `RenderTarget.Image(ImageRenderTarget(handle=handle))` - without it, the camera targets a non-existent window
-- **A `Text2d` overlay hides the 3D pass**: A shared image target and
-  `ClearColorConfig.None_()` are not enough. Match the base camera's viewport,
-  `Hdr` presence, and `Msaa`, and use `Tonemapping.None_` on the overlay. See
-  `guide://ui-text` for the complete camera setup.
+- **A `Text2d` overlay looks wrong over the 3D pass**: Match the base camera's
+  viewport, `Hdr` presence, and `Msaa`, and keep curve tonemappers off the
+  overlay. See `guide://ui-text` for the complete camera setup.
 - **Camera capture error**: Add or activate a camera with a capturable target.
   Missing cameras, all-inactive cameras, `RenderTarget.None`, missing targets,
   unsupported texture-view targets, and window targets without a live primary

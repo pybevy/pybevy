@@ -22,7 +22,11 @@ use bevy::{
     },
 };
 use crossbeam_channel::{Receiver, Sender};
+use pybevy_core::public_error::{
+    READBACK_DIMENSIONS_INVALID, READBACK_LAYOUT_OVERFLOW, readback_buffer_too_large,
+};
 use tracing::{debug, error, warn};
+use wgpu_types::COPY_BYTES_PER_ROW_ALIGNMENT;
 
 /// (frame bytes, width, height, arrival sequence, source entity bits) of the latest readback frame.
 type LatestFrame = (Arc<Vec<u8>>, u32, u32, u64, u64);
@@ -95,6 +99,28 @@ fn readback_copy_extent(source: Extent3d, width: u32, height: u32) -> Extent3d {
         height: source.height.min(height),
         depth_or_array_layers: 1,
     }
+}
+
+/// Validate the copy layout and device buffer limit before allocating a readback.
+pub fn validate_readback_dimensions(
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+    max_buffer_size: u64,
+) -> Result<u64, String> {
+    if width == 0 || height == 0 || bytes_per_pixel == 0 {
+        return Err(READBACK_DIMENSIONS_INVALID.to_owned());
+    }
+    let row = width
+        .checked_mul(bytes_per_pixel)
+        .and_then(|row| row.checked_add(COPY_BYTES_PER_ROW_ALIGNMENT - 1))
+        .map(|row| row / COPY_BYTES_PER_ROW_ALIGNMENT * COPY_BYTES_PER_ROW_ALIGNMENT)
+        .ok_or_else(|| READBACK_LAYOUT_OVERFLOW.to_owned())?;
+    let size = u64::from(row) * u64::from(height);
+    if size > max_buffer_size {
+        return Err(readback_buffer_too_large(size, max_buffer_size));
+    }
+    Ok(size)
 }
 
 /// Component on camera entities: receives pixel data from render world

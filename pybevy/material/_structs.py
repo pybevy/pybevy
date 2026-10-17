@@ -79,11 +79,6 @@ def shader_type[Record](cls: type[Record]) -> type[Record]:
     wgsl_types: dict[str, str] = {}
     for member in members:
         _validate_wgsl_identifier(member.name, "shader struct field")
-        # Naga Oil rewrites trailing digits in struct members during composition.
-        if member.name[-1].isdigit():
-            raise TypeError(
-                f"Shader struct field '{member.name}' must not end in a digit: WGSL shader composition cannot round-trip it; end with a letter or underscore"
-            )
         annotation = hints[member.name]
         wgsl_type: str | None
         if annotation == U32:

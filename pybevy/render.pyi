@@ -876,3 +876,17 @@ class Tonemapping(Component):
     TonyMcMapface: ClassVar[Tonemapping]
     BlenderFilmic: ClassVar[Tonemapping]
     KhronosPbrNeutral: ClassVar[Tonemapping]
+
+class DebandDither(Component):
+    """Whether the tonemapping pass dithers its output to hide color banding.
+
+    `Camera3d` requires it as `Enabled`, `Camera2d` as `Disabled`. Dithering runs
+    in the tonemapping pass, so it has no effect with `Tonemapping.None_`.
+    """
+
+    def __init__(self) -> None:
+        """Bevy's default, `Disabled`."""
+    def __hash__(self) -> int: ...
+
+    Disabled: ClassVar[DebandDither]
+    Enabled: ClassVar[DebandDither]

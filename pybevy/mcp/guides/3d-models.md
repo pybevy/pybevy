@@ -192,5 +192,5 @@ required asset plugins are installed.
 7. Search `get_logs` for `Path not found`: a GLB referencing an external texture
    that was not bundled still loads with a correct entity count and bounding box,
    but its fallback material can render the model completely invisible rather
-   than merely untextured. `get_last_error` stays null, so the logs are the only
-   signal. Bundle every texture the GLB references.
+   than merely untextured. `get_last_error.asset_load_failures` lists the
+   missing texture path. Bundle every texture the GLB references.

@@ -1,9 +1,19 @@
 use bevy::{app::App, prelude::*, render::renderer::RenderDevice};
-use pybevy_core::{PluginBuild, PyHandle, public_error::invalid_entity_bits};
+use pybevy_core::{
+    PluginBuild, PyHandle,
+    public_error::{
+        READBACK_RENDER_DEVICE_MISSING, invalid_entity_bits, readback_camera_missing,
+        readback_receiver_missing,
+    },
+};
 use pybevy_macros::pyplugin;
-use pyo3::{exceptions::PyValueError, prelude::*};
+use pybevy_render::readback::validate_readback_dimensions;
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
-use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin};
+use super::readback::{FrameReceiver, ImageCopier, ImageCopyPlugin, list_entities, poll_frame};
 use crate::app::{app::PyApp, plugin::PyPlugin};
 
 #[pyplugin(ImageCopyPlugin)]
@@ -50,24 +60,27 @@ pub fn spawn_image_copier(
     app.borrow().with_bevy_app(|bevy_app| {
         let handle: Handle<Image> = image_handle.extract::<PyHandle>()?.try_into()?;
 
+        let entity = Entity::try_from_bits(camera_entity)
+            .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(camera_entity)))?;
+        bevy_app
+            .world()
+            .get_entity(entity)
+            .map_err(|_| PyRuntimeError::new_err(readback_camera_missing(entity)))?;
+
         let render_device = bevy_app
             .world()
             .get_resource::<RenderDevice>()
-            .ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(
-                    "RenderDevice not found - has the app been updated at least once?",
-                )
-            })?;
-
-        let entity = Entity::try_from_bits(camera_entity)
-            .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(camera_entity)))?;
+            .ok_or_else(|| PyRuntimeError::new_err(READBACK_RENDER_DEVICE_MISSING))?;
+        validate_readback_dimensions(width, height, 4, render_device.limits().max_buffer_size)
+            .map_err(PyValueError::new_err)?;
         let (frame_receiver, sender) = FrameReceiver::new(width, height);
         let copier = ImageCopier::new(handle, width, height, render_device, sender)
             .with_source_entity(entity);
 
         bevy_app
             .world_mut()
-            .entity_mut(entity)
+            .get_entity_mut(entity)
+            .map_err(|_| PyRuntimeError::new_err(readback_camera_missing(entity)))?
             .insert((copier, frame_receiver));
 
         Ok(())
@@ -81,19 +94,13 @@ pub fn try_receive_frame(app: &Bound<'_, PyApp>, camera_entity: u64) -> PyResult
         let entity = Entity::try_from_bits(camera_entity)
             .ok_or_else(|| PyValueError::new_err(invalid_entity_bits(camera_entity)))?;
 
-        let entity_ref = bevy_app.world().get_entity(entity).map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "Camera entity {:?} not found",
-                entity
-            ))
-        })?;
-
-        let receiver = entity_ref.get::<FrameReceiver>().ok_or_else(|| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "FrameReceiver not found on camera entity {:?} - is ImageCopier spawned?",
-                entity
-            ))
-        })?;
+        let entity_ref = bevy_app
+            .world()
+            .get_entity(entity)
+            .map_err(|_| PyRuntimeError::new_err(readback_camera_missing(entity)))?;
+        let receiver = entity_ref
+            .get::<FrameReceiver>()
+            .ok_or_else(|| PyRuntimeError::new_err(readback_receiver_missing(entity)))?;
 
         Ok(receiver.try_recv())
     })
@@ -107,7 +114,7 @@ pub fn try_receive_frame(app: &Bound<'_, PyApp>, camera_entity: u64) -> PyResult
 /// Returns None if no frame is available yet.
 #[pyfunction]
 pub fn poll_readback_frame(entity_bits: u64) -> Option<Vec<u8>> {
-    super::readback::poll_frame(entity_bits)
+    poll_frame(entity_bits)
 }
 
 /// List all entity bits that have readback frames available.
@@ -116,7 +123,7 @@ pub fn poll_readback_frame(entity_bits: u64) -> Option<Vec<u8>> {
 /// knowing their entity IDs in advance.
 #[pyfunction]
 pub fn list_readback_entities() -> Vec<u64> {
-    super::readback::list_entities()
+    list_entities()
 }
 
 pub(crate) fn add_to_module(module: &Bound<'_, PyModule>) -> PyResult<()> {

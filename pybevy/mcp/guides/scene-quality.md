@@ -336,12 +336,12 @@ height = Image(
 file formats and has no `R8Unorm`. Without `format=`, the default
 `Rgba8UnormSrgb` rejects the buffer as the wrong length.
 
-`image.convert(format)` follows Bevy 0.19's narrow conversion bridge. Sources
+`image.convert(format)` follows Bevy's narrow conversion bridge. Sources
 must use `R8Unorm`, `Rg8Unorm`, `Rgba8UnormSrgb`, `Bgra8UnormSrgb`, or
 `Bgra8Unorm`; requested targets are limited to `R8Unorm`, `Rg8Unorm`, and
-`Rgba8UnormSrgb`. A request for `R8Unorm` or `Rg8Unorm` returns an
-`Rgba8Unorm` image with four bytes per pixel because Bevy expands luma data
-back to RGBA. Unsupported source or target formats return `None`.
+`Rgba8UnormSrgb`. `R8Unorm` returns one luma byte per pixel and `Rg8Unorm`
+two bytes (luma, alpha) in the requested format. Unsupported source or target
+formats return `None`.
 
 Unsupported image-encoding errors list the encoders enabled in this build.
 Use one of those formats; membership in `ImageFormat` alone does not guarantee
@@ -400,6 +400,9 @@ commands.spawn(Camera3d(), ShadowFilteringMethod.Gaussian)  # Stable without TAA
 
 ### Water / Glass Materials
 ```python
+from pybevy.pbr import ScreenSpaceTransmission
+
+commands.spawn(Camera3d(), ScreenSpaceTransmission())  # Transmission is opt-in per camera
 water = StandardMaterial(
     base_color=Color.linear_rgb(0.1, 0.3, 0.5),
     specular_transmission=0.6, ior=1.33,

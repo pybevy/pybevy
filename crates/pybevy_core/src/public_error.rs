@@ -21,6 +21,24 @@ pub const WORLD_CALLBACK_COMMAND_ERRORS: &str = "World callback and command erro
 pub const WORLD_OPERATION_COMMAND_ERRORS: &str = "World operation and command errors";
 pub const WORLD_BATCH_ARGUMENTS: &str =
     "spawn_batch() cannot combine batch= with positional components or count=";
+pub const READBACK_RENDER_DEVICE_MISSING: &str =
+    "RenderDevice not found - has the app been updated at least once?";
+pub const READBACK_DIMENSIONS_INVALID: &str =
+    "Readback dimensions and bytes per pixel must be positive";
+pub const READBACK_LAYOUT_OVERFLOW: &str = "Readback dimensions exceed the supported buffer layout";
+
+pub fn readback_buffer_too_large(size: u64, limit: u64) -> String {
+    format!("Readback buffer requires {size} bytes, exceeding the device limit of {limit} bytes")
+}
+
+pub fn readback_camera_missing(entity: impl Debug) -> String {
+    format!("Camera entity {entity:?} not found")
+}
+
+pub fn readback_receiver_missing(entity: impl Debug) -> String {
+    format!("FrameReceiver not found on camera entity {entity:?} - is ImageCopier spawned?")
+}
+
 pub const SCREENSHOT_CAMERA3D_REQUIRED: &str = "position/look_at screenshot overrides require a Camera3d; omit them when capturing a Camera2d scene";
 pub const TURNAROUND_CAMERA3D_REQUIRED: &str =
     "capture_turnaround requires a Camera3d; Camera2d-only scenes cannot produce orbit views";
@@ -604,6 +622,8 @@ pub fn mesh_tangents_failed(error: impl Display) -> String {
     format!("Failed to generate tangents: {error}")
 }
 
+pub const LIVE_LIST_REMOVE_MISSING: &str = "list.remove(x): x not in list";
+pub const LIVE_LIST_MODIFIED_DURING_SORT: &str = "list modified during sort";
 pub fn fixed_length_collection(name: &str) -> String {
     format!("{name} has a fixed length; assign elements by index instead of resizing")
 }
@@ -775,6 +795,9 @@ pub fn shader_import_unresolved(shader: &str, import: &str) -> String {
         "{shader} imports `{import}`, which no loaded shader provides; load the shader that defines module `{import}` as a Shader asset and keep its handle"
     )
 }
+pub fn shader_asset_import_unresolved(shader: &str, import: &str, file: &str) -> String {
+    format!("{shader} imports `{import}`, but no shader asset `{file}` is loaded")
+}
 pub fn fixed_timestep_too_small(seconds: f64) -> String {
     format!(
         "Time[Fixed].timestep must be at least 0.0001 s (got {seconds:?} s); every frame runs FixedUpdate once per elapsed timestep"
@@ -816,6 +839,18 @@ pub fn any_of_query_data_position(kind: &str) -> String {
 pub const ANY_OF_VIEW_UNSUPPORTED: &str = "AnyOf[...] query data is not supported in View. Use Query[AnyOf[tuple[A, B]]] or Query[tuple[T, AnyOf[tuple[A, B]]]] for optional per-entity values.";
 pub const OR_VIEW_UNSUPPORTED: &str =
     "Or[...] is not supported in View. Use Query for disjunctive filters.";
+pub fn multi_component_filter_tuple_required(filter: &str) -> String {
+    format!(
+        "{filter} requires a component or tuple[...] of components, not another generic type; use {filter}[tuple[ComponentA, ComponentB]]"
+    )
+}
+
+pub fn parenthesized_component_filter(filter: &str) -> String {
+    format!(
+        "Use {filter}[tuple[...]] for multiple components, not {filter}[(...)]. Example: {filter}[tuple[ComponentA, ComponentB]]"
+    )
+}
+
 pub fn parenthesized_filter_tuple(kind: &str) -> String {
     format!(
         "{kind} filter groups must use tuple[...] rather than parentheses: {kind}[Data, tuple[With[A], Without[B]]]"

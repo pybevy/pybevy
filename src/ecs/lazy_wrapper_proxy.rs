@@ -4,16 +4,8 @@
 //! and lazily deserializes/serializes fields on access, avoiding the overhead of full
 //! object deserialization on every iteration.
 //!
-//! ## Design: Cache-Free Architecture
-//!
-//! Fields are deserialized on every access without caching. This design choice:
-//! - **Eliminates TLS corruption**: No `Py<PyAny>` objects stored = no Python refcount issues
-//! - **Prevents crashes at scale**: Tested with 25,600 entities without issues
-//! - **Minimal performance cost**: Fields rarely accessed >1× per iteration
-//! - **Thread-safe**: No shared state beyond the raw pointer and layout
-//!
-//! Previous versions cached deserialized Python objects, which caused thread-local storage
-//! corruption when used at scale (>25K entities) on Bevy's parallel worker threads.
+//! Fields are read on demand. Each proxy retains its Python class and reports that
+//! reference to cyclic GC; pointer access follows its validity and access mode.
 
 use std::sync::Arc;
 
@@ -41,7 +33,9 @@ use pyo3::{
 };
 
 use super::{
-    component_layout::{ComponentLayout, PrimitiveType, extract_primitive_from_py},
+    component_layout::{
+        ComponentLayout, PrimitiveType, PrimitiveValue, extract_primitive_from_py, primitive_to_py,
+    },
     helpers::validity_guard::ValidityFlagWithMode,
     world_gc::{WorldGcGuard, WorldGcState},
 };
@@ -515,7 +509,15 @@ impl PyLazyWrapperProxy {
         if name == "__dict__" {
             let values = PyDict::new(py);
             for field in &this.layout.fields {
-                values.set_item(&field.name, this.deserialize_field(py, &field.name)?)?;
+                this.check_valid()?;
+                // SAFETY: validity and the registered layout bound this live field.
+                let value = unsafe {
+                    PrimitiveValue::read_from_ptr(
+                        field.field_type,
+                        this.resolved_ptr()?.add(field.offset),
+                    )
+                };
+                values.set_item(&field.name, primitive_to_py(py, value)?)?;
             }
             return Ok(values.into_any().unbind());
         }

@@ -87,6 +87,8 @@ vol.fade_towards(Volume.Linear(1.0), 0.1)  # Smooth fade
 Affects all audio output:
 
 ```python
+from pybevy.prelude import *
+
 @entrypoint
 def main(app: App) -> App:
     return (

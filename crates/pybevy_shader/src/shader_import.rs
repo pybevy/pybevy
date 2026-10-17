@@ -21,13 +21,6 @@ pub enum PyShaderImport {
 
 #[pymethods]
 impl PyShaderImport {
-    pub fn module_name(&self) -> String {
-        match self {
-            PyShaderImport::AssetPath { value } => format!("\"{value}\""),
-            PyShaderImport::Custom { value } => value.clone(),
-        }
-    }
-
     fn __repr__(&self) -> String {
         match self {
             PyShaderImport::AssetPath { value } => {
@@ -35,9 +28,5 @@ impl PyShaderImport {
             }
             PyShaderImport::Custom { value } => format!("ShaderImport.Custom({})", str_repr(value)),
         }
-    }
-
-    fn __str__(&self) -> String {
-        self.module_name()
     }
 }

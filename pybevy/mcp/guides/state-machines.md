@@ -127,19 +127,19 @@ def check_start_game(
 
 `set()` is unconditional, matching Bevy: setting the current member runs that
 identity transition's `OnExit`, `OnTransition`, and `OnEnter` schedules. Use
-`set_if_neq()` for a per-frame driver that should skip same-state exit and
+`set_if_different()` for a per-frame driver that should skip same-state exit and
 enter work:
 
 ```python
 @system
 def drive_phase(next_state: ResMut[NextState[GamePhase]]) -> None:
-    next_state.set_if_neq(GamePhase.PLAYING)
+    next_state.set_if_different(GamePhase.PLAYING)
 ```
 
 Bevy still runs `OnTransition(current, current)` for that conditional identity
 transition. `NextState` holds one pending request. A later request for a
 different target replaces it, even if the earlier `set()` targets the current
-state. The exception is `set(X)` followed by `set_if_neq(X)`: the unconditional
+state. The exception is `set(X)` followed by `set_if_different(X)`: the unconditional
 request remains pending, so same-state exit and enter still run. When requests
 come from different systems, explicitly order those systems if the winner
 matters; registration order alone is not an execution guarantee.
@@ -252,7 +252,7 @@ silently queuing nothing.
 
 Control-plane `set_resource` requests retain unconditional `set()` semantics.
 Repeatedly writing the current member therefore runs the full identity
-transition; `set_if_neq()` is available through Python systems and World
+transition; `set_if_different()` is available through Python systems and World
 resource access when conditional lifecycle behavior is required.
 
 Transitions stay deferred: the value is queued and applied by the transition
