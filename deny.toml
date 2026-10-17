@@ -7,6 +7,9 @@ ignore = [
     # quick-xml: patched in 0.41, reachable only through wayland-scanner.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # ruzstd: decompression-bomb DoS, patched only in 0.9.1; bevy_image pins
+    # 0.8 and decodes zstd KTX2 assets the app itself loads.
+    "RUSTSEC-2026-0344",
 ]
 
 [licenses]
