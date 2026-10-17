@@ -171,3 +171,75 @@ impl StorageElement {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::StorageElement;
+
+    #[test]
+    fn derives_scalar_vector_matrix_and_nested_struct_layouts() {
+        for (element, stride) in [
+            ("f32", 4),
+            ("u32", 4),
+            ("vec2<f32>", 8),
+            ("vec3<f32>", 16),
+            ("mat3x3<f32>", 48),
+            ("array<vec2<u32>, 3>", 24),
+        ] {
+            assert_eq!(StorageElement::parse(element, "").unwrap().stride, stride);
+        }
+        let value = StorageElement::parse(
+            "Particle",
+            "struct Particle { position: vec3<f32>, age: f32, weights: array<vec2<f32>, 3>, }",
+        )
+        .unwrap();
+        assert_eq!((value.alignment, value.stride), (16, 48));
+    }
+
+    #[test]
+    fn reports_struct_member_offsets_and_sizes() {
+        let layout = StorageElement::struct_layout(
+            "Tile",
+            "struct Tile { weight: f32, position: vec3<f32>, count: i32, uv: vec2<f32>, }",
+        )
+        .unwrap();
+        assert_eq!((layout.size, layout.stride, layout.alignment), (48, 48, 16));
+        assert_eq!(
+            layout
+                .fields
+                .iter()
+                .map(|f| (f.offset, f.size, f.alignment))
+                .collect::<Vec<_>>(),
+            vec![(0, 4, 4), (16, 12, 16), (28, 4, 4), (32, 8, 8)]
+        );
+        assert_eq!(layout.fields[1].name, "position");
+        assert!(StorageElement::struct_layout("vec4<f32>", "").is_err());
+    }
+
+    #[test]
+    fn validates_shared_declarations_and_rejects_conflicting_names() {
+        let source = "struct Paint { color: vec4<f32>, }".to_owned();
+        let values = vec![("Paint".into(), source.clone()), ("Paint".into(), source)];
+        assert_eq!(StorageElement::parse_layouts(&values).unwrap().len(), 2);
+        let conflict = vec![
+            ("Paint".into(), "struct Paint { a: f32, }".into()),
+            ("Paint".into(), "struct Paint { b: u32, }".into()),
+        ];
+        assert!(StorageElement::parse_layouts(&conflict).is_err());
+    }
+
+    #[test]
+    fn rejects_non_host_shareable_or_unsized_elements_and_code() {
+        for value in [
+            "bool",
+            "array<f32>",
+            "atomic<u32>",
+            "ptr<storage, f32>",
+            "unknown",
+            "vec4<f16>",
+        ] {
+            assert!(StorageElement::parse(value, "").is_err(), "{value}");
+        }
+        assert!(StorageElement::parse("f32", "fn helper() {}").is_err());
+    }
+}

@@ -632,7 +632,7 @@ impl BorrowedPathGuard {
     fn acquire(owner: Arc<dyn AccessGate>, write: bool) -> Result<Self, StorageError> {
         owner
             .gate()
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 if write {
                     (count == 0).then_some(-1)
                 } else {

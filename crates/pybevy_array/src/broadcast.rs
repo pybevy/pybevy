@@ -70,3 +70,56 @@ pub fn broadcast_strides(layout: &Layout, target_shape: &[usize]) -> ArrayResult
     }
     Ok(strides)
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equal_shapes_broadcast_to_themselves() {
+        assert_eq!(broadcast_shapes(&[2, 3], &[2, 3]).unwrap(), vec![2, 3]);
+    }
+
+    #[test]
+    fn scalar_broadcasts() {
+        assert_eq!(broadcast_shapes(&[2, 3], &[]).unwrap(), vec![2, 3]);
+        assert_eq!(broadcast_shapes(&[], &[4]).unwrap(), vec![4]);
+    }
+
+    #[test]
+    fn one_axis_broadcasts() {
+        assert_eq!(broadcast_shapes(&[2, 3], &[3]).unwrap(), vec![2, 3]);
+        assert_eq!(broadcast_shapes(&[2, 1], &[1, 3]).unwrap(), vec![2, 3]);
+    }
+
+    #[test]
+    fn incompatible_shapes_error() {
+        assert!(matches!(
+            broadcast_shapes(&[2, 3], &[4]),
+            Err(ArrayError::BroadcastMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn broadcast_strides_zero_on_broadcast_axis() {
+        // shape [3] viewed as [2, 3]: leading axis broadcast (stride 0).
+        let l = Layout::c_contiguous(&[3]).unwrap();
+        let s = broadcast_strides(&l, &[2, 3]).unwrap();
+        assert_eq!(s, vec![0, 1]);
+    }
+
+    #[test]
+    fn broadcast_strides_size_one_axis() {
+        // shape [2, 1] viewed as [2, 3]: last axis broadcast.
+        let l = Layout::c_contiguous(&[2, 1]).unwrap();
+        let s = broadcast_strides(&l, &[2, 3]).unwrap();
+        assert_eq!(s, vec![1, 0]);
+    }
+
+    #[test]
+    fn broadcast_strides_reject_shrink() {
+        let l = Layout::c_contiguous(&[2, 3]).unwrap();
+        assert!(broadcast_strides(&l, &[3]).is_err());
+    }
+}

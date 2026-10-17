@@ -201,3 +201,83 @@ impl MaterialShaderVariants {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ShaderMaterial, StorageShaderMaterial};
+    #[test]
+    fn import_replacement_preserves_prefix_neighbors() {
+        let source = "#import pybevy::gen::Surface as p\n#import pybevy::gen::SurfaceExtra as q\np::x; pybevy::gen::Surface::value;";
+        assert_eq!(
+            replace_import(source, "pybevy::gen::Surface", "private::version"),
+            "#import private::version as p\n#import pybevy::gen::SurfaceExtra as q\np::x; private::version::value;"
+        );
+    }
+    #[test]
+    fn layout_variants_are_distinct_and_retired_assets_are_removed() {
+        let first = ShaderMaterialExtension {
+            bindings_wgsl: Some(
+                "#define_import_path pybevy::gen::Surface\nstruct Data { tint: f32, }".into(),
+            ),
+            ..Default::default()
+        };
+        let second = ShaderMaterialExtension {
+            bindings_wgsl: Some(
+                "#define_import_path pybevy::gen::Surface\nstruct Data { tint: vec4<f32>, }".into(),
+            ),
+            ..Default::default()
+        };
+        let mut variants = MaterialShaderVariants::default();
+        let mut shaders = Assets::<Shader>::default();
+        let first = MaterialShaderSources::from(&first);
+        let second = MaterialShaderSources::from(&second);
+        variants.sync(&mut shaders, &[&first, &second]);
+        assert_eq!(shaders.len(), 3);
+        let paths: HashSet<_> = shaders
+            .iter()
+            .map(|(_, shader)| shader.import_path.clone())
+            .collect();
+        assert_eq!(paths.len(), 3);
+        variants.sync(&mut shaders, &[&second]);
+        assert_eq!(shaders.len(), 2);
+        variants.sync(&mut shaders, &[]);
+        assert_eq!(shaders.len(), 1);
+        assert!(shaders.contains(rejected_material_shader().id()));
+        assert_eq!(variants.entries.len(), 1);
+    }
+    #[test]
+    fn removed_material_sources_survive_until_unused_without_aliasing_asset_types() {
+        let mut ordinary = Assets::<ShaderMaterial>::default();
+        let mut extended = Assets::<StorageShaderMaterial>::default();
+        let a = ordinary.add(ShaderMaterial::default());
+        let b = extended.add(StorageShaderMaterial::default());
+        let first = ShaderMaterialExtension {
+            bindings_wgsl: Some(
+                "#define_import_path pybevy::gen::Retained\nstruct Data { value: f32, }".into(),
+            ),
+            ..Default::default()
+        };
+        let mut second = first.clone();
+        second.bindings_wgsl =
+            Some("#define_import_path pybevy::gen::Retained\nstruct Data { value: i32, }".into());
+        let mut lifetimes = MaterialShaderLifetimes::default();
+        lifetimes.observe(a.id().untyped(), &first);
+        lifetimes.observe(b.id().untyped(), &first);
+        assert_eq!(lifetimes.sources.len(), 2);
+        ordinary.remove(a.id());
+        lifetimes.observe(b.id().untyped(), &second);
+        let mut variants = MaterialShaderVariants::default();
+        let mut shaders = Assets::<Shader>::default();
+        variants.sync(&mut shaders, &lifetimes.sources());
+        assert_eq!(shaders.len(), 3);
+        lifetimes.forget(a.id().untyped());
+        variants.sync(&mut shaders, &lifetimes.sources());
+        assert_eq!(shaders.len(), 2);
+        assert_eq!(lifetimes.sources()[0].bindings_wgsl, second.bindings_wgsl);
+        lifetimes.forget(b.id().untyped());
+        variants.sync(&mut shaders, &lifetimes.sources());
+        assert_eq!(shaders.len(), 1);
+        assert!(lifetimes.sources().is_empty());
+    }
+}

@@ -139,3 +139,83 @@ impl MaterialSamplerCache {
         Ok(&entry.sampler)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::image::ImageCompareFunction;
+
+    use super::*;
+
+    #[test]
+    fn rejects_invalid_descriptors_before_gpu_creation() {
+        let mut binding = MaterialSamplerBinding {
+            kind: MaterialSamplerKind::NonFiltering,
+            descriptor: ImageSamplerDescriptor::default(),
+        };
+        assert!(binding.validate(WgpuFeatures::empty()).is_ok());
+        binding.descriptor.mag_filter = ImageFilterMode::Linear;
+        assert!(binding.validate(WgpuFeatures::empty()).is_err());
+        binding.kind = MaterialSamplerKind::Filtering;
+        assert!(binding.validate(WgpuFeatures::empty()).is_ok());
+        binding.descriptor.compare = Some(ImageCompareFunction::Less);
+        assert!(binding.validate(WgpuFeatures::empty()).is_err());
+        binding.kind = MaterialSamplerKind::Comparison;
+        assert!(binding.validate(WgpuFeatures::empty()).is_ok());
+        for value in [f32::NAN, f32::INFINITY, -1.0, 33.0] {
+            binding.descriptor.lod_min_clamp = value;
+            assert!(binding.validate(WgpuFeatures::empty()).is_err());
+        }
+        binding.descriptor = ImageSamplerDescriptor::default();
+        binding.kind = MaterialSamplerKind::Filtering;
+        binding.descriptor.anisotropy_clamp = 0;
+        assert!(binding.validate(WgpuFeatures::empty()).is_err());
+        binding.descriptor.anisotropy_clamp = 2;
+        assert!(binding.validate(WgpuFeatures::empty()).is_err());
+        binding.descriptor = ImageSamplerDescriptor::linear();
+        binding.descriptor.anisotropy_clamp = 32;
+        assert!(binding.validate(WgpuFeatures::empty()).is_ok());
+        binding.descriptor.address_mode_u = ImageAddressMode::ClampToBorder;
+        assert!(binding.validate(WgpuFeatures::empty()).is_err());
+        assert!(
+            binding
+                .validate(WgpuFeatures::ADDRESS_MODE_CLAMP_TO_BORDER)
+                .is_ok()
+        );
+        binding.descriptor.border_color = Some(ImageSamplerBorderColor::Zero);
+        assert!(
+            binding
+                .validate(WgpuFeatures::ADDRESS_MODE_CLAMP_TO_BORDER)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn cache_shares_reuses_and_retires_sampler_allocations() {
+        let (device, _) = wgpu::Device::noop(&Default::default());
+        let device = RenderDevice::from(device);
+        let mut cache = MaterialSamplerCache::default();
+        let mut binding = MaterialSamplerBinding {
+            kind: MaterialSamplerKind::Filtering,
+            descriptor: ImageSamplerDescriptor::default(),
+        };
+        cache.begin_frame();
+        let first = cache.prepare(&binding, &device).unwrap().id();
+        assert_eq!(cache.prepare(&binding, &device).unwrap().id(), first);
+        cache.finish_frame();
+        cache.begin_frame();
+        assert_eq!(cache.prepare(&binding, &device).unwrap().id(), first);
+        binding.descriptor = ImageSamplerDescriptor::linear();
+        assert_ne!(cache.prepare(&binding, &device).unwrap().id(), first);
+        cache.finish_frame();
+        assert_eq!(cache.entries.len(), 2);
+        cache.begin_frame();
+        cache.prepare(&binding, &device).unwrap();
+        cache.finish_frame();
+        assert_eq!(cache.entries.len(), 1);
+        binding.kind = MaterialSamplerKind::NonFiltering;
+        cache.begin_frame();
+        assert!(cache.prepare(&binding, &device).is_err());
+        cache.finish_frame();
+        assert!(cache.entries.is_empty());
+    }
+}

@@ -641,4 +641,109 @@ pub fn sync_shader_handles(
     *reported_diagnostics = current_diagnostics;
 }
 
+#[cfg(test)]
+mod material_import_validation_tests {
+    use bevy::{
+        MinimalPlugins,
+        app::{App, Last},
+        asset::{AssetApp, AssetPlugin},
+    };
+
+    use super::*;
+
+    #[test]
+    fn invalid_native_shader_path_does_not_panic_in_sync_system() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_plugins(AssetPlugin::default());
+        app.init_asset::<Shader>();
+        app.init_asset::<ShaderMaterial>();
+        app.add_systems(Last, sync_shader_handles);
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<ShaderMaterial>>()
+            .add(ShaderMaterial {
+                base: StandardMaterial::default(),
+                extension: ShaderMaterialExtension {
+                    fragment_shader_path: Some("shaders/invalid.wgsl#".to_owned()),
+                    ..Default::default()
+                },
+            });
+
+        app.update();
+        assert!(handle.is_strong());
+        assert_eq!(app.world().resource::<Assets<ShaderMaterial>>().len(), 1);
+        assert!(get_shader_handle(hash_shader_path("shaders/invalid.wgsl#")).is_none());
+    }
+
+    #[test]
+    fn generated_import_path_comes_from_the_materials_own_bindings() {
+        let bindings = "// generated\n#define_import_path pybevy::gen::ExpectedMaterial\n";
+
+        assert_eq!(
+            expected_generated_material_import(bindings),
+            Some("pybevy::gen::ExpectedMaterial")
+        );
+    }
+
+    #[test]
+    fn another_generated_material_import_is_a_mismatch() {
+        let shader = Shader::from_wgsl(
+            "#import pybevy::gen::OtherMaterial as params\n\n@fragment\nfn fragment() -> \
+             @location(0) vec4<f32> { return params::material.color; }\n",
+            "shader.wgsl",
+        );
+
+        assert_eq!(
+            mismatched_generated_material_imports(&shader, "pybevy::gen::ExpectedMaterial")
+                .collect::<Vec<_>>(),
+            vec!["pybevy::gen::OtherMaterial"]
+        );
+        assert!(
+            mismatched_generated_material_imports(&shader, "pybevy::gen::OtherMaterial")
+                .next()
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    fn extension(frag: Option<&str>, type_id: Option<u64>) -> ShaderMaterialExtension {
+        ShaderMaterialExtension {
+            fragment_shader_path: frag.map(str::to_string),
+            logical_type_id: type_id,
+            shader_defs: 0b01,
+            shader_def_names: vec![format!("FLAG_{}", type_id.unwrap_or(0))],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn two_classes_sharing_one_shader_get_distinct_keys() {
+        let first = ShaderMaterialKey::from(&extension(Some("shaders/shared.wgsl"), Some(101)));
+        let second = ShaderMaterialKey::from(&extension(Some("shaders/shared.wgsl"), Some(102)));
+
+        assert_eq!(first.frag_shader_id, second.frag_shader_id);
+        assert_ne!(
+            first, second,
+            "classes sharing a .wgsl must specialize separately so their defs decode correctly"
+        );
+    }
+
+    #[test]
+    fn a_vertex_only_class_still_carries_its_def_names_key() {
+        let key = ShaderMaterialKey::from(&extension(None, Some(103)));
+
+        assert_eq!(key.frag_shader_id, 0);
+        assert_eq!(
+            shader_def_registry::get_names(key.def_names_id),
+            vec!["FLAG_103"],
+            "a class with no fragment shader must still resolve its own def names"
+        );
+    }
+}
+
 pub mod sampler_binding;

@@ -627,3 +627,572 @@ fn reduce_group(group: &[Scalar], op: AxisReduce) -> Scalar {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use super::*;
+    use crate::storage::{ArrayStorage, BorrowProbe};
+
+    fn f64_array(data: &[f64], shape: &[usize]) -> DenseArrayCore {
+        DenseArrayCore::from_storage(ArrayStorage::Float64(data.to_vec()), shape).unwrap()
+    }
+
+    #[test]
+    fn arange_rejects_a_nan_bound_or_step() {
+        for (start, stop, step) in [
+            (f64::NAN, 1.0, 1.0),
+            (0.0, f64::NAN, 1.0),
+            (0.0, 5.0, f64::NAN),
+        ] {
+            let result = DenseArrayCore::arange(
+                Scalar::F64(start),
+                Scalar::F64(stop),
+                Scalar::F64(step),
+                ArrayDType::Float64,
+            );
+            assert_eq!(result.err(), Some(ArrayError::NanRangeLength));
+        }
+    }
+
+    #[test]
+    fn from_storage_validates_length() {
+        let err = DenseArrayCore::from_storage(ArrayStorage::Float64(vec![1.0; 5]), &[2, 3]);
+        assert!(matches!(err, Err(ArrayError::StorageLengthMismatch { .. })));
+    }
+
+    #[test]
+    fn zeros_shape_and_dtype() {
+        let a = DenseArrayCore::zeros(ArrayDType::Float32, &[2, 3]).unwrap();
+        assert_eq!(a.shape(), &[2, 3]);
+        assert_eq!(a.dtype(), ArrayDType::Float32);
+        assert_eq!(a.size(), 6);
+        assert_eq!(a.itemsize(), 4);
+        assert!(
+            a.to_scalars()
+                .unwrap()
+                .iter()
+                .all(|&s| s == Scalar::F64(0.0))
+        );
+    }
+
+    #[test]
+    fn integer_arange_is_exact_above_f64_range() {
+        let start = 9_007_199_254_740_992_i64;
+        let array = DenseArrayCore::arange(
+            Scalar::I64(start),
+            Scalar::I64(start + 3),
+            Scalar::I64(1),
+            ArrayDType::Int64,
+        )
+        .unwrap();
+        assert_eq!(
+            array.to_scalars().unwrap(),
+            vec![
+                Scalar::I64(start),
+                Scalar::I64(start + 1),
+                Scalar::I64(start + 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn integer_arange_handles_negative_steps() {
+        let array = DenseArrayCore::arange(
+            Scalar::I64(5),
+            Scalar::I64(-2),
+            Scalar::I64(-2),
+            ArrayDType::Int64,
+        )
+        .unwrap();
+        assert_eq!(
+            array.to_scalars().unwrap(),
+            vec![
+                Scalar::I64(5),
+                Scalar::I64(3),
+                Scalar::I64(1),
+                Scalar::I64(-1)
+            ]
+        );
+    }
+
+    #[test]
+    fn get_set_roundtrip() {
+        let mut a = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        assert_eq!(a.get(&[1, 2]).unwrap(), Scalar::F64(6.0));
+        a.set(&[0, 0], Scalar::F64(9.0)).unwrap();
+        assert_eq!(a.get(&[0, 0]).unwrap(), Scalar::F64(9.0));
+    }
+
+    #[test]
+    fn read_only_rejects_set() {
+        let mut a = f64_array(&[1.0, 2.0], &[2]);
+        a.set_read_only();
+        assert!(matches!(
+            a.set(&[0], Scalar::F64(0.0)),
+            Err(ArrayError::NotWritable)
+        ));
+    }
+
+    #[test]
+    fn slice_copy_column_is_independent() {
+        let base = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let mut col = base
+            .slice_copy(&[IndexOp::full(), IndexOp::Index(1)])
+            .unwrap();
+        assert_eq!(col.shape(), &[2]);
+        assert_eq!(
+            col.to_scalars().unwrap(),
+            vec![Scalar::F64(2.0), Scalar::F64(5.0)]
+        );
+        // Mutating the copy must not touch the base (no aliasing).
+        col.set(&[0], Scalar::F64(99.0)).unwrap();
+        assert_eq!(base.get(&[0, 1]).unwrap(), Scalar::F64(2.0));
+    }
+
+    #[test]
+    fn slice_view_column_shares_storage() {
+        let mut base = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let mut column = base
+            .slice_view(&[IndexOp::full(), IndexOp::Index(1)])
+            .unwrap();
+
+        column.set(&[0], Scalar::F64(20.0)).unwrap();
+        base.set(&[1, 1], Scalar::F64(50.0)).unwrap();
+
+        assert_eq!(base.get(&[0, 1]).unwrap(), Scalar::F64(20.0));
+        assert_eq!(column.get(&[1]).unwrap(), Scalar::F64(50.0));
+    }
+
+    #[test]
+    fn nested_slice_views_compose_signed_strides() {
+        let base = f64_array(
+            &[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
+            &[3, 4],
+        );
+        let every_other_column = base
+            .slice_view(&[
+                IndexOp::full(),
+                IndexOp::Slice {
+                    start: None,
+                    stop: None,
+                    step: 2,
+                },
+            ])
+            .unwrap();
+        let mut reversed_row = every_other_column
+            .slice_view(&[
+                IndexOp::Index(1),
+                IndexOp::Slice {
+                    start: None,
+                    stop: None,
+                    step: -1,
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(
+            reversed_row.to_scalars().unwrap(),
+            vec![Scalar::F64(6.0), Scalar::F64(4.0)]
+        );
+        reversed_row.set(&[0], Scalar::F64(60.0)).unwrap();
+        assert_eq!(base.get(&[1, 2]).unwrap(), Scalar::F64(60.0));
+    }
+
+    #[test]
+    fn slice_view_keeps_backing_alive_after_source_drop() {
+        let mut row = {
+            let base = f64_array(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
+            base.slice_view(&[IndexOp::Index(1)]).unwrap()
+        };
+
+        row.set(&[0], Scalar::F64(30.0)).unwrap();
+        assert_eq!(
+            row.to_scalars().unwrap(),
+            vec![Scalar::F64(30.0), Scalar::F64(4.0)]
+        );
+    }
+
+    #[test]
+    fn slice_view_inherits_read_only_state() {
+        let mut base = f64_array(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
+        base.set_read_only();
+        let mut row = base.slice_view(&[IndexOp::Index(0)]).unwrap();
+
+        assert!(!row.is_writable());
+        assert!(matches!(
+            row.set(&[0], Scalar::F64(10.0)),
+            Err(ArrayError::NotWritable)
+        ));
+    }
+
+    #[test]
+    fn reshape_preserves_row_major_order() {
+        let mut a = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let mut r = a.reshape(&[3, 2]).unwrap();
+        assert_eq!(r.shape(), &[3, 2]);
+        assert_eq!(r.get(&[2, 1]).unwrap(), Scalar::F64(6.0));
+        assert!(r.is_c_contiguous());
+        r.set(&[0, 1], Scalar::F64(20.0)).unwrap();
+        assert_eq!(a.get(&[0, 1]).unwrap(), Scalar::F64(20.0));
+        a.set(&[1, 2], Scalar::F64(60.0)).unwrap();
+        assert_eq!(r.get(&[2, 1]).unwrap(), Scalar::F64(60.0));
+    }
+
+    #[test]
+    fn reshape_size_mismatch_errors() {
+        let a = f64_array(&[1.0, 2.0, 3.0, 4.0], &[4]);
+        assert!(matches!(
+            a.reshape(&[3]),
+            Err(ArrayError::ReshapeMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn reshape_of_a_view_reorders_correctly() {
+        // Column view [3,6] is not C-contiguous, so reshape follows logical
+        // order and detaches from the source.
+        let mut base = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let col = base
+            .slice_view(&[IndexOp::full(), IndexOp::Index(2)])
+            .unwrap();
+        let mut reshaped = col.reshape(&[2, 1]).unwrap();
+        assert_eq!(
+            reshaped.to_scalars().unwrap(),
+            vec![Scalar::F64(3.0), Scalar::F64(6.0)]
+        );
+        reshaped.set(&[0, 0], Scalar::F64(30.0)).unwrap();
+        assert_eq!(base.get(&[0, 2]).unwrap(), Scalar::F64(3.0));
+        base.set(&[1, 2], Scalar::F64(60.0)).unwrap();
+        assert_eq!(reshaped.get(&[1, 0]).unwrap(), Scalar::F64(6.0));
+    }
+
+    #[test]
+    fn astype_float_to_int_truncates() {
+        let a = f64_array(&[1.7, -2.9, 3.2], &[3]);
+        let i = a.astype(ArrayDType::Int32).unwrap();
+        assert_eq!(i.dtype(), ArrayDType::Int32);
+        assert_eq!(
+            i.to_scalars().unwrap(),
+            vec![Scalar::I64(1), Scalar::I64(-2), Scalar::I64(3)]
+        );
+    }
+
+    #[test]
+    fn ravel_flattens() {
+        let mut a = f64_array(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
+        let mut r = a.ravel().unwrap();
+        assert_eq!(r.shape(), &[4]);
+        r.set(&[2], Scalar::F64(30.0)).unwrap();
+        assert_eq!(a.get(&[1, 0]).unwrap(), Scalar::F64(30.0));
+        a.set(&[0, 1], Scalar::F64(20.0)).unwrap();
+        assert_eq!(r.get(&[1]).unwrap(), Scalar::F64(20.0));
+    }
+
+    #[test]
+    fn reshape_inherits_read_only_state() {
+        let mut a = f64_array(&[1.0, 2.0], &[2]);
+        a.set_read_only();
+        let mut reshaped = a.reshape(&[1, 2]).unwrap();
+        assert!(!reshaped.is_writable());
+        assert!(matches!(
+            reshaped.set(&[0, 0], Scalar::F64(3.0)),
+            Err(ArrayError::NotWritable)
+        ));
+    }
+
+    #[test]
+    fn zero_d_array_has_one_element() {
+        let a = DenseArrayCore::full(ArrayDType::Float64, &[], Scalar::F64(7.0)).unwrap();
+        assert_eq!(a.size(), 1);
+        assert_eq!(a.get(&[]).unwrap(), Scalar::F64(7.0));
+    }
+
+    #[test]
+    fn reduce_axis_sum_over_rows_and_cols() {
+        // [[1,2,3],[4,5,6]]
+        let a = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let axis0 = a.reduce_axis(0, AxisReduce::Sum).unwrap();
+        assert_eq!(axis0.shape(), &[3]);
+        assert_eq!(
+            axis0.to_scalars().unwrap(),
+            vec![Scalar::F64(5.0), Scalar::F64(7.0), Scalar::F64(9.0)]
+        );
+        let axis1 = a.reduce_axis(1, AxisReduce::Sum).unwrap();
+        assert_eq!(axis1.shape(), &[2]);
+        assert_eq!(
+            axis1.to_scalars().unwrap(),
+            vec![Scalar::F64(6.0), Scalar::F64(15.0)]
+        );
+    }
+
+    #[test]
+    fn reduce_axis_mean_and_minmax() {
+        let a = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let mean0 = a.reduce_axis(0, AxisReduce::Mean).unwrap();
+        assert_eq!(
+            mean0.to_scalars().unwrap(),
+            vec![Scalar::F64(2.5), Scalar::F64(3.5), Scalar::F64(4.5)]
+        );
+        let max1 = a.reduce_axis(1, AxisReduce::Max).unwrap();
+        assert_eq!(
+            max1.to_scalars().unwrap(),
+            vec![Scalar::F64(3.0), Scalar::F64(6.0)]
+        );
+    }
+
+    #[test]
+    fn reduce_axis_min_is_exact_for_int64() {
+        let big = 9_007_199_254_740_993_i64;
+        let a =
+            DenseArrayCore::from_storage(ArrayStorage::Int64(vec![big, big - 1, 10, 20]), &[2, 2])
+                .unwrap();
+        let min1 = a.reduce_axis(1, AxisReduce::Min).unwrap();
+        assert_eq!(min1.dtype(), ArrayDType::Int64);
+        assert_eq!(
+            min1.to_scalars().unwrap(),
+            vec![Scalar::I64(big - 1), Scalar::I64(10)]
+        );
+    }
+
+    #[test]
+    fn reduce_axis_all_any_produce_bool() {
+        let a = DenseArrayCore::from_storage(
+            ArrayStorage::Bool(vec![true, false, true, true]),
+            &[2, 2],
+        )
+        .unwrap();
+        let all1 = a.reduce_axis(1, AxisReduce::All).unwrap();
+        assert_eq!(all1.dtype(), ArrayDType::Bool);
+        assert_eq!(
+            all1.to_scalars().unwrap(),
+            vec![Scalar::Bool(false), Scalar::Bool(true)]
+        );
+        let any0 = a.reduce_axis(0, AxisReduce::Any).unwrap();
+        assert_eq!(
+            any0.to_scalars().unwrap(),
+            vec![Scalar::Bool(true), Scalar::Bool(true)]
+        );
+    }
+
+    #[test]
+    fn reduce_axis_out_of_bounds_errors() {
+        let a = f64_array(&[1.0, 2.0], &[2]);
+        assert!(matches!(
+            a.reduce_axis(1, AxisReduce::Sum),
+            Err(ArrayError::AxisOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn mask_select_returns_matching_elements() {
+        let a = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        let mask = [false, true, false, true, false, true];
+        let sel = a.mask_select(&mask, &[2, 3]).unwrap();
+        assert_eq!(sel.shape(), &[3]);
+        assert_eq!(
+            sel.to_scalars().unwrap(),
+            vec![Scalar::F64(2.0), Scalar::F64(4.0), Scalar::F64(6.0)]
+        );
+    }
+
+    #[test]
+    fn mask_assign_scalar_broadcasts() {
+        let mut a = f64_array(&[1.0, 2.0, 3.0, 4.0], &[2, 2]);
+        let mask = [true, false, false, true];
+        a.mask_assign(&mask, &[2, 2], &[Scalar::F64(0.0)]).unwrap();
+        assert_eq!(
+            a.to_scalars().unwrap(),
+            vec![
+                Scalar::F64(0.0),
+                Scalar::F64(2.0),
+                Scalar::F64(3.0),
+                Scalar::F64(0.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn mask_assign_uses_layout_offset_and_strides() {
+        let storage = ArrayStorage::Float64(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+        let layout = Layout {
+            shape: vec![2],
+            strides: vec![2],
+            offset: 1,
+        };
+        let mut view = DenseArrayCore::from_parts(storage, layout, true).unwrap();
+
+        view.mask_assign(&[true, false], &[2], &[Scalar::F64(9.0)])
+            .unwrap();
+
+        assert_eq!(
+            view.to_scalars().unwrap(),
+            vec![Scalar::F64(9.0), Scalar::F64(3.0)]
+        );
+    }
+
+    #[test]
+    fn mask_assign_rejects_wrong_value_count_without_writing() {
+        let mut a = f64_array(&[1.0, 2.0, 3.0, 4.0], &[4]);
+
+        let result = a.mask_assign(
+            &[true, true, true, false],
+            &[4],
+            &[Scalar::F64(8.0), Scalar::F64(9.0)],
+        );
+
+        assert!(matches!(
+            result,
+            Err(ArrayError::MaskValueCountMismatch {
+                values_len: 2,
+                selected: 3
+            })
+        ));
+        assert_eq!(
+            a.to_scalars().unwrap(),
+            vec![
+                Scalar::F64(1.0),
+                Scalar::F64(2.0),
+                Scalar::F64(3.0),
+                Scalar::F64(4.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn mask_assign_accepts_no_values_when_nothing_is_selected() {
+        let mut a = f64_array(&[1.0, 2.0], &[2]);
+
+        a.mask_assign(&[false, false], &[2], &[]).unwrap();
+
+        assert_eq!(
+            a.to_scalars().unwrap(),
+            vec![Scalar::F64(1.0), Scalar::F64(2.0)]
+        );
+    }
+
+    #[test]
+    fn mask_length_mismatch_errors() {
+        let a = f64_array(&[1.0, 2.0], &[2]);
+        assert!(matches!(
+            a.mask_select(&[true], &[2]),
+            Err(ArrayError::MaskLengthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn mask_shape_mismatch_errors_even_when_length_matches() {
+        let a = f64_array(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], &[2, 3]);
+        assert!(matches!(
+            a.mask_select(&[true; 6], &[6]),
+            Err(ArrayError::MaskShapeMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn reduce_axis_minmax_over_empty_axis_errors_but_sum_is_zero() {
+        let a = DenseArrayCore::zeros(ArrayDType::Float64, &[0, 3]).unwrap();
+        assert!(matches!(
+            a.reduce_axis(0, AxisReduce::Min),
+            Err(ArrayError::ZeroSizeReduction)
+        ));
+        // Sum over an empty axis is 0.0, not an error.
+        let s = a.reduce_axis(0, AxisReduce::Sum).unwrap();
+        assert_eq!(s.shape(), &[3]);
+        assert_eq!(s.to_scalars().unwrap(), vec![Scalar::F64(0.0); 3]);
+    }
+
+    #[test]
+    fn mask_assign_rejects_write_after_borrow_expires() {
+        #[derive(Debug)]
+        struct Probe(AtomicBool);
+        impl BorrowProbe for Probe {
+            fn check_read(&self) -> Result<(), String> {
+                if self.0.load(Ordering::Acquire) {
+                    Ok(())
+                } else {
+                    Err("expired".into())
+                }
+            }
+            fn check_write(&self) -> Result<(), String> {
+                self.check_read()
+            }
+        }
+
+        let mut data = [1.0f32, 2.0];
+        let probe = Arc::new(Probe(AtomicBool::new(true)));
+        // SAFETY: `data` outlives `core`; the probe gates every access.
+        let storage =
+            unsafe { ArrayStorage::borrowed_mut_f32(data.as_mut_ptr(), 2, probe.clone()) };
+        let mut core = DenseArrayCore::from_storage(storage, &[2]).unwrap();
+        // While live, a masked write succeeds.
+        core.mask_assign(&[true, false], &[2], &[Scalar::F64(9.0)])
+            .unwrap();
+        // An expired borrow must reject the write rather than write through freed memory.
+        probe.0.store(false, Ordering::Release);
+        assert!(matches!(
+            core.mask_assign(&[true, false], &[2], &[Scalar::F64(5.0)]),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+    }
+
+    #[test]
+    fn assign_u8_bytes_writes_borrowed_ranges_and_rejects_expired_borrows() {
+        #[derive(Debug)]
+        struct Probe(AtomicBool);
+        impl BorrowProbe for Probe {
+            fn check_read(&self) -> Result<(), String> {
+                if self.0.load(Ordering::Acquire) {
+                    Ok(())
+                } else {
+                    Err("expired".into())
+                }
+            }
+            fn check_write(&self) -> Result<(), String> {
+                self.check_read()
+            }
+        }
+
+        let mut data = [0u8; 6];
+        let probe = Arc::new(Probe(AtomicBool::new(true)));
+        // SAFETY: `data` outlives `core`; the probe gates every access.
+        let storage = unsafe { ArrayStorage::borrowed_mut_u8(data.as_mut_ptr(), 6, probe.clone()) };
+        let core = DenseArrayCore::from_storage(storage, &[6]).unwrap();
+        let contiguous = core
+            .plan(&[IndexOp::Slice {
+                start: Some(1),
+                stop: Some(4),
+                step: 1,
+            }])
+            .unwrap();
+        core.assign_u8_bytes(&contiguous, &[7, 8, 9]).unwrap();
+        let strided = core
+            .plan(&[IndexOp::Slice {
+                start: None,
+                stop: None,
+                step: -2,
+            }])
+            .unwrap();
+        core.assign_u8_bytes(&strided, &[1, 2, 3]).unwrap();
+        assert!(matches!(
+            core.assign_u8_bytes(&contiguous, &[1, 2]),
+            Err(ArrayError::ByteLengthMismatch {
+                expected: 3,
+                actual: 2,
+                ..
+            })
+        ));
+        probe.0.store(false, Ordering::Release);
+        assert!(matches!(
+            core.assign_u8_bytes(&contiguous, &[4, 5, 6]),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+        drop(core);
+        assert_eq!(data, [0, 3, 8, 2, 0, 1]);
+    }
+}

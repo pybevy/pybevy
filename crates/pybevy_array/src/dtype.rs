@@ -158,3 +158,84 @@ impl ArrayDType {
         })
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn itemsize_matches_numpy() {
+        assert_eq!(ArrayDType::Float16.itemsize(), 2);
+        assert_eq!(ArrayDType::Float32.itemsize(), 4);
+        assert_eq!(ArrayDType::Float64.itemsize(), 8);
+        assert_eq!(ArrayDType::Int64.itemsize(), 8);
+        assert_eq!(ArrayDType::Uint8.itemsize(), 1);
+        assert_eq!(ArrayDType::Bool.itemsize(), 1);
+    }
+
+    #[test]
+    fn bool_name_is_bare_bool() {
+        assert_eq!(ArrayDType::Bool.name(), "bool");
+    }
+
+    #[test]
+    fn from_name_roundtrip() {
+        for dt in [
+            ArrayDType::Float16,
+            ArrayDType::Float32,
+            ArrayDType::Float64,
+            ArrayDType::Int64,
+            ArrayDType::Int32,
+            ArrayDType::Int16,
+            ArrayDType::Int8,
+            ArrayDType::Uint32,
+            ArrayDType::Uint16,
+            ArrayDType::Uint8,
+            ArrayDType::Bool,
+        ] {
+            assert_eq!(ArrayDType::from_name(dt.name()), Some(dt));
+        }
+        assert_eq!(ArrayDType::from_name("bool_"), Some(ArrayDType::Bool));
+        assert_eq!(ArrayDType::from_name("complex128"), None);
+    }
+
+    #[test]
+    fn classification() {
+        assert!(ArrayDType::Float16.is_float());
+        assert!(ArrayDType::Float64.is_float());
+        assert!(ArrayDType::Int64.is_integer());
+        assert!(ArrayDType::Int64.is_signed_integer());
+        assert!(!ArrayDType::Uint32.is_signed_integer());
+        assert!(ArrayDType::Uint32.is_integer());
+        assert!(ArrayDType::Bool.is_bool());
+        assert!(!ArrayDType::Bool.is_integer());
+    }
+
+    #[test]
+    fn dlpack_mapping_is_complete_and_exact() {
+        let cases = [
+            (ArrayDType::Float16, 2, 16),
+            (ArrayDType::Float32, 2, 32),
+            (ArrayDType::Float64, 2, 64),
+            (ArrayDType::Int64, 0, 64),
+            (ArrayDType::Int32, 0, 32),
+            (ArrayDType::Int16, 0, 16),
+            (ArrayDType::Int8, 0, 8),
+            (ArrayDType::Uint32, 1, 32),
+            (ArrayDType::Uint16, 1, 16),
+            (ArrayDType::Uint8, 1, 8),
+            (ArrayDType::Bool, 6, 8),
+        ];
+        for (dtype, code, bits) in cases {
+            assert_eq!(
+                dtype.dlpack(),
+                DlpackDType {
+                    code,
+                    bits,
+                    lanes: 1,
+                }
+            );
+        }
+    }
+}

@@ -330,3 +330,333 @@ impl Iterator for OffsetIter<'_> {
         (self.remaining, Some(self.remaining))
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn num_elements_of_empty_shape_is_one() {
+        assert_eq!(checked_num_elements(&[]).unwrap(), 1);
+        assert_eq!(Layout::c_contiguous(&[]).unwrap().num_elements(), 1);
+    }
+
+    #[test]
+    fn overflow_is_reported() {
+        let err = checked_num_elements(&[usize::MAX, 2]).unwrap_err();
+        assert!(matches!(err, ArrayError::Overflow(_)));
+    }
+
+    #[test]
+    fn rank_above_limit_is_reported() {
+        let shape = vec![1; MAX_NDIM + 1];
+        assert!(matches!(
+            checked_num_elements(&shape),
+            Err(ArrayError::TooManyDimensions { .. })
+        ));
+    }
+
+    #[test]
+    fn c_contiguous_strides_2x3() {
+        assert_eq!(c_contiguous_strides(&[2, 3]), vec![3, 1]);
+        assert_eq!(c_contiguous_strides(&[2, 3, 4]), vec![12, 4, 1]);
+    }
+
+    #[test]
+    fn contiguity_ignores_empty_and_singleton_axis_strides() {
+        assert!(
+            Layout {
+                shape: vec![0, 3],
+                strides: vec![-100, 7],
+                offset: 0,
+            }
+            .is_c_contiguous()
+        );
+        assert!(
+            Layout {
+                shape: vec![1, 3],
+                strides: vec![100, 1],
+                offset: 0,
+            }
+            .is_c_contiguous()
+        );
+        assert!(
+            !Layout {
+                shape: vec![3, 1],
+                strides: vec![2, 100],
+                offset: 0,
+            }
+            .is_c_contiguous()
+        );
+    }
+
+    #[test]
+    fn contiguous_offsets_are_sequential() {
+        let l = Layout::c_contiguous(&[2, 3]).unwrap();
+        let offsets: Vec<usize> = l.iter_offsets().collect();
+        assert_eq!(offsets, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn integer_index_drops_axis() {
+        let l = Layout::c_contiguous(&[2, 3]).unwrap();
+        let row = l.index(&[IndexOp::Index(1)]).unwrap();
+        assert_eq!(row.shape, vec![3]);
+        assert_eq!(row.iter_offsets().collect::<Vec<_>>(), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn negative_index_wraps() {
+        let l = Layout::c_contiguous(&[4]).unwrap();
+        let v = l.index(&[IndexOp::Index(-1)]).unwrap();
+        assert_eq!(v.shape, Vec::<usize>::new());
+        assert_eq!(v.iter_offsets().collect::<Vec<_>>(), vec![3]);
+    }
+
+    #[test]
+    fn out_of_bounds_index_errors() {
+        let l = Layout::c_contiguous(&[3]).unwrap();
+        assert!(matches!(
+            l.index(&[IndexOp::Index(3)]),
+            Err(ArrayError::IndexOutOfBounds { .. })
+        ));
+        assert!(matches!(
+            l.index(&[IndexOp::Index(-4)]),
+            Err(ArrayError::IndexOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn column_view_strides() {
+        // arr[:, 1] over a 2x3 array -> offsets 1, 4
+        let l = Layout::c_contiguous(&[2, 3]).unwrap();
+        let col = l.index(&[IndexOp::full(), IndexOp::Index(1)]).unwrap();
+        assert_eq!(col.shape, vec![2]);
+        assert_eq!(col.strides, vec![3]);
+        assert_eq!(col.iter_offsets().collect::<Vec<_>>(), vec![1, 4]);
+    }
+
+    #[test]
+    fn strided_slice() {
+        // arr[1:6:2] over length 8 -> indices 1,3,5
+        let l = Layout::c_contiguous(&[8]).unwrap();
+        let s = l
+            .index(&[IndexOp::Slice {
+                start: Some(1),
+                stop: Some(6),
+                step: 2,
+            }])
+            .unwrap();
+        assert_eq!(s.shape, vec![3]);
+        assert_eq!(s.iter_offsets().collect::<Vec<_>>(), vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn negative_step_reverses() {
+        // arr[::-1] over length 4 -> 3,2,1,0
+        let l = Layout::c_contiguous(&[4]).unwrap();
+        let s = l
+            .index(&[IndexOp::Slice {
+                start: None,
+                stop: None,
+                step: -1,
+            }])
+            .unwrap();
+        assert_eq!(s.shape, vec![4]);
+        assert_eq!(s.strides, vec![-1]);
+        assert_eq!(s.iter_offsets().collect::<Vec<_>>(), vec![3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn empty_slice_has_no_offsets() {
+        let l = Layout::c_contiguous(&[4]).unwrap();
+        let s = l
+            .index(&[IndexOp::Slice {
+                start: Some(3),
+                stop: Some(1),
+                step: 1,
+            }])
+            .unwrap();
+        assert_eq!(s.shape, vec![0]);
+        assert_eq!(s.iter_offsets().count(), 0);
+    }
+
+    #[test]
+    fn extreme_negative_step_selects_one_element() {
+        // `-isize::MIN` overflows, so the length must divide by the unsigned
+        // magnitude instead of negating.
+        let l = Layout::c_contiguous(&[8]).unwrap();
+        let s = l
+            .index(&[IndexOp::Slice {
+                start: None,
+                stop: None,
+                step: isize::MIN,
+            }])
+            .unwrap();
+        assert_eq!(s.shape, vec![1]);
+        assert_eq!(s.iter_offsets().collect::<Vec<_>>(), vec![7]);
+    }
+
+    #[test]
+    fn extreme_step_on_a_wide_stride_axis_keeps_the_row() {
+        // `stride * step` overflows for the outer axis of a 4x3 array, but the
+        // one selected row makes that product unreachable.
+        let l = Layout::c_contiguous(&[4, 3]).unwrap();
+        let s = l
+            .index(&[IndexOp::Slice {
+                start: None,
+                stop: None,
+                step: isize::MIN,
+            }])
+            .unwrap();
+        assert_eq!(s.shape, vec![1, 3]);
+        assert_eq!(s.iter_offsets().collect::<Vec<_>>(), vec![9, 10, 11]);
+    }
+
+    #[test]
+    fn extreme_positive_step_selects_first_element() {
+        let l = Layout::c_contiguous(&[8]).unwrap();
+        let s = l
+            .index(&[IndexOp::Slice {
+                start: None,
+                stop: None,
+                step: isize::MAX,
+            }])
+            .unwrap();
+        assert_eq!(s.shape, vec![1]);
+        assert_eq!(s.iter_offsets().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn zero_step_errors() {
+        let l = Layout::c_contiguous(&[4]).unwrap();
+        assert!(matches!(
+            l.index(&[IndexOp::Slice {
+                start: None,
+                stop: None,
+                step: 0
+            }]),
+            Err(ArrayError::ZeroStep)
+        ));
+    }
+
+    #[test]
+    fn too_many_indices_errors() {
+        let l = Layout::c_contiguous(&[4]).unwrap();
+        assert!(matches!(
+            l.index(&[IndexOp::Index(0), IndexOp::Index(0)]),
+            Err(ArrayError::TooManyIndices { .. })
+        ));
+    }
+
+    #[test]
+    fn empty_index_selections_keep_a_valid_storage_base() {
+        let cases = [
+            (
+                vec![0, 3],
+                vec![
+                    IndexOp::Slice {
+                        start: None,
+                        stop: None,
+                        step: 1,
+                    },
+                    IndexOp::Slice {
+                        start: Some(1),
+                        stop: None,
+                        step: 1,
+                    },
+                ],
+                vec![0, 2],
+            ),
+            (
+                vec![2, 0, 3],
+                vec![
+                    IndexOp::Slice {
+                        start: None,
+                        stop: None,
+                        step: 1,
+                    },
+                    IndexOp::Slice {
+                        start: None,
+                        stop: None,
+                        step: 1,
+                    },
+                    IndexOp::Slice {
+                        start: None,
+                        stop: None,
+                        step: -1,
+                    },
+                ],
+                vec![2, 0, 3],
+            ),
+        ];
+        for (shape, ops, expected) in cases {
+            let result = Layout::c_contiguous(&shape).unwrap().index(&ops).unwrap();
+            assert_eq!(result.shape, expected);
+            assert_eq!(result.offset, 0);
+            assert!(result.validate_bounds(0).is_ok());
+            assert_eq!(result.iter_offsets().count(), 0);
+        }
+    }
+
+    #[test]
+    fn layout_bounds_accept_negative_strides_with_a_valid_base() {
+        let layout = Layout {
+            shape: vec![3],
+            strides: vec![-1],
+            offset: 2,
+        };
+        assert!(layout.validate_bounds(3).is_ok());
+    }
+
+    #[test]
+    fn layout_bounds_accept_zero_strides_and_empty_end_offsets() {
+        let broadcast = Layout {
+            shape: vec![3],
+            strides: vec![0],
+            offset: 1,
+        };
+        assert!(broadcast.validate_bounds(2).is_ok());
+
+        let empty = Layout {
+            shape: vec![0],
+            strides: vec![isize::MIN],
+            offset: 2,
+        };
+        assert!(empty.validate_bounds(2).is_ok());
+    }
+
+    #[test]
+    fn layout_bounds_reject_mismatched_rank_and_escaped_offsets() {
+        let mismatched = Layout {
+            shape: vec![2],
+            strides: vec![],
+            offset: 0,
+        };
+        assert!(matches!(
+            mismatched.validate_bounds(2),
+            Err(ArrayError::InvalidLayout(_))
+        ));
+
+        let escaped = Layout {
+            shape: vec![2],
+            strides: vec![1],
+            offset: 1,
+        };
+        assert!(matches!(
+            escaped.validate_bounds(2),
+            Err(ArrayError::LayoutOutOfBounds { storage_len: 2 })
+        ));
+
+        let escaped_empty = Layout {
+            shape: vec![0],
+            strides: vec![1],
+            offset: 3,
+        };
+        assert!(matches!(
+            escaped_empty.validate_bounds(2),
+            Err(ArrayError::LayoutOutOfBounds { storage_len: 2 })
+        ));
+    }
+}

@@ -862,3 +862,277 @@ impl ArrayStorage {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn filled_and_get_roundtrip() {
+        let s = ArrayStorage::filled(ArrayDType::Float64, 3, Scalar::F64(2.5)).unwrap();
+        assert_eq!(s.len(), 3);
+        assert_eq!(s.get(1), Scalar::F64(2.5));
+    }
+
+    #[test]
+    fn float_to_int_truncates_toward_zero() {
+        let s = ArrayStorage::filled(ArrayDType::Int32, 1, Scalar::F64(-2.9)).unwrap();
+        assert_eq!(s.get(0), Scalar::I64(-2));
+    }
+
+    #[test]
+    fn nonzero_casts_to_true_bool() {
+        let s = ArrayStorage::filled(ArrayDType::Bool, 1, Scalar::F64(-0.1)).unwrap();
+        assert_eq!(s.get(0), Scalar::Bool(true));
+        let z = ArrayStorage::filled(ArrayDType::Bool, 1, Scalar::F64(0.0)).unwrap();
+        assert_eq!(z.get(0), Scalar::Bool(false));
+    }
+
+    #[test]
+    fn int64_exact_beyond_f64() {
+        let big = 9_007_199_254_740_993_i64; // 2^53 + 1, not exact in f64
+        let mut s = ArrayStorage::zeros(ArrayDType::Int64, 1).unwrap();
+        s.set(0, Scalar::I64(big));
+        assert_eq!(s.get(0), Scalar::I64(big));
+    }
+
+    #[test]
+    fn impossible_allocation_is_reported() {
+        let err = ArrayStorage::zeros(ArrayDType::Float64, usize::MAX).unwrap_err();
+        assert!(matches!(err, ArrayError::AllocationFailed { .. }));
+    }
+
+    #[derive(Debug)]
+    struct ToggleProbe {
+        live: AtomicBool,
+        writable: bool,
+    }
+    impl ToggleProbe {
+        fn read_only() -> Arc<Self> {
+            Arc::new(Self {
+                live: AtomicBool::new(true),
+                writable: false,
+            })
+        }
+        fn writable() -> Arc<Self> {
+            Arc::new(Self {
+                live: AtomicBool::new(true),
+                writable: true,
+            })
+        }
+    }
+    impl BorrowProbe for ToggleProbe {
+        fn check_read(&self) -> Result<(), String> {
+            if self.live.load(Ordering::Acquire) {
+                Ok(())
+            } else {
+                Err("expired".to_string())
+            }
+        }
+        fn check_write(&self) -> Result<(), String> {
+            if !self.writable {
+                return Err("read-only".to_string());
+            }
+            self.check_read()
+        }
+    }
+
+    fn borrowed(data: &[f32], probe: Arc<dyn BorrowProbe>) -> ArrayStorage {
+        // SAFETY: `data` outlives the storage in each test, and the probe is
+        // consulted before every read.
+        unsafe { ArrayStorage::borrowed_f32(data.as_ptr(), data.len(), probe) }
+    }
+
+    #[test]
+    fn borrowed_reads_while_live() {
+        let data = [1.0f32, 2.0, 3.0];
+        let probe = ToggleProbe::read_only();
+        let s = borrowed(&data, probe);
+        assert_eq!(s.dtype(), ArrayDType::Float32);
+        assert_eq!(s.len(), 3);
+        assert!(s.ensure_readable().is_ok());
+        assert_eq!(s.get(1), Scalar::F64(2.0));
+    }
+
+    #[test]
+    fn borrowed_ensure_readable_errs_after_expiry() {
+        let data = [1.0f32, 2.0];
+        let probe = ToggleProbe::read_only();
+        let s = borrowed(&data, probe.clone());
+        probe.live.store(false, Ordering::Release);
+        assert!(matches!(
+            s.ensure_readable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "read-only borrowed array")]
+    fn borrowed_set_panics() {
+        let data = [1.0f32];
+        let probe = ToggleProbe::read_only();
+        let mut s = borrowed(&data, probe);
+        s.set(0, Scalar::F64(9.0));
+    }
+
+    #[test]
+    fn set_casts_to_storage_dtype() {
+        let mut s = ArrayStorage::zeros(ArrayDType::Uint8, 1).unwrap();
+        s.set(0, Scalar::I64(300)); // wraps like `as u8`
+        assert_eq!(s.get(0), Scalar::I64(300 % 256));
+    }
+
+    fn borrowed_mut(data: &mut [f32], probe: Arc<dyn BorrowProbe>) -> ArrayStorage {
+        // SAFETY: `data` outlives the storage and is the unique alias while the
+        // returned storage is alive in each test.
+        unsafe { ArrayStorage::borrowed_mut_f32(data.as_mut_ptr(), data.len(), probe) }
+    }
+
+    #[test]
+    fn borrowed_mut_reads_and_writes_in_place() {
+        let mut data = [1.0f32, 2.0, 3.0];
+        let mut s = borrowed_mut(&mut data, ToggleProbe::writable());
+        assert!(s.ensure_writable().is_ok());
+        assert_eq!(s.get(0), Scalar::F64(1.0));
+        s.set(0, Scalar::F64(9.0));
+        assert_eq!(s.get(0), Scalar::F64(9.0));
+        drop(s);
+        assert_eq!(data[0], 9.0); // the write landed in the borrowed buffer
+    }
+
+    #[test]
+    fn borrowed_mut_ensure_writable_errs_after_expiry() {
+        let mut data = [1.0f32];
+        let probe = ToggleProbe::writable();
+        let s = borrowed_mut(&mut data, probe.clone());
+        probe.live.store(false, Ordering::Release);
+        assert!(matches!(
+            s.ensure_writable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+        assert!(matches!(
+            s.ensure_readable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+    }
+
+    #[test]
+    fn borrowed_mut_with_read_only_probe_rejects_write() {
+        let mut data = [1.0f32];
+        let s = borrowed_mut(&mut data, ToggleProbe::read_only());
+        assert!(matches!(
+            s.ensure_writable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+    }
+
+    fn borrowed_u8(data: &[u8], probe: Arc<dyn BorrowProbe>) -> ArrayStorage {
+        // SAFETY: `data` outlives the storage and the probe gates every read.
+        unsafe { ArrayStorage::borrowed_u8(data.as_ptr(), data.len(), probe) }
+    }
+
+    fn borrowed_mut_u8(data: &mut [u8], probe: Arc<dyn BorrowProbe>) -> ArrayStorage {
+        // SAFETY: `data` outlives the storage and is uniquely borrowed.
+        unsafe { ArrayStorage::borrowed_mut_u8(data.as_mut_ptr(), data.len(), probe) }
+    }
+
+    #[test]
+    fn borrowed_u8_reads_as_uint8() {
+        let data = [10u8, 200, 255];
+        let s = borrowed_u8(&data, ToggleProbe::read_only());
+        assert_eq!(s.dtype(), ArrayDType::Uint8);
+        assert_eq!(s.len(), 3);
+        assert!(s.is_borrowed() && s.is_read_only_borrow());
+        assert_eq!(s.get(1), Scalar::I64(200));
+    }
+
+    #[test]
+    fn borrowed_u8_rejects_reads_after_expiry() {
+        let data = [1u8, 2];
+        let probe = ToggleProbe::read_only();
+        let s = borrowed_u8(&data, probe.clone());
+        probe.live.store(false, Ordering::Release);
+        assert!(matches!(
+            s.ensure_readable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+    }
+
+    #[test]
+    fn borrowed_unsigned_index_storage_is_read_only_and_expires() {
+        let data_u16 = [0_u16, 2, 1];
+        let data_u32 = [0_u32, 2, 1];
+        let probe = ToggleProbe::read_only();
+        let probe_dyn: Arc<dyn BorrowProbe> = probe.clone();
+        // SAFETY: both arrays outlive their storage and the shared probe gates
+        // every read.
+        let u16_storage = unsafe {
+            ArrayStorage::borrowed_u16(data_u16.as_ptr(), data_u16.len(), Arc::clone(&probe_dyn))
+        };
+        // SAFETY: as above, for the u32 array.
+        let u32_storage =
+            unsafe { ArrayStorage::borrowed_u32(data_u32.as_ptr(), data_u32.len(), probe_dyn) };
+
+        assert_eq!(u16_storage.dtype(), ArrayDType::Uint16);
+        assert_eq!(u32_storage.dtype(), ArrayDType::Uint32);
+        assert_eq!(u16_storage.get(1), Scalar::I64(2));
+        assert_eq!(u32_storage.get(2), Scalar::I64(1));
+        assert!(matches!(
+            u16_storage.ensure_writable(),
+            Err(ArrayError::NotWritable)
+        ));
+        assert!(matches!(
+            u32_storage.ensure_writable(),
+            Err(ArrayError::NotWritable)
+        ));
+
+        probe.live.store(false, Ordering::Release);
+        assert!(matches!(
+            u16_storage.ensure_readable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+        assert!(matches!(
+            u32_storage.ensure_readable(),
+            Err(ArrayError::BorrowExpired(_))
+        ));
+    }
+
+    #[test]
+    fn borrowed_unsigned_index_storage_compares_by_source() {
+        let data_u16 = [0_u16, 1, 2];
+        let data_u32 = [0_u32, 1, 2];
+        let probe: Arc<dyn BorrowProbe> = ToggleProbe::read_only();
+        // SAFETY: both arrays outlive the storage values and the probe gates reads.
+        let u16_first = unsafe {
+            ArrayStorage::borrowed_u16(data_u16.as_ptr(), data_u16.len(), Arc::clone(&probe))
+        };
+        // SAFETY: as above; this deliberately describes the same source.
+        let u16_second = unsafe {
+            ArrayStorage::borrowed_u16(data_u16.as_ptr(), data_u16.len(), Arc::clone(&probe))
+        };
+        // SAFETY: as above, for the u32 source.
+        let u32_first = unsafe {
+            ArrayStorage::borrowed_u32(data_u32.as_ptr(), data_u32.len(), Arc::clone(&probe))
+        };
+        // SAFETY: as above; this deliberately describes the same source.
+        let u32_second =
+            unsafe { ArrayStorage::borrowed_u32(data_u32.as_ptr(), data_u32.len(), probe) };
+
+        assert_eq!(u16_first, u16_second);
+        assert_eq!(u32_first, u32_second);
+    }
+
+    #[test]
+    fn borrowed_mut_u8_writes_in_place() {
+        let mut data = [1u8, 2, 3];
+        let mut s = borrowed_mut_u8(&mut data, ToggleProbe::writable());
+        s.ensure_writable().unwrap();
+        s.set(0, Scalar::I64(200));
+        assert_eq!(s.get(0), Scalar::I64(200));
+        drop(s);
+        assert_eq!(data[0], 200);
+    }
+}

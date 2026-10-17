@@ -908,3 +908,374 @@ pub fn read_only_f32_core(data: Vec<f32>, shape: &[usize]) -> Result<DenseArrayC
     core.set_read_only();
     Ok(core)
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::BorrowProbe;
+
+    #[derive(Debug)]
+    struct AlwaysReadable;
+
+    impl BorrowProbe for AlwaysReadable {
+        fn check_read(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn arr(data: Vec<f64>) -> Operand {
+        let n = data.len();
+        Operand::Array(DenseArrayCore::from_storage(ArrayStorage::Float64(data), &[n]).unwrap())
+    }
+    fn arr_f32(data: Vec<f32>) -> Operand {
+        let n = data.len();
+        Operand::Array(DenseArrayCore::from_storage(ArrayStorage::Float32(data), &[n]).unwrap())
+    }
+    fn arr_f16_bits(data: Vec<u16>) -> Operand {
+        let n = data.len();
+        Operand::Array(DenseArrayCore::from_storage(ArrayStorage::Float16(data), &[n]).unwrap())
+    }
+    fn vals(core: &DenseArrayCore) -> Vec<f64> {
+        core.to_scalars()
+            .unwrap()
+            .iter()
+            .map(|s| s.to_f64())
+            .collect()
+    }
+
+    fn core_f32(data: Vec<f32>, shape: &[usize]) -> DenseArrayCore {
+        DenseArrayCore::from_storage(ArrayStorage::Float32(data), shape).unwrap()
+    }
+
+    fn core_f64(data: Vec<f64>, shape: &[usize]) -> DenseArrayCore {
+        DenseArrayCore::from_storage(ArrayStorage::Float64(data), shape).unwrap()
+    }
+
+    #[test]
+    fn contiguous_arithmetic_hits_tiled_fast_path() {
+        let out = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushInput(1), Op::Add],
+            vec![],
+            vec![
+                arr(vec![1.0, 2.0, 3.0, 4.0]),
+                arr(vec![10.0, 20.0, 30.0, 40.0]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(vals(&out), vec![11.0, 22.0, 33.0, 44.0]);
+    }
+
+    #[test]
+    fn scalar_broadcast_on_fast_path() {
+        let out = float_elementwise(
+            "mul",
+            vec![Op::PushInput(0), Op::PushInput(1), Op::Mul],
+            vec![],
+            vec![arr(vec![1.0, 2.0, 3.0]), Operand::Scalar(Scalar::F64(2.5))],
+        )
+        .unwrap();
+        assert_eq!(vals(&out), vec![2.5, 5.0, 7.5]);
+    }
+
+    #[test]
+    fn where_float_scalar_promotes_integer_array() {
+        let condition = Operand::Array(
+            DenseArrayCore::from_storage(ArrayStorage::Bool(vec![true, false]), &[2]).unwrap(),
+        );
+        let integers = Operand::Array(
+            DenseArrayCore::from_storage(ArrayStorage::Int64(vec![1, 2]), &[2]).unwrap(),
+        );
+        let result = where_select(condition, integers, Operand::Scalar(Scalar::F64(0.5)))
+            .expect("compatible operands");
+        assert_eq!(result.dtype(), ArrayDType::Float64);
+        assert_eq!(
+            result.to_scalars().unwrap(),
+            vec![Scalar::F64(1.0), Scalar::F64(0.5)]
+        );
+    }
+
+    #[test]
+    fn where_integer_scalar_keeps_exact_integer_array() {
+        let big = 9_007_199_254_740_993_i64;
+        let condition = Operand::Array(
+            DenseArrayCore::from_storage(ArrayStorage::Bool(vec![true, false]), &[2]).unwrap(),
+        );
+        let integers = Operand::Array(
+            DenseArrayCore::from_storage(ArrayStorage::Int64(vec![big, 2]), &[2]).unwrap(),
+        );
+        let result = where_select(condition, integers, Operand::Scalar(Scalar::I64(big)))
+            .expect("compatible operands");
+        assert_eq!(result.dtype(), ArrayDType::Int64);
+        assert_eq!(
+            result.to_scalars().unwrap(),
+            vec![Scalar::I64(big), Scalar::I64(big)]
+        );
+    }
+
+    #[test]
+    fn borrowed_f32_uses_contiguous_path() {
+        let data = [1.0f32, 2.0, 3.0, 4.0];
+        // SAFETY: `data` outlives the operation and the probe remains readable.
+        let storage = unsafe {
+            ArrayStorage::borrowed_f32(data.as_ptr(), data.len(), Arc::new(AlwaysReadable))
+        };
+        let borrowed = Operand::Array(
+            DenseArrayCore::from_storage(storage, &[data.len()]).expect("valid borrowed shape"),
+        );
+
+        let out = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushInput(1), Op::Add],
+            vec![],
+            vec![borrowed, arr_f32(vec![10.0, 20.0, 30.0, 40.0])],
+        )
+        .unwrap();
+
+        assert_eq!(out.dtype(), ArrayDType::Float32);
+        assert_eq!(vals(&out), vec![11.0, 22.0, 33.0, 44.0]);
+    }
+
+    #[test]
+    fn f32_result_uses_native_path() {
+        let out = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushInput(1), Op::Add],
+            vec![],
+            vec![
+                arr_f32(vec![1.0, 2.0, 3.0]),
+                arr_f32(vec![0.5, 0.25, 0.125]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(out.dtype(), ArrayDType::Float32);
+        assert_eq!(vals(&out), vec![1.5, 2.25, 3.125]);
+    }
+
+    #[test]
+    fn float16_inputs_promote_to_float32_before_arithmetic() {
+        let out = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushInput(1), Op::Add],
+            vec![],
+            vec![
+                arr_f16_bits(vec![0x3c00, 0x4000]),
+                arr_f16_bits(vec![0x3800, 0x3c00]),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(out.dtype(), ArrayDType::Float32);
+        assert_eq!(vals(&out), vec![1.5, 3.0]);
+    }
+
+    #[test]
+    fn f32_native_narrows_scalar_broadcast() {
+        let out = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushInput(1), Op::Add],
+            vec![],
+            vec![
+                arr_f32(vec![1.0, 2.0, 3.0]),
+                Operand::Scalar(Scalar::F64(0.1)),
+            ],
+        )
+        .unwrap();
+        assert_eq!(out.dtype(), ArrayDType::Float32);
+        assert_eq!(
+            vals(&out),
+            vec![1.0_f32 + 0.1_f32, 2.0_f32 + 0.1_f32, 3.0_f32 + 0.1_f32]
+                .into_iter()
+                .map(f64::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn f32_contiguous_rounds_after_each_operation() {
+        let out = float_elementwise(
+            "add_twice",
+            vec![
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::PushConst(0),
+                Op::Add,
+            ],
+            vec![1.0],
+            vec![arr_f32(vec![16_777_216.0])],
+        )
+        .unwrap();
+
+        assert_eq!(vals(&out), vec![16_777_216.0]);
+    }
+
+    #[test]
+    fn f32_non_contiguous_rounds_after_each_operation() {
+        let input = DenseArrayCore::from_parts(
+            ArrayStorage::Float32(vec![0.0, 16_777_216.0, 0.0, 16_777_216.0]),
+            Layout {
+                shape: vec![2],
+                strides: vec![2],
+                offset: 1,
+            },
+            true,
+        )
+        .unwrap();
+        let out = float_elementwise(
+            "add_twice",
+            vec![
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Add,
+                Op::PushConst(0),
+                Op::Add,
+            ],
+            vec![1.0],
+            vec![Operand::Array(input)],
+        )
+        .unwrap();
+
+        assert_eq!(vals(&out), vec![16_777_216.0, 16_777_216.0]);
+    }
+
+    #[test]
+    fn evaluate_fuses_arithmetic_and_broadcasting() {
+        let left = core_f32(vec![1.0, 2.0], &[2, 1]);
+        let middle = core_f32(vec![10.0, 20.0, 30.0], &[3]);
+        let right = core_f32(vec![0.5, 1.0, 2.0], &[3]);
+        let output = evaluate_float_expression(
+            &[
+                Op::PushInput(0),
+                Op::PushInput(1),
+                Op::PushInput(2),
+                Op::Mul,
+                Op::Add,
+            ],
+            &[],
+            &[&left, &middle, &right],
+        )
+        .unwrap();
+
+        assert_eq!(output.shape(), &[2, 3]);
+        assert_eq!(output.dtype(), ArrayDType::Float32);
+        assert_eq!(vals(&output), vec![6.0, 21.0, 61.0, 7.0, 22.0, 62.0]);
+    }
+
+    #[test]
+    fn evaluate_supports_boolean_results_and_where() {
+        let values = core_f64(vec![-2.0, 0.0, 3.0], &[3]);
+        let positive = evaluate_float_expression(
+            &[Op::PushInput(0), Op::PushConst(0), Op::Gt],
+            &[0.0],
+            &[&values],
+        )
+        .unwrap();
+        assert_eq!(positive.dtype(), ArrayDType::Bool);
+        assert_eq!(
+            positive.to_scalars().unwrap(),
+            vec![Scalar::Bool(false), Scalar::Bool(false), Scalar::Bool(true)]
+        );
+
+        let selected = evaluate_float_expression(
+            &[
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Gt,
+                Op::PushInput(0),
+                Op::PushConst(0),
+                Op::Where,
+            ],
+            &[0.0],
+            &[&values],
+        )
+        .unwrap();
+        assert_eq!(vals(&selected), vec![0.0, 0.0, 3.0]);
+    }
+
+    #[test]
+    fn evaluate_rejects_mixed_float_dtypes() {
+        let single = core_f32(vec![1.0], &[1]);
+        let double = core_f64(vec![2.0], &[1]);
+        let error = evaluate_float_expression(
+            &[Op::PushInput(0), Op::PushInput(1), Op::Add],
+            &[],
+            &[&single, &double],
+        )
+        .unwrap_err();
+        assert!(matches!(error, KernelError::MixedFloatDTypes));
+    }
+
+    #[test]
+    fn out_of_range_input_index_errors_instead_of_panicking() {
+        let result = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushInput(5), Op::Add],
+            vec![],
+            vec![arr(vec![1.0, 2.0])],
+        );
+        assert!(matches!(
+            result,
+            Err(KernelError::Dense(DenseError::InputIndexOutOfRange { .. }))
+        ));
+
+        let constant_result = float_elementwise(
+            "add",
+            vec![Op::PushInput(0), Op::PushConst(3), Op::Add],
+            vec![],
+            vec![arr(vec![1.0, 2.0])],
+        );
+        assert!(matches!(
+            constant_result,
+            Err(KernelError::Dense(DenseError::ConstIndexOutOfRange { .. }))
+        ));
+    }
+
+    #[test]
+    fn gather_rejects_unallocatable_broadcast_target() {
+        // A one-element core broadcasts to any target; a target whose byte size
+        // overflows usize must fail with AllocationFailed, not abort.
+        let core = core_f64(vec![1.0], &[1]);
+        let huge = [1usize << 62];
+        assert!(matches!(
+            gather_f64(&core, &huge),
+            Err(KernelError::Array(ArrayError::AllocationFailed { .. }))
+        ));
+        assert!(matches!(
+            gather_f32(&core, &huge),
+            Err(KernelError::Array(ArrayError::AllocationFailed { .. }))
+        ));
+        assert!(matches!(
+            gather_scalars_borrowed(OperandRef::Array(&core), &huge),
+            Err(KernelError::Array(ArrayError::AllocationFailed { .. }))
+        ));
+    }
+
+    #[test]
+    fn try_alloc_vec_reports_impossible_sizes() {
+        assert!(matches!(
+            try_alloc_vec::<f64>(ArrayDType::Float64, usize::MAX),
+            Err(KernelError::Array(ArrayError::AllocationFailed {
+                dtype: ArrayDType::Float64,
+                elements: usize::MAX,
+            }))
+        ));
+        assert!(try_alloc_vec::<f64>(ArrayDType::Float64, 16).is_ok());
+    }
+
+    #[test]
+    fn transcendental_on_tiled_path() {
+        let out = float_elementwise(
+            "sin",
+            vec![Op::PushInput(0), Op::Sin],
+            vec![],
+            vec![arr(vec![0.0, std::f64::consts::FRAC_PI_2])],
+        )
+        .unwrap();
+        let v = vals(&out);
+        assert!((v[0]).abs() < 1e-12 && (v[1] - 1.0).abs() < 1e-12);
+    }
+}

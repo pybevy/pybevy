@@ -109,3 +109,32 @@ pub(crate) fn pipeline_collision<'a>(
         })
         .map(String::as_str)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_names_have_content_identity_independent_of_classes() {
+        let a = vec!["TEST_ORDER_A".into(), "TEST_ORDER_B".into()];
+        let b = vec!["TEST_ORDER_B".into(), "TEST_ORDER_A".into()];
+        let first = intern_names(&a);
+        assert_eq!(intern_names(&a), first);
+        assert_ne!(intern_names(&b), first);
+        assert_eq!(get_names(first), a);
+    }
+
+    #[test]
+    fn invalid_and_reserved_names_are_rejected() {
+        for names in [
+            vec!["".into()],
+            vec!["BAD NAME".into()],
+            vec!["ON".into(), "ON".into()],
+            vec!["PREPASS_PIPELINE".into()],
+            vec!["VERTEX_FUTURE".into()],
+        ] {
+            assert!(validate_names(&names).is_err());
+        }
+        assert!(validate_names(&["HAS_CUSTOM_DETAIL".into()]).is_ok());
+    }
+}

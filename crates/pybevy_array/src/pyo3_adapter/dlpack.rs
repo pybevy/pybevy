@@ -707,3 +707,33 @@ pub(super) fn from_dlpack(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py
         "__dlpack__ returned an invalid or already-consumed capsule",
     ))
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contiguous_strides_are_explicit() {
+        assert_eq!(&*explicit_strides(&[2, 3, 4]).unwrap(), &[12, 4, 1]);
+        assert!(explicit_strides(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn array_dtype_map_roundtrips() {
+        for dtype in [
+            ArrayDType::Float32,
+            ArrayDType::Float64,
+            ArrayDType::Int64,
+            ArrayDType::Int32,
+            ArrayDType::Int16,
+            ArrayDType::Int8,
+            ArrayDType::Uint32,
+            ArrayDType::Uint16,
+            ArrayDType::Uint8,
+            ArrayDType::Bool,
+        ] {
+            assert_eq!(dtype_from_dlpack(dl_dtype(dtype)).unwrap(), dtype);
+        }
+    }
+}

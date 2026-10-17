@@ -28,7 +28,6 @@ impl PyMaterializable {
 mod tests {
     use pyo3::{
         exceptions::{PyNotImplementedError, PyTypeError},
-        prelude::*,
         type_object::PyTypeInfo,
     };
 

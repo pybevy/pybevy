@@ -179,3 +179,33 @@ impl TextureBindingLayout {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TextureBindingLayout;
+    #[test]
+    fn validates_layout_combinations_and_wgsl() {
+        assert_eq!(
+            TextureBindingLayout::parse("cube", "float", true, "filtering")
+                .unwrap()
+                .wgsl_types()
+                .0,
+            "texture_cube<f32>"
+        );
+        assert_eq!(
+            TextureBindingLayout::parse("2d_array", "depth", false, "comparison")
+                .unwrap()
+                .wgsl_types()
+                .1,
+            "sampler_comparison"
+        );
+        for args in [
+            ("wrong", "float", true, "filtering"),
+            ("2d", "u_int", true, "filtering"),
+            ("3d", "depth", false, "comparison"),
+            ("2d", "float", false, "comparison"),
+        ] {
+            assert!(TextureBindingLayout::parse(args.0, args.1, args.2, args.3).is_err());
+        }
+    }
+}

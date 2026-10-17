@@ -174,7 +174,9 @@ jobs:
           cargo llvm-cov --locked \
             -p pybevy_control --features pybevy_control/bevy_winit,pybevy_control/wayland \
             -p pybevy_storage \
+            -p pybevy_array \
             -p pybevy_bytecodevm \
+            -p pybevy_shader_types \
             -p pybevy_core \
             -p pybevy_ecs \
             -p pybevy_reload \

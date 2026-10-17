@@ -953,3 +953,128 @@ fn refresh_storage_bindings(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::render::{
+        render_resource::{
+            BindGroupLayoutEntry, BindingType, BufferBindingType, BufferUsages, SamplerBindingType,
+            ShaderStages, TextureSampleType, TextureViewDimension,
+        },
+        settings::WgpuLimits,
+    };
+
+    use super::{
+        storage_entries, storage_layout_error_for_limits, validate_storage_buffer,
+        validate_storage_element_buffer,
+    };
+
+    #[test]
+    fn reduced_limits_check_group_binding_and_storage_boundaries() {
+        let entries = storage_entries(&[16, 32]);
+        let mut limits = WgpuLimits {
+            max_storage_buffers_per_shader_stage: 2,
+            max_bindings_per_bind_group: 111,
+            ..WgpuLimits::default()
+        };
+        assert!(storage_layout_error_for_limits(&limits, &entries).is_none());
+        limits.max_storage_buffers_per_shader_stage = 1;
+        assert!(
+            storage_layout_error_for_limits(&limits, &entries)
+                .unwrap()
+                .contains("combined material layout")
+        );
+        limits.max_storage_buffers_per_shader_stage = 2;
+        limits.max_bindings_per_bind_group = 110;
+        assert!(
+            storage_layout_error_for_limits(&limits, &entries)
+                .unwrap()
+                .contains("highest requested binding is 110")
+        );
+        limits.max_bindings_per_bind_group = 111;
+        limits.max_bind_groups = 3;
+        assert!(
+            storage_layout_error_for_limits(&limits, &entries)
+                .unwrap()
+                .contains("material group 3")
+        );
+    }
+
+    #[test]
+    fn reduced_limits_count_each_resource_and_stage_without_requiring_storage() {
+        let types = [
+            BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            BindingType::Texture {
+                sample_type: TextureSampleType::Float { filterable: true },
+                view_dimension: TextureViewDimension::D2,
+                multisampled: false,
+            },
+            BindingType::Sampler(SamplerBindingType::Filtering),
+        ];
+        let entries: Vec<_> = types
+            .into_iter()
+            .enumerate()
+            .flat_map(|(binding, ty)| {
+                [ShaderStages::VERTEX, ShaderStages::FRAGMENT]
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(offset, visibility)| BindGroupLayoutEntry {
+                        binding: (binding * 2 + offset) as u32,
+                        visibility,
+                        ty,
+                        count: None,
+                    })
+            })
+            .collect();
+        let limits = WgpuLimits {
+            max_storage_buffers_per_shader_stage: 0,
+            max_uniform_buffers_per_shader_stage: 1,
+            max_sampled_textures_per_shader_stage: 1,
+            max_samplers_per_shader_stage: 1,
+            ..WgpuLimits::default()
+        };
+        assert!(storage_layout_error_for_limits(&limits, &entries).is_none());
+        for index in [0, 2, 4] {
+            let mut combined = entries.clone();
+            let mut extra = entries[index];
+            extra.binding = 100;
+            combined.push(extra);
+            assert!(
+                storage_layout_error_for_limits(&limits, &combined)
+                    .unwrap()
+                    .contains("combined material layout")
+            );
+        }
+    }
+
+    #[test]
+    fn typed_buffer_size_respects_reduced_binding_limit() {
+        assert!(validate_storage_element_buffer(96, BufferUsages::STORAGE, 96, 48).is_ok());
+        assert!(
+            validate_storage_element_buffer(96, BufferUsages::STORAGE, 95, 48)
+                .unwrap_err()
+                .contains("device binding limit")
+        );
+        assert!(
+            validate_storage_element_buffer(80, BufferUsages::STORAGE, 96, 48)
+                .unwrap_err()
+                .contains("element stride")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_array_lengths_usage_and_device_limit() {
+        for size in [0, 4, 15, 20] {
+            assert!(validate_storage_buffer(size, BufferUsages::STORAGE, 64).is_err());
+        }
+        assert!(validate_storage_buffer(16, BufferUsages::COPY_DST, 64).is_err());
+        assert!(validate_storage_buffer(80, BufferUsages::STORAGE, 64).is_err());
+        for size in [16, 32, 64] {
+            assert!(validate_storage_buffer(size, BufferUsages::STORAGE, 64).is_ok());
+        }
+    }
+}
