@@ -1,4 +1,5 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
+use glam::camera::{lh, rh};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{UNSUPPORTED_COMPARISON, matrix_decomposition_singular},
@@ -319,7 +320,7 @@ impl PyAffine3A {
     #[staticmethod]
     pub fn look_to_lh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
-        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_lh(
+        Ok(PyAffine3A::from_affine3a(lh::view::look_to_affine3a(
             eye, dir, up,
         )))
     }
@@ -327,7 +328,7 @@ impl PyAffine3A {
     #[staticmethod]
     pub fn look_to_rh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
-        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_rh(
+        Ok(PyAffine3A::from_affine3a(rh::view::look_to_affine3a(
             eye, dir, up,
         )))
     }
@@ -335,7 +336,7 @@ impl PyAffine3A {
     #[staticmethod]
     pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_lh(
+        Ok(PyAffine3A::from_affine3a(lh::view::look_to_affine3a(
             eye, dir, up,
         )))
     }
@@ -343,7 +344,7 @@ impl PyAffine3A {
     #[staticmethod]
     pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(PyAffine3A::from_affine3a(Affine3A::look_to_rh(
+        Ok(PyAffine3A::from_affine3a(rh::view::look_to_affine3a(
             eye, dir, up,
         )))
     }

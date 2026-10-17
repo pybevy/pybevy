@@ -15,7 +15,7 @@ from pybevy.render import (
 )
 
 
-@material(fragment_shader="shaders/examples/volume_texture.wgsl")
+@material(fragment_shader="shaders/examples/volume_texture.wesl")
 class VolumeSlice(Material):
     volume: TextureBinding = TextureBinding(dimension="3d")
     slice_z: float = 0.15

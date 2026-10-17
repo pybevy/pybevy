@@ -1,4 +1,5 @@
-use bevy::math::{Vec2, cubic_splines::RationalCurve, curve::Curve};
+use bevy::curve::{Curve, cubic_splines::RationalCurve};
+use bevy::math::Vec2;
 use pyo3::prelude::*;
 
 use super::rational_segment2d::PyRationalSegment2d;

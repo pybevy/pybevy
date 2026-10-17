@@ -20,8 +20,8 @@ pybevy_array = { workspace = true, features = ["pyo3"] }
 pybevy_shader = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_math = { workspace = true }
-wgpu-types = "29"
-wgpu = { version = "29", default-features = false }
+wgpu-types = "30"
+wgpu = { version = "30", default-features = false }
 tracing = "0.1"
 crossbeam-channel = "0.5"
 

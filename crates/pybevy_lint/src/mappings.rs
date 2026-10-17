@@ -24,7 +24,7 @@ pub struct FieldMapProvenance {
 }
 
 impl FieldMapProvenance {
-    pub fn pinned_bevy_019() -> Self {
+    pub fn pinned_bevy_020() -> Self {
         Self {
             bevy_tag: crate::bevy_audit::BEVY_TAG.to_owned(),
             bevy_revision: crate::bevy_audit::BEVY_REVISION.to_owned(),

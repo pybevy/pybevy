@@ -5,9 +5,12 @@ and gradients have dedicated `ui-text` and `ui-gradients` guides.
 
 ## Units
 
-Use `px(value)`, `percent(value)`, `vw(value)`, `vh(value)`, `vmin(value)` and
-`vmax(value)` from `pybevy.ui`, or construct exact variants such as
-`Val.Px(12.0)` and `Val.Auto()`. Payloads are read-only; replace the whole Node
+Use `px(value)`, `percent(value)`, `vw(value)`, `vh(value)`, `vmin(value)`,
+`vmax(value)`, `em(value)` and `rem(value)` from `pybevy.ui`, or construct exact
+variants such as `Val.Px(12.0)` and `Val.Auto()`. `Val.Em` scales with the
+node's `EmSize` component (from `pybevy.text`; derived from the node's
+`TextFont` when it has one, otherwise 20 unless you set it), `Val.Rem` with the
+`RemSize` resource. Payloads are read-only; replace the whole Node
 field to change its value. Read numeric payloads with `.value` after matching
 the variant; use `isinstance(value, Val.Auto)` or `value == Val.Auto()` for Auto.
 Bare numeric Node fields mean pixels.
@@ -30,6 +33,12 @@ zero division produces float infinity/NaN, and scalar arithmetic preserves
 `Auto`. A non-finite result cannot be assigned to a Node layout field.
 
 ## Borders, Outlines, and Shadows
+
+`Node.border_radius` holds one `CornerRadius(x, y)` per corner. Passing a plain
+`Val` gives a circular corner (`BorderRadius.all(px(8))`); a `CornerRadius` or
+an `(x, y)` pair of `Val` values gives an elliptical one, and
+`BorderRadius.MAX_ELLIPTICAL` draws the node as an ellipse. Corner getters
+return `CornerRadius`, not `Val`.
 
 `Node.border` reserves layout space. `BorderColor` colors that border.
 `Outline` draws outside the border box without affecting layout, and
@@ -107,7 +116,7 @@ def inspect_layout(query: Query[tuple[ComputedNode, UiGlobalTransform]]) -> None
 
 `UiGlobalTransform` is engine-computed and cannot be inserted directly. Change
 `UiTransform` when you need to translate, rotate, or scale a UI node.
-Nested `Node.border_radius`, `Node.overflow_clip_margin`, and
+Nested `Node.border_radius` (including each corner's `x`/`y`), `Node.overflow_clip_margin`, and
 `UiTransform.translation` values write through when reached through `Query[Mut[T]]`.
 Their fields reject writes from read-only queries and expire with the system.
 
@@ -134,6 +143,49 @@ grid = Node(
     grid_template_columns=[GridTrack.px(90.0), RepeatedGridTrack.fr(2, 1.0)],
     grid_auto_rows=[GridTrack.auto()],
 )
+```
+
+## Buttons
+
+`Button` lives in `pybevy.ui_widgets`. The widget inserts `Pressed`
+(`pybevy.ui`) while the pointer holds it down; add `Hovered()` from
+`pybevy.picking` to track hover. Style from those components, and react to a
+press with an `Added[Pressed]` filter. `InteractionDisabled` stops the widget
+from reacting. The 0.19 `Interaction` component is gone.
+
+```python
+from typing import cast
+
+from pybevy.color import Color
+from pybevy.ecs import Added, Commands, Entity, Has, Mut, Query, With, system
+from pybevy.picking import Hovered
+from pybevy.ui import BackgroundColor, Node, Pressed, px
+from pybevy.ui_widgets import Button
+
+
+@system
+def spawn_button(commands: Commands) -> None:
+    commands.spawn(Button(), Hovered(), Node(width=px(150), height=px(65)), BackgroundColor(Color.BLACK))
+
+
+@system
+def style_buttons(
+    buttons: Query[tuple[Hovered, Has[Pressed], Mut[BackgroundColor]], With[Button]],
+) -> None:
+    for row in buttons:
+        hovered, pressed, background = cast(tuple[Hovered, bool, BackgroundColor], row)
+        if pressed:
+            background.color = Color.srgb(0.35, 0.75, 0.35)
+        elif hovered.get():
+            background.color = Color.srgb(0.25, 0.25, 0.25)
+        else:
+            background.color = Color.srgb(0.15, 0.15, 0.15)
+
+
+@system
+def on_press(pressed: Query[Entity, tuple[With[Button], Added[Pressed]]]) -> None:
+    for entity in pressed:
+        ...
 ```
 
 ## Layering

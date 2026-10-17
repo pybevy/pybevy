@@ -244,7 +244,7 @@ pub(crate) fn opaque_value_fields(
     let registry = world.get_resource::<AppTypeRegistry>()?.read();
     let from_ptr = registry.get_type_data::<ReflectFromPtr>(type_id)?;
     // SAFETY: `ptr` holds the value registered under `type_id`, the type `from_ptr` reads.
-    let value = unsafe { from_ptr.as_reflect(ptr) };
+    let value = unsafe { from_ptr.ptr_as_reflect(ptr) };
     match reflect_to_json(value.as_partial_reflect()) {
         serde_json::Value::Object(map) => Some(map),
         _ => None,

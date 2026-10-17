@@ -1,5 +1,5 @@
-#import bevy_pbr::{mesh_functions, view_transformations::position_world_to_clip}
-#import pybevy::gen::StructuredTiles as params
+import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
+import pybevy::gen::StructuredTiles as params;
 
 struct Vertex {
     @builtin(instance_index) instance_index: u32,

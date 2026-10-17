@@ -1,4 +1,5 @@
-use bevy::math::{Vec2, primitives::Polygon};
+use bevy::math::Vec2;
+use bevy::shape::Polygon;
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::ReprLiteral};
 use pyo3::{prelude::*, types::PyList};
 

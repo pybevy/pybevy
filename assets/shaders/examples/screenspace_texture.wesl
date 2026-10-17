@@ -2,15 +2,15 @@
 // Samples a texture using screen-space UV coordinates so the texture
 // stays fixed to the viewport regardless of mesh geometry or camera angle.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::view,
     forward_io::VertexOutput,
     utils::coords_to_viewport_uv,
-}
+};
 
-// Texture slot 0 from @material — first Image field
-@group(3) @binding(101) var texture: texture_2d<f32>;
-@group(3) @binding(102) var texture_sampler: sampler;
+// Texture slot 0 from @material: the first Image field
+@group(constants::MATERIAL_BIND_GROUP) @binding(101) var texture: texture_2d<f32>;
+@group(constants::MATERIAL_BIND_GROUP) @binding(102) var texture_sampler: sampler;
 
 @fragment
 fn fragment(

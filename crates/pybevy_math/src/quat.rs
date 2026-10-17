@@ -1,4 +1,5 @@
 use bevy::math::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A};
+use glam::camera::{lh, rh};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     public_error::{
@@ -494,25 +495,25 @@ impl PyQuat {
     #[staticmethod]
     pub fn look_to_lh(dir: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
         let (dir, up) = look_to_axes(dir, up)?;
-        Ok(Quat::look_to_lh(dir, up).into())
+        Ok(lh::view::look_to_quat(dir, up).into())
     }
 
     #[staticmethod]
     pub fn look_to_rh(dir: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
         let (dir, up) = look_to_axes(dir, up)?;
-        Ok(Quat::look_to_rh(dir, up).into())
+        Ok(rh::view::look_to_quat(dir, up).into())
     }
 
     #[staticmethod]
     pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
         let (_, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(Quat::look_to_lh(dir, up).into())
+        Ok(lh::view::look_to_quat(dir, up).into())
     }
 
     #[staticmethod]
     pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<PyQuat> {
         let (_, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(Quat::look_to_rh(dir, up).into())
+        Ok(rh::view::look_to_quat(dir, up).into())
     }
 
     #[staticmethod]

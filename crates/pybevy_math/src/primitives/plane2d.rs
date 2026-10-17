@@ -1,4 +1,5 @@
-use bevy::math::{Dir2, primitives::Plane2d};
+use bevy::math::Dir2;
+use bevy::shape::Plane2d;
 use pybevy_core::{
     FromBorrowedStorage, Omittable, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
 };

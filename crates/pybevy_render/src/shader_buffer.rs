@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use bevy::{asset::RenderAssetUsages, render::storage::ShaderBuffer};
+use bevy::{
+    asset::RenderAssetUsages,
+    platform::collections::AlignedVec,
+    render::storage::{ShaderBuffer, ShaderBufferData},
+};
 use pybevy_array::{ArrayDType, ArrayError, BorrowProbe, PyArray, borrowed_read_only_u8};
 use pybevy_core::{
     AssetStorage, PyAsset,
@@ -8,7 +12,7 @@ use pybevy_core::{
     numpy_view_guard::{PendingNumpyViewGuard, PyNumpyViewGuard},
     public_error::{
         SHADER_BUFFER_DATA_CHANGED, SHADER_BUFFER_DATA_TYPE, SHADER_BUFFER_NO_DATA,
-        shader_buffer_too_large,
+        shader_buffer_size_unaligned, shader_buffer_too_large,
     },
 };
 use pybevy_macros::pyasset;
@@ -79,7 +83,7 @@ impl PyShaderBuffer {
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut buffer = match data {
             Some(value) => ShaderBuffer::new(
-                &extract_shader_data(value, element)?,
+                checked_data(extract_shader_data(value, element)?)?,
                 RenderAssetUsages::default(),
             ),
             None => {
@@ -92,7 +96,8 @@ impl PyShaderBuffer {
     }
 
     #[staticmethod]
-    pub fn with_size(py: Python<'_>, size: usize) -> PyResult<Py<Self>> {
+    pub fn with_size(py: Python<'_>, size: u64) -> PyResult<Py<Self>> {
+        check_size(size)?;
         Py::new(
             py,
             Self::from_owned(ShaderBuffer::with_size(size, RenderAssetUsages::default())),
@@ -105,10 +110,8 @@ impl PyShaderBuffer {
         let guard = PyNumpyViewGuard::from_acquired(claim, slf.clone().unbind().into_any());
         let validity = this.storage.validity_flag();
         let buffer = this.storage.as_ref()?;
-        let data = buffer
-            .data
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err(SHADER_BUFFER_NO_DATA))?;
+        let data =
+            cpu_data(&buffer).ok_or_else(|| PyRuntimeError::new_err(SHADER_BUFFER_NO_DATA))?;
         let len = data.len();
         let anchor = Arc::new(AssetBorrowAnchor::new(validity, guard));
         let probe: Arc<dyn BorrowProbe> = anchor.clone();
@@ -128,11 +131,7 @@ impl PyShaderBuffer {
         py: Python<'_>,
     ) -> PyResult<Py<ShaderBufferDataContext>> {
         let mut this = slf.borrow_mut();
-        let len = this
-            .storage
-            .as_ref()?
-            .data
-            .as_ref()
+        let len = cpu_data(&*this.storage.as_ref()?)
             .ok_or_else(|| PyRuntimeError::new_err(SHADER_BUFFER_NO_DATA))?
             .len();
         let validity = this.storage.validity_flag();
@@ -149,20 +148,13 @@ impl PyShaderBuffer {
             },
         )?;
         let mut transaction = this.storage.begin_write_view(anchor.pending_claim())?;
-        let current_len = transaction
-            .preflight()
-            .data
-            .as_ref()
+        let current_len = cpu_data(transaction.preflight())
             .ok_or_else(|| PyRuntimeError::new_err(SHADER_BUFFER_NO_DATA))?
             .len();
         if current_len != len {
             return Err(PyRuntimeError::new_err(SHADER_BUFFER_DATA_CHANGED));
         }
-        let data = transaction
-            .commit()
-            .data
-            .as_mut()
-            .expect("preflight confirmed CPU data exists");
+        let data = cpu_data_mut(transaction.commit()).expect("preflight confirmed CPU data exists");
         {
             let mut pending = array.borrow_mut(py);
             // SAFETY: preflight validated this buffer under the retained exclusive asset claim.
@@ -174,11 +166,7 @@ impl PyShaderBuffer {
     }
 
     pub fn data_copy<'py>(&self, py: Python<'py>) -> PyResult<Option<Py<PyBytes>>> {
-        Ok(self
-            .as_ref()?
-            .data
-            .as_ref()
-            .map(|data| PyBytes::new(py, data).unbind()))
+        Ok(cpu_data(&*self.as_ref()?).map(|data| PyBytes::new(py, data).unbind()))
     }
 
     #[pyo3(signature = (value, *, element = None))]
@@ -188,7 +176,7 @@ impl PyShaderBuffer {
         element: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let data = match value {
-            Some(value) => Some(extract_shader_data(value, element)?),
+            Some(value) => Some(checked_data(extract_shader_data(value, element)?)?),
             None => {
                 reject_empty_element(element)?;
                 None
@@ -196,26 +184,38 @@ impl PyShaderBuffer {
         };
         // Packing may execute Python; acquire mutable storage only after it finishes.
         let mut this = slf.try_borrow_mut()?;
-        PyShaderBuffer::as_mut(&mut this)?.data = data;
+        let mut buffer = PyShaderBuffer::as_mut(&mut this)?;
+        buffer.data = match data {
+            Some(data) => {
+                let data = AlignedVec::from(data);
+                let buffer_size = data.len() as u64;
+                ShaderBufferData::Initialized { data, buffer_size }
+            }
+            None => ShaderBufferData::Uninitialized(buffer.buffer_size()),
+        };
         Ok(())
     }
 
     pub fn resize(&mut self, size: u64) -> PyResult<()> {
+        check_size(size)?;
         let mut buffer = self.as_mut()?;
         reserve_cpu_data(&mut buffer, size)?;
         buffer.resize(size);
         Ok(())
     }
 
-    pub fn resize_in_place(&mut self, size: u64) -> PyResult<()> {
-        let mut buffer = self.as_mut()?;
-        reserve_cpu_data(&mut buffer, size)?;
-        buffer.resize_in_place(size);
+    pub fn resize_buffer(&mut self, size: u64) -> PyResult<()> {
+        check_size(size)?;
+        self.as_mut()?.resize_buffer(size);
         Ok(())
     }
 
+    pub fn buffer_size(&self) -> PyResult<u64> {
+        Ok(self.as_ref()?.buffer_size())
+    }
+
     pub fn data_len(&self) -> PyResult<Option<usize>> {
-        Ok(self.as_ref()?.data.as_ref().map(Vec::len))
+        Ok(cpu_data(&*self.as_ref()?).map(AlignedVec::len))
     }
 
     #[getter]
@@ -289,15 +289,47 @@ fn map_array_read_error(error: ArrayError) -> PyErr {
     }
 }
 
-/// Bevy zero-extends CPU data with an infallible `Vec::resize`, which aborts on
-/// allocation failure; reserve first so that becomes a `MemoryError`.
+/// wgpu requires buffer sizes in multiples of 4; Bevy 0.20 panics on upload otherwise.
+fn check_size(size: u64) -> PyResult<()> {
+    if size % 4 != 0 {
+        return Err(PyValueError::new_err(shader_buffer_size_unaligned(size)));
+    }
+    Ok(())
+}
+
+fn checked_data(data: Vec<u8>) -> PyResult<Vec<u8>> {
+    check_size(data.len() as u64)?;
+    Ok(data)
+}
+
+fn cpu_data(buffer: &ShaderBuffer) -> Option<&AlignedVec> {
+    match &buffer.data {
+        ShaderBufferData::Initialized { data, .. } => Some(data),
+        ShaderBufferData::Uninitialized(_) => None,
+    }
+}
+
+fn cpu_data_mut(buffer: &mut ShaderBuffer) -> Option<&mut AlignedVec> {
+    match &mut buffer.data {
+        ShaderBufferData::Initialized { data, .. } => Some(data),
+        ShaderBufferData::Uninitialized(_) => None,
+    }
+}
+
+/// Bevy zero-extends CPU data with an infallible `AlignedVec::resize`, which aborts
+/// on allocation failure; probe a fallible allocation first so that becomes a
+/// `MemoryError`.
 fn reserve_cpu_data(buffer: &mut ShaderBuffer, size: u64) -> PyResult<()> {
-    let Some(data) = buffer.data.as_mut() else {
+    let Some(data) = cpu_data(buffer) else {
         return Ok(());
     };
     let size =
         usize::try_from(size).map_err(|_| PyMemoryError::new_err(shader_buffer_too_large(size)))?;
-    data.try_reserve_exact(size.saturating_sub(data.len()))
+    if size <= data.capacity() {
+        return Ok(());
+    }
+    Vec::<u8>::new()
+        .try_reserve_exact(size)
         .map_err(|_| PyMemoryError::new_err(shader_buffer_too_large(size as u64)))
 }
 

@@ -14,9 +14,11 @@ use crate::{
     grid_track_repetition::{PyGridTrackRepetition, extract_grid_track_repetition_from_any},
 };
 
-const REPEATED_FACTORIES: [&str; 9] = [
+const REPEATED_FACTORIES: [&str; 11] = [
     "px",
     "percent",
+    "em",
+    "rem",
     "fr",
     "flex",
     "auto",
@@ -146,6 +148,26 @@ impl PyRepeatedGridTrack {
             inner: RepeatedGridTrack::percent(
                 extract_grid_track_repetition_from_any(repetition)?,
                 check_for::<Self, _>("percent", value, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn em(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::em(
+                extract_grid_track_repetition_from_any(repetition)?,
+                check_for::<Self, _>("em", value, FINITE)?,
+            ),
+        })
+    }
+
+    #[staticmethod]
+    pub fn rem(repetition: &Bound<'_, PyAny>, value: f32) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::rem(
+                extract_grid_track_repetition_from_any(repetition)?,
+                check_for::<Self, _>("rem", value, FINITE)?,
             ),
         })
     }

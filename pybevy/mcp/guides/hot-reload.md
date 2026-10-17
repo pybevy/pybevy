@@ -148,12 +148,12 @@ In an app running without hot reload, such as a script started with plain
 the requested `pause` and `time_scale`.
 
 `get_last_error.shader_errors` is `null` or lists the compile errors of shaders
-whose pipelines currently fail, such as a WGSL syntax error. An error in an
+whose pipelines currently fail, such as a WESL syntax error. An error in an
 `@material` shader starts with its owner, for example
-`@material GlowMaterial fragment shader shaders/glow.wgsl (entities 12v0): `,
+`@material GlowMaterial fragment shader shaders/glow.wesl (entities 12v0): `,
 naming the class, the stages that use the file, and the entities drawing it.
 It clears when the fixed shader recompiles, and the log then reports
-`@material GlowMaterial shader shaders/glow.wgsl compiles again`; a `.wgsl`
+`@material GlowMaterial shader shaders/glow.wesl compiles again`; a `.wesl`
 edit applies without a Python reload.
 
 `get_last_error.wgpu_validation` is `null` or reports GPU validation errors
@@ -261,7 +261,7 @@ def main(app: App) -> App:
 | First Partial reload after normal scene launch | Partial | Initial definitions provide the comparison baseline |
 | Added/changed observers | Full | Auto-escalated from Partial |
 | Renamed/removed a system function | `reload` | Removed registrations retire, then compact after the rollback window |
-| Edited a `.wgsl` shader or other asset | none | Bevy re-loads the asset itself; the Python watcher ignores non-`.py` files |
+| Edited a `.wesl` shader or other asset | none | Bevy re-loads the asset itself; the Python watcher ignores non-`.py` files |
 | Scene looks broken | Full | Clean slate |
 
 Asset files are watched while hot reload is active, so editing a shader or texture
@@ -279,7 +279,7 @@ Unrelated Python files under the root are ignored. Scenes that use dynamic
 imports or load and execute Python files by path reload conservatively for
 Python edits under the root. This includes `runpy`, `spec_from_file_location`,
 and the `exec`/`compile` builtins; the watcher cannot infer a specific
-dependency from a runtime path. Asset files such as `.wgsl` remain owned by
+dependency from a runtime path. Asset files such as `.wesl` shaders remain owned by
 Bevy's asset watcher.
 
 The first Partial reload after `run_scene` preserves live state when definitions

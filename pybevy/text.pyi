@@ -1,4 +1,5 @@
-from collections.abc import Iterator
+import builtins
+from collections.abc import Iterable, Iterator
 from datetime import timedelta
 from typing import ClassVar, Final, Literal
 
@@ -15,6 +16,9 @@ from pybevy.color import (
     Laba,
     Lcha,
     LinearRgba,
+    Okhsla,
+    Okhsva,
+    Okhwba,
     Oklaba,
     Oklcha,
     Srgba,
@@ -22,7 +26,7 @@ from pybevy.color import (
 )
 from pybevy.ecs import Batchable, Component, Resource, SystemSet
 from pybevy.image import TextureAtlasLayout
-from pybevy.math import Vec2
+from pybevy.math import Rect, Vec2
 
 Text2dUpdateSystems: Final[SystemSet]
 EditableTextSystems: Final[SystemSet]
@@ -170,10 +174,12 @@ class FontAtlasSet(Resource):
         """Return the total number of font atlas entries."""
 
 class RemSize(Resource):
-    """Base size, in logical pixels, for ``FontSize.Rem`` and ``LetterSpacing.Rem``.
+    """The root font size, in logical pixels, for ``FontSize.Rem`` and ``LetterSpacing.Rem``.
 
-    ``TextPlugin`` inserts the Bevy default of 20. Change the live resource
-    through ``ResMut[RemSize]`` or insert a replacement to rescale rem text.
+    ``TextPlugin`` inserts the Bevy default of 20. The default ``TextFont``
+    size is ``FontSize.Rem(1.0)``, so text left at its default size follows
+    this resource. Change the live resource through ``ResMut[RemSize]`` or
+    insert a replacement to rescale rem text.
     """
 
     def __init__(self, value: float = 20.0) -> None: ...
@@ -185,6 +191,24 @@ class RemSize(Resource):
     def value(self, value: float) -> None: ...
 
     def __repr__(self) -> str: ...
+
+class EmSize(Component):
+    """The font size, in logical pixels, that ``Val.Em`` lengths on a UI node resolve against.
+
+    ``Node`` requires it, so every UI node has one (default 20). On a node with a
+    ``TextFont`` it is recomputed from the font size whenever ``TextFont``,
+    ``RemSize`` or the render target changes; otherwise the value is yours to set.
+    """
+
+    def __init__(self, value: float = 20.0) -> None: ...
+
+    @property
+    def value(self) -> float: ...
+
+    @value.setter
+    def value(self, value: float) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
 
 class LineHeight(Component):
     """Line height specification for text.
@@ -595,7 +619,7 @@ class TextColor(Component):
 
     color: Color
 
-    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = Color.WHITE) -> None:
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = Color.WHITE) -> None:
         """Create a text color component."""
 
     @staticmethod
@@ -649,23 +673,76 @@ class FontSize:
 
     def __eq__(self, other: object) -> bool: ...
 
+class GenericFontFamily:
+    """Generic font families resolved through the font database.
+
+    These need bevy's `system_font_discovery` feature, which is not compiled
+    in, and render nothing without it.
+    """
+
+    def __copy__(self) -> GenericFontFamily: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> GenericFontFamily: ...
+
+    Serif: GenericFontFamily
+    """Fonts with serifs."""
+
+    SansSerif: GenericFontFamily
+    """Fonts without serifs."""
+
+    Cursive: GenericFontFamily
+    """Fonts with a cursive or handwritten style."""
+
+    Fantasy: GenericFontFamily
+    """Decorative or expressive display fonts."""
+
+    Monospace: GenericFontFamily
+    """Fonts whose glyphs all have the same advance width."""
+
+    SystemUi: GenericFontFamily
+    """The default user interface system font."""
+
+    UiSerif: GenericFontFamily
+    """Alternative serif font for user interfaces."""
+
+    UiSansSerif: GenericFontFamily
+    """Alternative sans-serif font for user interfaces."""
+
+    UiMonospace: GenericFontFamily
+    """Alternative monospace font for user interfaces."""
+
+    UiRounded: GenericFontFamily
+    """Fonts that have rounded features."""
+
+    Emoji: GenericFontFamily
+    """Fonts designed to render emoji."""
+
+    Math: GenericFontFamily
+    """Fonts for mathematical notation."""
+
+    FangSong: GenericFontFamily
+    """Chinese characters between serif-style Song and cursive-style Kai forms."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __hash__(self) -> int: ...
+
 class FontSource:
     """Where a TextFont resolves its font face from.
 
-    A specific Font asset handle, a font family name resolved through the
-    font database, or a generic font category (serif, monospace, ...).
-    Wherever a FontSource is accepted, a Handle is treated as
-    `FontSource.Handle` and a str as `FontSource.Family` (mirrors bevy's
-    `From` impls).
+    A specific Font asset handle, a font family name, a CSS font-family list,
+    an ordered list of sources, or a generic font category. Wherever a
+    FontSource is accepted, a Handle is treated as `FontSource.Handle`, a str
+    as `FontSource.Families`, a GenericFontFamily as `FontSource.Generic`, and
+    a list or tuple of FontSource as `FontSource.List` (mirrors bevy's `From`
+    impls).
 
-    Only `Handle` and `Family` resolve in the shipped build. The thirteen
-    generic categories need bevy's `system_font_discovery` feature, which is
-    not compiled in, and render nothing without it; bevy logs one message per
-    process naming only the first generic it sees.
+    Generic categories, including generic names inside a `Families` list,
+    need bevy's `system_font_discovery` feature, which is not compiled in, and
+    render nothing without it; bevy logs one message per process naming only
+    the first generic it sees.
 
-    An unresolvable `Family` renders nothing and logs nothing, so load a font and
-    use `Handle`, or `Family` with a name the font file declares, when text has
-    to appear.
+    An unresolvable family name renders nothing and logs nothing, so load a
+    font and use `Handle`, or a name the font file declares, when text has to
+    appear.
     """
 
     class Handle(FontSource):
@@ -688,83 +765,81 @@ class FontSource:
         def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
-    class Serif(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
+    class Families(FontSource):
+        """A font-family list in CSS format, such as `"Fira Sans, 'Noto Sans', sans-serif"`."""
 
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> str: ...
+        def __init__(self, value: str) -> None: ...
 
-    class SansSerif(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
+    class List(FontSource):
+        """An ordered list of font sources, tried in order."""
 
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> list[FontSource]: ...
+        def __init__(self, value: list[FontSource]) -> None: ...
 
-    class Cursive(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
+    class Generic(FontSource):
+        """A generic font category. Renders nothing without `system_font_discovery`."""
 
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]]
+        @property
+        def value(self) -> GenericFontFamily: ...
+        def __init__(self, value: GenericFontFamily) -> None: ...
 
-    class Fantasy(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
+    @staticmethod
+    def family(family: str) -> FontSource:
+        """Resolve the font by family name."""
 
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+    @staticmethod
+    def families(source: str) -> FontSource:
+        """A font-family list in CSS format."""
 
-    class Monospace(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
+    @staticmethod
+    def list(
+        list: Iterable[
+            FontSource | AssetHandle | str | GenericFontFamily | builtins.list[FontSource] | tuple[FontSource, ...]
+        ],
+    ) -> FontSource:
+        """An ordered list of sources; each item converts like a FontSource argument."""
 
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+    @staticmethod
+    def serif() -> FontSource: ...
+    @staticmethod
+    def sans_serif() -> FontSource: ...
+    @staticmethod
+    def cursive() -> FontSource: ...
+    @staticmethod
+    def fantasy() -> FontSource: ...
+    @staticmethod
+    def monospace() -> FontSource: ...
+    @staticmethod
+    def system_ui() -> FontSource: ...
+    @staticmethod
+    def ui_serif() -> FontSource: ...
+    @staticmethod
+    def ui_sans_serif() -> FontSource: ...
+    @staticmethod
+    def ui_monospace() -> FontSource: ...
+    @staticmethod
+    def ui_rounded() -> FontSource: ...
+    @staticmethod
+    def emoji() -> FontSource: ...
+    @staticmethod
+    def math() -> FontSource: ...
+    @staticmethod
+    def fang_song() -> FontSource: ...
 
-    class SystemUi(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
+    def flatten(self) -> builtins.list[FontSource]:
+        """Depth-first list of sources with every nested `List` replaced by its contents."""
 
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+    def is_list_like(self) -> bool:
+        """True for `Families` and `List`."""
 
-    class UiSerif(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
-
-    class UiSansSerif(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
-
-    class UiMonospace(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
-
-    class UiRounded(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
-
-    class Emoji(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
-
-    class Math(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
-
-    class FangSong(FontSource):
-        """Generic category. Renders nothing without `system_font_discovery`."""
-
-        __match_args__: ClassVar[tuple[()]]
-        def __init__(self) -> None: ...
+    def is_recursive(self) -> bool:
+        """True for a `List` that contains a `Families` or `List` entry."""
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -779,10 +854,10 @@ class TextFont(Component):
         """The font source (default: the default font handle)."""
 
     @font.setter
-    def font(self, value: FontSource | Handle | str) -> None: ...
+    def font(self, value: FontSource | Handle | str | GenericFontFamily | list[FontSource] | tuple[FontSource, ...]) -> None: ...
     @property
     def font_size(self) -> FontSize:
-        """Finite, non-negative vertical height of glyphs (default: FontSize.Px(20.0))."""
+        """Finite, non-negative vertical height of glyphs (default: FontSize.Rem(1.0), which follows RemSize)."""
 
     @font_size.setter
     def font_size(self, value: FontSize | float) -> None: ...
@@ -805,15 +880,15 @@ class TextFont(Component):
     def __init__(
         self,
         *,
-        font: FontSource | Handle | str = ...,
-        font_size: FontSize | float = FontSize.Px(20.0),
+        font: FontSource | Handle | str | GenericFontFamily | list[FontSource] | tuple[FontSource, ...] = ...,
+        font_size: FontSize | float = FontSize.Rem(1.0),
         weight: FontWeight = FontWeight.NORMAL,
         width: FontWidth = FontWidth.NORMAL,
         style: FontStyle = FontStyle.Normal(),
         font_smoothing: FontSmoothing = FontSmoothing.AntiAliased,
         font_features: FontFeatures = ...
     ) -> None:
-        """Create a text font component. Defaults to FontSize.Px(20.0); supplied sizes must be in [0, 4096]."""
+        """Create a text font component. Defaults to FontSize.Rem(1.0); supplied sizes must be in [0, 4096]."""
 
     @staticmethod
     def from_font_size(font_size: FontSize | float) -> TextFont:
@@ -937,7 +1012,7 @@ class TextBackgroundColor(Component):
     color: Color
     """Background color"""
 
-    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = Color.BLACK) -> None:
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = Color.BLACK) -> None:
         """Create a text background color component.
 
         Args:
@@ -1196,8 +1271,61 @@ class TextEdit:
         def value(self) -> str: ...
         def __init__(self, *, value: str) -> None: ...
 
+    class ScrollByLines(TextEdit):
+        """Scroll vertically by a number of visual lines, increasing downwards; fractions scroll part of a line."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class ScrollTo(TextEdit):
+        """Scroll the minimum amount that brings a text-layout point into view."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
+
+    class ScrollBy(TextEdit):
+        """Scroll the viewport by a displacement in text-layout coordinates."""
+
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        @property
+        def value(self) -> Vec2: ...
+        def __init__(self, value: Vec2) -> None: ...
+
     def __eq__(self, other: object) -> bool: ...
 
+
+class TextViewport:
+    """The region of an editable text layout visible to the user.
+
+    Coordinates are in text-layout space, increasing right and downwards.
+    Scroll with the `TextEdit.ScrollBy`, `ScrollTo`, and `ScrollByLines` edits;
+    the UI layout systems keep `size` in sync with the node.
+    """
+
+    def __init__(self, *, offset: Vec2 = Vec2.ZERO, size: Vec2 = Vec2.ZERO) -> None:
+        """Create a viewport; both vectors must be finite."""
+
+    @property
+    def offset(self) -> Vec2:
+        """The top-left corner of the viewport in text-layout coordinates."""
+
+    @offset.setter
+    def offset(self, value: Vec2) -> None: ...
+    @property
+    def size(self) -> Vec2:
+        """The size of the viewport in text-layout coordinates."""
+
+    @size.setter
+    def size(self, value: Vec2) -> None: ...
+    def rect(self) -> Rect:
+        """The viewport as a Rect from `offset` to `offset + size`."""
+
+    def __eq__(self, other: object) -> bool: ...
+    def __repr__(self) -> str: ...
 
 class EditableText(Component):
     """An editable text input field.
@@ -1211,6 +1339,7 @@ class EditableText(Component):
         self,
         text: str = "",
         *,
+        cursor_margin: Vec2 = Vec2(0.2, 0.2),
         cursor_width: float = 0.2,
         cursor_blink_period: timedelta | float | int = timedelta(seconds=1),
         max_characters: int | None = None,
@@ -1246,7 +1375,7 @@ class EditableText(Component):
     ) -> Batchable:
         """Batch-construct from the two fields declared for the View API.
 
-        The text itself and the other five fields are not batchable.
+        The text itself and the other fields are not batchable.
         """
 
     @property
@@ -1270,6 +1399,21 @@ class EditableText(Component):
     @allow_newlines.setter
     def allow_newlines(self, value: bool) -> None: ...
 
+    @property
+    def viewport(self) -> TextViewport:
+        """The visible region of the text layout; replaces bevy 0.19's `TextScroll`."""
+
+    @viewport.setter
+    def viewport(self, value: TextViewport) -> None: ...
+    @property
+    def cursor_margin(self) -> Vec2:
+        """Cursor reveal margins as fractions of the viewport size, applied to both edges of each axis.
+
+        Bevy clamps each component to 0.0..=0.5 and treats non-finite values as zero.
+        """
+
+    @cursor_margin.setter
+    def cursor_margin(self, value: Vec2) -> None: ...
     @property
     def cursor_width(self) -> float: ...
     @cursor_width.setter
@@ -1300,7 +1444,8 @@ class TextCursorStyle(Component):
         color: Color = ...,
         selection_color: Color = ...,
         unfocused_selection_color: Color = ...,
-        selected_text_color: Color | None = None
+        selected_text_color: Color | None = None,
+        selection_radius: float = 0.0
     ) -> None: ...
     @property
     def color(self) -> Color: ...
@@ -1318,6 +1463,12 @@ class TextCursorStyle(Component):
     def selected_text_color(self) -> Color | None: ...
     @selected_text_color.setter
     def selected_text_color(self, value: Color | None) -> None: ...
+    @property
+    def selection_radius(self) -> float:
+        """Finite corner radius of selection rectangles, relative to their height; bevy clamps it to 0.0..=0.5."""
+
+    @selection_radius.setter
+    def selection_radius(self, value: float) -> None: ...
 
     @staticmethod
     def batch(  # type: ignore[override]
@@ -1325,6 +1476,7 @@ class TextCursorStyle(Component):
         color: np.typing.ArrayLike | None = None,
         selection_color: np.typing.ArrayLike | None = None,
         unfocused_selection_color: np.typing.ArrayLike | None = None,
+        selection_radius: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
     def __eq__(self, other: object) -> bool: ...

@@ -70,7 +70,7 @@ pub unsafe fn reresolve_wrapper_ptr(
     entity: Entity,
     world_ptr: *mut World,
     component_id: ComponentId,
-) -> Option<*mut u8> {
+) -> Option<*const u8> {
     // SAFETY: caller guarantees world_ptr validity and the absence of a competing
     // mutable borrow. A shared `&World` is sufficient: `get_by_id` yields a const
     // `Ptr`, matching how the proxy's pointer is derived at construction.

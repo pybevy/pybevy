@@ -20,6 +20,9 @@ from pybevy.color import (
     Laba,
     Lcha,
     LinearRgba,
+    Okhsla,
+    Okhsva,
+    Okhwba,
     Oklaba,
     Oklcha,
     Srgba,
@@ -33,7 +36,9 @@ from pybevy.sprite import TextureSlicer
 class Val:
     """An immutable UI unit value, with native Bevy float arithmetic.
 
-    Construct a nested variant or use module px/percent/vw/vh/vmin/vmax helpers.
+    Construct a nested variant or use module px/percent/vw/vh/vmin/vmax/em/rem
+    helpers. Em resolves against the node's EmSize, Rem against the RemSize
+    resource.
     Val arithmetic follows Bevy float behavior, but Node layout fields reject
     non-finite values. Bare numeric Node fields mean pixels.
     """
@@ -82,8 +87,21 @@ class Val:
         @property
         def value(self) -> float: ...
 
+    class Em(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
+
+    class Rem(Val):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: float) -> None: ...
+        @property
+        def value(self) -> float: ...
+
     ZERO: ClassVar[Val]
     DEFAULT: ClassVar[Val]
+    MAX: ClassVar[Val]
     def left(self) -> UiRect: ...
     def right(self) -> UiRect: ...
     def top(self) -> UiRect: ...
@@ -107,6 +125,8 @@ def vw(value: float) -> Val: ...
 def vh(value: float) -> Val: ...
 def vmin(value: float) -> Val: ...
 def vmax(value: float) -> Val: ...
+def em(value: float) -> Val: ...
+def rem(value: float) -> Val: ...
 
 class UiRect:
     """A rectangular UI region defined by left, right, top, and bottom values.
@@ -331,17 +351,32 @@ class AlignItems:
     Start: AlignItems
     """Align to start of cross axis."""
 
+    StartSafe: AlignItems
+    """Like Start, but safe: the start of the content stays visible on overflow."""
+
     End: AlignItems
     """Align to end of cross axis."""
+
+    EndSafe: AlignItems
+    """Like End, but falls back to Start on overflow so the start of the content stays visible."""
 
     FlexStart: AlignItems
     """Align to flex start."""
 
+    FlexStartSafe: AlignItems
+    """Like FlexStart, but falls back to Start on overflow so the start of the content stays visible."""
+
     FlexEnd: AlignItems
     """Align to flex end."""
 
+    FlexEndSafe: AlignItems
+    """Like FlexEnd, but falls back to Start on overflow so the start of the content stays visible."""
+
     Center: AlignItems
     """Center on cross axis."""
+
+    CenterSafe: AlignItems
+    """Like Center, but falls back to Start on overflow so the start of the content stays visible."""
 
     Baseline: AlignItems
     """Align to text baseline."""
@@ -374,29 +409,44 @@ class JustifyContent:
     Start: JustifyContent
     """Pack items to start."""
 
+    StartSafe: JustifyContent
+    """Like Start, but safe: the start of the content stays visible on overflow."""
+
     End: JustifyContent
     """Pack items to end."""
+
+    EndSafe: JustifyContent
+    """Like End, but falls back to Start on overflow so the start of the content stays visible."""
 
     FlexStart: JustifyContent
     """Pack items to flex start."""
 
+    FlexStartSafe: JustifyContent
+    """Like FlexStart, but falls back to Start on overflow so the start of the content stays visible."""
+
     FlexEnd: JustifyContent
     """Pack items to flex end."""
+
+    FlexEndSafe: JustifyContent
+    """Like FlexEnd, but falls back to Start on overflow so the start of the content stays visible."""
 
     Center: JustifyContent
     """Pack items to center."""
 
+    CenterSafe: JustifyContent
+    """Like Center, but falls back to Start on overflow so the start of the content stays visible."""
+
+    Stretch: JustifyContent
+    """Stretch items to fill."""
+
     SpaceBetween: JustifyContent
     """Space evenly with no space at edges."""
-
-    SpaceAround: JustifyContent
-    """Space evenly with half space at edges."""
 
     SpaceEvenly: JustifyContent
     """Space evenly with full space at edges."""
 
-    Stretch: JustifyContent
-    """Stretch items to fill."""
+    SpaceAround: JustifyContent
+    """Space evenly with half space at edges."""
 
 
 class AlignSelf:
@@ -423,17 +473,32 @@ class AlignSelf:
     Start: AlignSelf
     """Align to start of cross axis."""
 
+    StartSafe: AlignSelf
+    """Like Start, but safe: the start of the content stays visible on overflow."""
+
     End: AlignSelf
     """Align to end of cross axis."""
+
+    EndSafe: AlignSelf
+    """Like End, but falls back to Start on overflow so the start of the content stays visible."""
 
     FlexStart: AlignSelf
     """Align to flex start."""
 
+    FlexStartSafe: AlignSelf
+    """Like FlexStart, but falls back to Start on overflow so the start of the content stays visible."""
+
     FlexEnd: AlignSelf
     """Align to flex end."""
 
+    FlexEndSafe: AlignSelf
+    """Like FlexEnd, but falls back to Start on overflow so the start of the content stays visible."""
+
     Center: AlignSelf
     """Center on cross axis."""
+
+    CenterSafe: AlignSelf
+    """Like Center, but falls back to Start on overflow so the start of the content stays visible."""
 
     Baseline: AlignSelf
     """Align to text baseline."""
@@ -519,17 +584,32 @@ class AlignContent:
     Start: AlignContent
     """Pack lines to start of cross axis."""
 
+    StartSafe: AlignContent
+    """Like Start, but safe: the start of the content stays visible on overflow."""
+
     End: AlignContent
     """Pack lines to end of cross axis."""
+
+    EndSafe: AlignContent
+    """Like End, but falls back to Start on overflow so the start of the content stays visible."""
 
     FlexStart: AlignContent
     """Pack lines to flex start."""
 
+    FlexStartSafe: AlignContent
+    """Like FlexStart, but falls back to Start on overflow so the start of the content stays visible."""
+
     FlexEnd: AlignContent
     """Pack lines to flex end."""
 
+    FlexEndSafe: AlignContent
+    """Like FlexEnd, but falls back to Start on overflow so the start of the content stays visible."""
+
     Center: AlignContent
     """Pack lines to center."""
+
+    CenterSafe: AlignContent
+    """Like Center, but falls back to Start on overflow so the start of the content stays visible."""
 
     Stretch: AlignContent
     """Stretch lines to fill."""
@@ -1540,7 +1620,7 @@ class BackgroundColor(Component):
     Args:
         color: The background color (optional, defaults to transparent)
     """
-    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = ...) -> None: ...
+    def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...) -> None: ...
 
     @property
     def color(self) -> Color:
@@ -1591,7 +1671,7 @@ class BorderColor(Component):
     """
     def __init__(
         self,
-        color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza = ...,
+        color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...,
         *,
         top: Color = ...,
         right: Color = ...,
@@ -1600,7 +1680,7 @@ class BorderColor(Component):
     ) -> None: ...
 
     @staticmethod
-    def all(color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> BorderColor:
+    def all(color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> BorderColor:
         """Create BorderColor with same color for all sides."""
 
     @property
@@ -1631,7 +1711,7 @@ class BorderColor(Component):
     @left.setter
     def left(self, value: Color) -> None: ...
 
-    def set_all(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> BorderColor:
+    def set_all(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> BorderColor:
         """Set all border sides to the same color and return this border.
 
         Args:
@@ -1642,142 +1722,197 @@ class BorderColor(Component):
         """Check if all border colors are fully transparent."""
 
 
-class BorderRadius:
-    """Border radius for rounded corners on UI nodes.
+class CornerRadius:
+    """The horizontal (x) and vertical (y) radii of a rounded corner's elliptical arc.
 
-    BorderRadius is a mutable data value (not a Component). It is used to set
-    the radius of each corner independently. All corners use Val sizing,
-    supporting pixels, percentages, auto-sizing, and viewport-relative units.
-
-    Since Bevy 0.18, BorderRadius is no longer a Component - it cannot be spawned
-    or queried from the ECS directly.
+    When either radius is Val.Auto the corner is circular: the other radius is
+    resolved against the node's shortest side and clamped to half its length.
+    A zero radius on either axis, or Auto on both, gives a square corner.
+    Corners compare equal when they describe the same circular radius on
+    either axis, so ``CornerRadius(px(5), Val.Auto()) == CornerRadius(Val.Auto(), px(5))``.
 
     Example:
         ```python
-        from pybevy.ui import BorderRadius, Val
+        from pybevy.ui import BorderRadius, CornerRadius, px
 
-        # Same radius for all corners (10px)
-        br = BorderRadius.px(10.0, 10.0, 10.0, 10.0)
+        circular = CornerRadius.circular(px(10.0))
+        elliptical = CornerRadius(px(30.0), px(20.0))
+        radius = BorderRadius(top_left=circular, bottom_right=elliptical)
+        radius.top_left.x = px(12.0)
+        ```
+    """
 
-        # Using all() for uniform radius
-        br = BorderRadius.all(Val.Percent(50.0))
+    MAX: ClassVar[CornerRadius]
+    """A circular corner with half the length of the node's shortest side."""
 
-        # Per-corner via constructor kwargs
-        br = BorderRadius(Val.Px(5.0), top_left=Val.Px(20.0))
+    MAX_ELLIPTICAL: ClassVar[CornerRadius]
+    """An elliptical corner with half the node's width and half its height."""
 
-        # Access corner values
-        print(br.top_left)   # Val.Px(20.0)
-        print(br.top_right)  # Val.Px(5.0)
+    ZERO: ClassVar[CornerRadius]
+    """A square corner."""
+
+    def __init__(self, x: Val = ..., y: Val = ...) -> None:
+        """Create a corner radius; both radii default to Val.Auto()."""
+
+    @staticmethod
+    def circular(radius: Val) -> CornerRadius:
+        """Create a circular corner radius."""
+
+    @staticmethod
+    def all(radius: Val) -> CornerRadius:
+        """Create a corner radius with the same radius on both axes."""
+
+    @property
+    def x(self) -> Val:
+        """Horizontal radius."""
+
+    @x.setter
+    def x(self, value: Val) -> None: ...
+
+    @property
+    def y(self) -> Val:
+        """Vertical radius."""
+
+    @y.setter
+    def y(self, value: Val) -> None: ...
+
+    def __eq__(self, other: object) -> bool: ...
+
+
+type _IntoCornerRadius = CornerRadius | Val | tuple[Val, Val] | list[Val]
+
+
+class BorderRadius:
+    """Border radius for rounded corners on UI nodes.
+
+    BorderRadius is a mutable data value (not a Component) holding one
+    CornerRadius per corner. A plain Val gives a circular corner; a CornerRadius
+    or an ``(x, y)`` pair of Val values gives an elliptical corner.
+    Percentage x and y radii resolve against the node's width and height.
+
+    Example:
+        ```python
+        from pybevy.ui import BorderRadius, CornerRadius, Val, px
+
+        # Same circular radius for all corners (10px)
+        br = BorderRadius.all(px(10.0))
+
+        # Per-corner via constructor kwargs; the positional radius fills the rest
+        br = BorderRadius(px(5.0), top_left=px(20.0), bottom_right=(px(30.0), px(20.0)))
+
+        # Corners are live CornerRadius values
+        br.top_left.x = px(25.0)
+        print(br.top_right)  # CornerRadius(x=Val.Px(5.0), y=Val.Auto())
+
+        # A full ellipse
+        br = BorderRadius.MAX_ELLIPTICAL
         ```
 
     Args:
-        radius: Val for all corners (default radius)
-        top_left: Override for top-left corner
-        top_right: Override for top-right corner
-        bottom_left: Override for bottom-left corner
-        bottom_right: Override for bottom-right corner
-
-    Note:
-        Use the constructor with keyword args for per-corner construction:
-        ``BorderRadius(top_left=Val.Px(10.0))``.
+        radius: Radius for every corner not given explicitly (default ZERO).
+        top_left: Override for the top-left corner.
+        top_right: Override for the top-right corner.
+        bottom_right: Override for the bottom-right corner.
+        bottom_left: Override for the bottom-left corner.
     """
 
     ZERO: ClassVar[BorderRadius]
     """Zero curvature. All corners will be right-angled."""
 
     MAX: ClassVar[BorderRadius]
-    """Maximum curvature. Creates capsule/circular shape."""
+    """Maximum curvature. Creates a capsule, or a circle for a square node."""
+
+    MAX_ELLIPTICAL: ClassVar[BorderRadius]
+    """Draws the node as an ellipse with half its width and half its height as radii."""
 
     def __init__(
         self,
-        radius: Val = ...,
+        radius: _IntoCornerRadius = ...,
         *,
-        top_left: Val = ...,
-        top_right: Val = ...,
-        bottom_right: Val = ...,
-        bottom_left: Val = ...,
+        top_left: _IntoCornerRadius = ...,
+        top_right: _IntoCornerRadius = ...,
+        bottom_right: _IntoCornerRadius = ...,
+        bottom_left: _IntoCornerRadius = ...,
     ) -> None: ...
 
     @staticmethod
     def new(
-        top_left: Val, top_right: Val, bottom_right: Val, bottom_left: Val
+        top_left: _IntoCornerRadius,
+        top_right: _IntoCornerRadius,
+        bottom_right: _IntoCornerRadius,
+        bottom_left: _IntoCornerRadius,
     ) -> BorderRadius:
-        """Create BorderRadius with different radius for each corner."""
+        """Create BorderRadius with a different radius for each corner."""
 
     @staticmethod
-    def all(radius: Val) -> BorderRadius:
-        """Create BorderRadius with same radius for all corners.
-
-        Args:
-            radius: Val to apply to all corners
-
-        Returns:
-            BorderRadius with uniform corner radii
-        """
+    def all(radius: _IntoCornerRadius) -> BorderRadius:
+        """Create BorderRadius with the same radius for all corners."""
 
     @staticmethod
-    def left(radius: Val) -> BorderRadius: ...
+    def left(radius: _IntoCornerRadius) -> BorderRadius:
+        """Round the top-left and bottom-left corners; the others stay square."""
 
     @staticmethod
-    def right(radius: Val) -> BorderRadius: ...
+    def right(radius: _IntoCornerRadius) -> BorderRadius:
+        """Round the top-right and bottom-right corners; the others stay square."""
 
     @staticmethod
-    def top(radius: Val) -> BorderRadius: ...
+    def top(radius: _IntoCornerRadius) -> BorderRadius:
+        """Round the top-left and top-right corners; the others stay square."""
 
     @staticmethod
-    def bottom(radius: Val) -> BorderRadius: ...
+    def bottom(radius: _IntoCornerRadius) -> BorderRadius:
+        """Round the bottom-left and bottom-right corners; the others stay square."""
 
     @staticmethod
     def px(
         top_left: float, top_right: float, bottom_right: float, bottom_left: float
     ) -> BorderRadius:
-        """Create BorderRadius with pixel values for each corner."""
+        """Create circular corners with pixel radii."""
 
     @staticmethod
     def percent(
         top_left: float, top_right: float, bottom_right: float, bottom_left: float
     ) -> BorderRadius:
-        """Create BorderRadius with percentage values for each corner."""
+        """Create circular corners with percentage radii."""
 
     @property
-    def top_left(self) -> Val:
+    def top_left(self) -> CornerRadius:
         """Top-left corner radius."""
 
     @top_left.setter
-    def top_left(self, value: Val) -> None: ...
+    def top_left(self, value: _IntoCornerRadius) -> None: ...
 
     @property
-    def top_right(self) -> Val:
+    def top_right(self) -> CornerRadius:
         """Top-right corner radius."""
 
     @top_right.setter
-    def top_right(self, value: Val) -> None: ...
+    def top_right(self, value: _IntoCornerRadius) -> None: ...
 
     @property
-    def bottom_left(self) -> Val:
-        """Bottom-left corner radius."""
-
-    @bottom_left.setter
-    def bottom_left(self, value: Val) -> None: ...
-
-    @property
-    def bottom_right(self) -> Val:
+    def bottom_right(self) -> CornerRadius:
         """Bottom-right corner radius."""
 
     @bottom_right.setter
-    def bottom_right(self, value: Val) -> None: ...
+    def bottom_right(self, value: _IntoCornerRadius) -> None: ...
+
+    @property
+    def bottom_left(self) -> CornerRadius:
+        """Bottom-left corner radius."""
+
+    @bottom_left.setter
+    def bottom_left(self, value: _IntoCornerRadius) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
-
-    # Builder methods
-    def with_top_left(self, radius: Val) -> BorderRadius: ...
-    def with_top_right(self, radius: Val) -> BorderRadius: ...
-    def with_bottom_right(self, radius: Val) -> BorderRadius: ...
-    def with_bottom_left(self, radius: Val) -> BorderRadius: ...
-    def with_left(self, radius: Val) -> BorderRadius: ...
-    def with_right(self, radius: Val) -> BorderRadius: ...
-    def with_top(self, radius: Val) -> BorderRadius: ...
-    def with_bottom(self, radius: Val) -> BorderRadius: ...
+    def with_top_left(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_top_right(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_bottom_right(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_bottom_left(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_left(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_right(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_top(self, radius: _IntoCornerRadius) -> BorderRadius: ...
+    def with_bottom(self, radius: _IntoCornerRadius) -> BorderRadius: ...
 
 
 class Outline(Component):
@@ -2004,6 +2139,7 @@ class ImageNode(Component):
     def with_rect(self, rect: Rect) -> ImageNode: ...
 
     def with_mode(self, mode: NodeImageMode) -> ImageNode: ...
+    def with_visual_box(self, visual_box: VisualBox) -> ImageNode: ...
 
     @property
     def image(self) -> Handle[Image]:
@@ -2064,13 +2200,11 @@ class FocusPolicy(Component):
 
     Example:
         ```python
-        from pybevy.ui import Node, FocusPolicy, Button, Interaction
+        from pybevy.ui import Node, FocusPolicy
 
-        # Button that blocks input (default for interactive elements)
+        # Node that blocks input
         commands.spawn(
             Node(),
-            Button(),
-            Interaction.None_,
             FocusPolicy.Block,  # Blocks input, doesn't pass to nodes behind
         )
 
@@ -2104,93 +2238,6 @@ class FocusPolicy(Component):
         """Change to passing mode."""
 
 
-class Interaction(Component):
-    """Interaction state for UI elements.
-
-    Describes whether a UI element is being interacted with by the user.
-    Updated automatically by Bevy's UI interaction system when used with
-    clickable UI elements.
-
-    Example:
-        ```python
-        from pybevy.ui import Node, Interaction, BackgroundColor
-        from pybevy.ecs import Query, Mut
-        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
-
-        # Create interactive button
-        commands.spawn(
-            Node(),
-            Interaction.None_,
-            BackgroundColor(Color.srgb(0.5, 0.5, 0.5)),
-        )
-
-        # Respond to interactions
-        @system
-        def button_system(query: Query[tuple[Interaction, Mut[BackgroundColor]]]):
-            for interaction, bg in query:
-                if interaction == Interaction.Pressed:
-                    bg.color = Color.srgb(0.0, 1.0, 0.0)
-                elif interaction == Interaction.Hovered:
-                    bg.color = Color.srgb(0.8, 0.8, 0.8)
-                else:
-                    bg.color = Color.srgb(0.5, 0.5, 0.5)
-        ```
-
-    The interaction state is automatically updated by Bevy when the user
-    hovers over or clicks on UI nodes.
-    """
-    def __init__(self) -> None:
-        """Create Interaction in None state."""
-
-    None_: ClassVar[Interaction]
-    """No pointer interaction."""
-
-    Hovered: ClassVar[Interaction]
-    """Pointer is hovering over the node."""
-
-    Pressed: ClassVar[Interaction]
-    """Pointer is pressing the node."""
-
-    def __eq__(self, other: object) -> bool: ...
-
-
-class Button(Component):
-    """Marker component for interactive buttons.
-
-    Button is a simple marker component that indicates an entity is an interactive
-    button. It's typically used together with Node, BackgroundColor, and Interaction
-    to create clickable UI elements.
-
-    Example:
-        ```python
-        from pybevy.ui import Node, Button, Interaction, BackgroundColor
-        from pybevy.ecs import Query, Mut
-        from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
-
-        # Create a button
-        commands.spawn(
-            Node(),
-            Button(),
-            Interaction.None_,
-            BackgroundColor(Color.srgb(0.2, 0.2, 0.2)),
-        )
-
-        # React to button clicks
-        @system
-        def button_system(query: Query[tuple[Button, Interaction, Mut[BackgroundColor]]]):
-            for _button, interaction, bg in query:
-                if interaction == Interaction.Pressed:
-                    bg.color = Color.srgb(0.1, 0.5, 0.1)
-                elif interaction == Interaction.Hovered:
-                    bg.color = Color.srgb(0.3, 0.3, 0.3)
-                else:
-                    bg.color = Color.srgb(0.2, 0.2, 0.2)
-        ```
-    """
-    def __init__(self) -> None: ...
-    def __eq__(self, other: object) -> bool: ...
-
-
 class Label(Component):
     """Marker component for accessibility labels.
 
@@ -2222,7 +2269,8 @@ class InteractionDisabled(Component):
 
     Example:
         ```python
-        from pybevy.ui import Node, Button, InteractionDisabled
+        from pybevy.ui import Node, InteractionDisabled
+        from pybevy.ui_widgets import Button
 
         # Create a disabled button
         commands.spawn(Node(), Button(), InteractionDisabled())
@@ -2235,10 +2283,13 @@ class Pressed(Component):
     """Marker component indicating a button is currently pressed.
 
     Tracks whether a button or widget is in a pressed/"held down" state.
+    The `pybevy.ui_widgets.Button` widget inserts it while the pointer holds
+    the button down and removes it on release.
 
     Example:
         ```python
-        from pybevy.ui import Node, Button, Pressed
+        from pybevy.ui import Pressed
+        from pybevy.ui_widgets import Button
         from pybevy.ecs import Query, With
 
         # Query for pressed buttons
@@ -2332,11 +2383,20 @@ class JustifyItems:
     Start: JustifyItems
     """Align to start."""
 
+    StartSafe: JustifyItems
+    """Like Start, but safe: the start of the content stays visible on overflow."""
+
     End: JustifyItems
     """Align to end."""
 
+    EndSafe: JustifyItems
+    """Like End, but falls back to Start on overflow so the start of the content stays visible."""
+
     Center: JustifyItems
     """Align to center."""
+
+    CenterSafe: JustifyItems
+    """Like Center, but falls back to Start on overflow so the start of the content stays visible."""
 
     Baseline: JustifyItems
     """Align to baseline."""
@@ -2369,11 +2429,20 @@ class JustifySelf:
     Start: JustifySelf
     """Align to start."""
 
+    StartSafe: JustifySelf
+    """Like Start, but safe: the start of the content stays visible on overflow."""
+
     End: JustifySelf
     """Align to end."""
 
+    EndSafe: JustifySelf
+    """Like End, but falls back to Start on overflow so the start of the content stays visible."""
+
     Center: JustifySelf
     """Align to center."""
+
+    CenterSafe: JustifySelf
+    """Like Center, but falls back to Start on overflow so the start of the content stays visible."""
 
     Baseline: JustifySelf
     """Align to baseline."""
@@ -2482,6 +2551,14 @@ class GridTrack:
     @staticmethod
     def percent(value: float) -> GridTrack:
         """Create a track with percentage size."""
+
+    @staticmethod
+    def em(value: float) -> GridTrack:
+        """Create a track sized as a multiple of the grid container's font size."""
+
+    @staticmethod
+    def rem(value: float) -> GridTrack:
+        """Create a track sized as a multiple of the root font size."""
 
     @staticmethod
     def fr(value: float) -> GridTrack:
@@ -2654,6 +2731,14 @@ class RepeatedGridTrack:
         """Create repeated tracks with percentage size."""
 
     @staticmethod
+    def em(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
+        """Create repeated tracks sized as a multiple of the grid container's font size."""
+
+    @staticmethod
+    def rem(repetition: int | GridTrackRepetition, value: float) -> RepeatedGridTrack:
+        """Create repeated tracks sized as a multiple of the root font size."""
+
+    @staticmethod
     def fr(repetition: int, value: float) -> RepeatedGridTrack:
         """Create repeated flexible tracks with fractional size."""
 
@@ -2745,13 +2830,12 @@ class RelativeCursorPosition(Component):
 
     Example:
         ```python
-        from pybevy.ui import Node, RelativeCursorPosition, Interaction
+        from pybevy.ui import Node, RelativeCursorPosition
 
         @system
         def setup(commands: Commands) -> None:
             commands.spawn(
                 Node(),
-                Interaction.None_,
                 RelativeCursorPosition(),
             )
 
@@ -2834,6 +2918,12 @@ class InterpolationColorSpace:
 
     HsvaLong: InterpolationColorSpace
     """HSV with long path hue interpolation."""
+
+    Okhsla: InterpolationColorSpace
+    """Okhsl color space, taking the shortest hue path."""
+
+    OkhslaLong: InterpolationColorSpace
+    """Okhsl with long path hue interpolation."""
 
     def __hash__(self) -> int: ...
 
@@ -2974,6 +3064,20 @@ class ComputedNode(Component):
 
     @inverse_scale_factor.setter
     def inverse_scale_factor(self, value: float) -> None: ...
+
+    @property
+    def em_size(self) -> float:
+        """Font size used to resolve this node's Val.Em lengths, in logical pixels."""
+
+    @em_size.setter
+    def em_size(self, value: float) -> None: ...
+
+    @property
+    def rem_size(self) -> float:
+        """Root font size used to resolve this node's Val.Rem lengths, in logical pixels."""
+
+    @rem_size.setter
+    def rem_size(self, value: float) -> None: ...
 
     @property
     def scrollbar_size(self) -> Vec2:
@@ -3897,12 +4001,12 @@ __all__ = [
     "BorderRadius",
     "BoxShadow",
     "BoxSizing",
-    "Button",
     "Checked",
     "ColorStop",
     "ComputedNode",
     "ComputedStackIndex",
     "ConicGradient",
+    "CornerRadius",
     "Display",
     "FlexDirection",
     "FlexWrap",
@@ -3916,7 +4020,6 @@ __all__ = [
     "IgnoreScroll",
     "ImageNode",
     "InlineDirection",
-    "Interaction",
     "InteractionDisabled",
     "InterpolationColorSpace",
     "IsDefaultUiCamera",
@@ -3952,8 +4055,10 @@ __all__ = [
     "Val2",
     "VisualBox",
     "ZIndex",
+    "em",
     "percent",
     "px",
+    "rem",
     "vh",
     "vmax",
     "vmin",

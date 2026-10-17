@@ -1,28 +1,27 @@
 // PyBevy equivalent of Bevy's extended_material example.
 // Extends PBR with a posterization/quantize effect.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
-}
+};
 
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
-#else
-#import bevy_pbr::{
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{VertexOutput, FragmentOutput},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-}
-#endif
+};
 
-// Material uniforms — matches the @material class fields
+// Material uniforms matching the @material class fields
 struct QuantizeMaterial {
     quantize_steps: f32,
 }
-@group(3) @binding(100) var<uniform> mat: QuantizeMaterial;
+@group(constants::MATERIAL_BIND_GROUP) @binding(100) var<uniform> mat: QuantizeMaterial;
 
 @fragment
 fn fragment(
@@ -34,12 +33,16 @@ fn fragment(
     // Optionally modify input before lighting
     pbr_input.material.base_color.b = pbr_input.material.base_color.r;
 
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+    pbr_input.material.base_color = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        pbr_input.material.base_color,
+    );
 
-#ifdef PREPASS_PIPELINE
-    let out = deferred_output(in, pbr_input);
-#else
     var out: FragmentOutput;
+@if(PREPASS_PIPELINE) {
+    out = deferred_output(in, pbr_input);
+} @else {
     out.color = apply_pbr_lighting(pbr_input);
 
     // Posterize/quantize the lit color
@@ -48,7 +51,7 @@ fn fragment(
 
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     out.color = out.color * 2.0;
-#endif
+}
 
     return out;
 }

@@ -322,7 +322,7 @@ impl NativePluginSlot {
     }
 }
 
-/// Instantiate the public native slots in Bevy 0.19's default-group order.
+/// Instantiate the public native slots in Bevy 0.20's default-group order.
 #[macro_export]
 macro_rules! default_plugin_slots {
     () => {{
@@ -335,6 +335,8 @@ macro_rules! default_plugin_slots {
             $crate::NativePluginSlot::of::<bevy::transform::TransformPlugin>(),
             $crate::NativePluginSlot::of::<bevy::diagnostic::DiagnosticsPlugin>(),
             $crate::NativePluginSlot::of::<bevy::input::InputPlugin>(),
+            $crate::NativePluginSlot::of::<bevy::input_focus::InputFocusPlugin>(),
+            $crate::NativePluginSlot::of::<bevy::input_focus::InputDispatchPlugin>(),
             $crate::NativePluginSlot::of::<bevy::window::WindowPlugin>(),
             $crate::NativePluginSlot::of::<bevy::a11y::AccessibilityPlugin>(),
         ];
@@ -371,6 +373,52 @@ macro_rules! default_plugin_slots {
             $crate::NativePluginSlot::of::<bevy::gizmos::GizmoPlugin>(),
             $crate::NativePluginSlot::of::<bevy::gizmos_render::GizmoRenderPlugin>(),
             $crate::NativePluginSlot::of::<bevy::state::app::StatesPlugin>(),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::ButtonPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::ButtonPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::CheckboxPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::CheckboxPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::TextInputPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::TextInputPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::ListBoxPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::ListBoxPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::MenuPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::MenuPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::DialogPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::DialogPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::ModalDialogPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::ModalDialogPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::popover::PopoverPlugin>(
+                |app| {
+                    app.add_plugins(bevy::ui_widgets::popover::PopoverPlugin);
+                },
+            ),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::RadioGroupPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::RadioGroupPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::ScrollAreaPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::ScrollAreaPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::ScrollbarPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::ScrollbarPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::SliderPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::SliderPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<bevy::ui_widgets::TabPlugin>(|app| {
+                app.add_plugins(bevy::ui_widgets::TabPlugin);
+            }),
+            $crate::NativePluginSlot::with_build::<
+                bevy::input_focus::pointer_focus::PointerFocusPlugin,
+            >(|app| {
+                app.add_plugins(bevy::input_focus::pointer_focus::PointerFocusPlugin);
+            }),
             $crate::NativePluginSlot::with_build::<bevy::picking::input::PointerInputPlugin>(
                 |app| {
                     app.add_plugins(bevy::picking::input::PointerInputPlugin);

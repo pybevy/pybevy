@@ -1,4 +1,4 @@
-use bevy::ui::{Val, percent, px, vh, vmax, vmin, vw};
+use bevy::ui::{Val, em, percent, px, rem, vh, vmax, vmin, vw};
 use pybevy_core::public_error;
 use pybevy_macros::pyenum;
 use pyo3::{
@@ -35,6 +35,14 @@ pub enum PyVal {
     },
     #[py_bevy(tuple)]
     VMax {
+        value: f32,
+    },
+    #[py_bevy(tuple)]
+    Em {
+        value: f32,
+    },
+    #[py_bevy(tuple)]
+    Rem {
         value: f32,
     },
 }
@@ -89,6 +97,9 @@ impl PyVal {
 
     #[classattr]
     pub const DEFAULT: Self = Self::Auto();
+
+    #[classattr]
+    pub const MAX: Self = Self::px_unchecked(f32::MAX);
 
     pub fn left(&self) -> PyUiRect {
         self.clone().into_inner().left().into()
@@ -181,4 +192,14 @@ pub fn py_vmin(value: f32) -> PyVal {
 #[pyfunction(name = "vmax")]
 pub fn py_vmax(value: f32) -> PyVal {
     vmax(value).into()
+}
+
+#[pyfunction(name = "em")]
+pub fn py_em(value: f32) -> PyVal {
+    em(value).into()
+}
+
+#[pyfunction(name = "rem")]
+pub fn py_rem(value: f32) -> PyVal {
+    rem(value).into()
 }

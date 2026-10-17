@@ -903,8 +903,7 @@ fn find_or_scan<'a>(
         });
     }
     // Global miss: scan every parsed crate's pinned source (the wrapper's
-    // module may live in a different crate than its upstream type, e.g.
-    // PyShaderStage lives in pybevy_shader but wraps a bevy_render re-export).
+    // module may live in a different crate than its upstream type).
     if let Some(bevy_path) = bevy_path {
         // Scan the parsed crates plus their re-export source crates
         // (bevy_sprite_render, glam) where the upstream declaration lives.

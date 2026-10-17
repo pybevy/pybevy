@@ -1,6 +1,6 @@
 use bevy::{
-    math::primitives::{Capsule3d, Measured3d},
     mesh::Meshable,
+    shape::{Capsule3d, Measured3d},
 };
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;

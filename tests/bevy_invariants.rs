@@ -12,6 +12,7 @@ use bevy::{
     ecs::{
         component::StorageType,
         query::{FilteredAccess, FilteredAccessSet},
+        system::SystemAccess,
     },
     prelude::*,
     state::app::StatesPlugin,
@@ -989,20 +990,16 @@ fn test_resources_are_components() {
 }
 
 #[test]
-fn test_exclusive_function_systems_declare_empty_access_and_non_send() {
+fn test_exclusive_function_systems_declare_exclusive_access_and_non_send() {
     //! INVARIANT: Bevy's ExclusiveFunctionSystem (a `fn(&mut World)` system)
-    //! returns an EMPTY FilteredAccessSet from initialize and its flags are
-    //! NON_SEND | EXCLUSIVE. Exclusivity is enforced through the flags, not
-    //! through declared access, and the NON_SEND half is load-bearing:
-    //! MultiThreadedExecutor sets `local_thread_running` unconditionally when
-    //! it spawns an exclusive system but clears it on completion only for
-    //! non-Send systems. A Send exclusive system (unreachable in vanilla Bevy,
-    //! constructible via a custom System impl) leaks the flag and permanently
-    //! blocks every non-Send system still queued, ending the schedule scope on
-    //! the debug assertion `state.ready_systems.is_clear()`.
+    //! returns `SystemAccess::Exclusive` from initialize and is non-Send. The
+    //! NON_SEND half is load-bearing: MultiThreadedExecutor sets
+    //! `local_thread_running` when it spawns an exclusive system but clears it
+    //! on completion only for non-Send systems, so a Send exclusive system
+    //! would block every non-Send system still queued.
     //!
-    //! Relied on by: DynamicSystem's World-parameter systems return an empty
-    //! access set from initialize and NON_SEND | EXCLUSIVE from flags() to
+    //! Relied on by: DynamicSystem's World-parameter systems return
+    //! `SystemAccess::Exclusive` from initialize and NON_SEND from flags() to
     //! match this shape; pybevy's built-in exclusive systems (e.g. the
     //! Last-schedule error drain) are plain fn(&mut World) systems.
     //!
@@ -1012,18 +1009,8 @@ fn test_exclusive_function_systems_declare_empty_access_and_non_send() {
 
     let mut world = World::new();
     let mut system = IntoSystem::into_system(|_world: &mut World| {});
-    let access_set = system.initialize(&mut world);
 
-    let combined = access_set.combined_access();
-    assert!(
-        !combined.has_any_read(),
-        "exclusive fn systems must declare no reads"
-    );
-    assert!(
-        !combined.has_any_write(),
-        "exclusive fn systems must declare no writes"
-    );
-    assert!(system.is_exclusive(), "fn(&mut World) must be exclusive");
+    assert_eq!(system.initialize(&mut world), SystemAccess::Exclusive);
     assert!(
         !system.is_send(),
         "exclusive fn systems must be non-Send; the executor's local-thread \
@@ -1126,7 +1113,7 @@ fn test_pending_transition_before_first_update_supersedes_initial_enter() {
 
 #[test]
 fn test_conditional_identity_runs_only_transition_and_supersedes_initial_enter() {
-    //! BEHAVIOR: `PendingIfNeq(current)` replaces the initial-enter event and
+    //! BEHAVIOR: `PendingIfDifferent(current)` replaces the initial-enter event and
     //! emits an identity transition, but only `OnTransition` runs. Exit and
     //! enter schedules are suppressed when same-state transitions are denied.
 
@@ -1149,7 +1136,7 @@ fn test_conditional_identity_runs_only_transition_and_supersedes_initial_enter()
     let mut next = app
         .world_mut()
         .resource_mut::<NextState<TransitionContractState>>();
-    NextState::set_if_neq(&mut next, TransitionContractState::Alpha);
+    NextState::set_if_different(&mut next, TransitionContractState::Alpha);
 
     app.update();
 
@@ -1160,29 +1147,29 @@ fn test_conditional_identity_runs_only_transition_and_supersedes_initial_enter()
 }
 
 #[test]
-fn test_set_if_neq_preserves_only_an_equal_unconditional_pending_request() {
+fn test_set_if_different_preserves_only_an_equal_unconditional_pending_request() {
     //! BEHAVIOR: An equal `Pending` survives a later conditional request. All
     //! other calls replace the pending value and conditionality in call order.
 
     let mut next = NextState::<TransitionContractState>::default();
     next.set(TransitionContractState::Alpha);
-    next.set_if_neq(TransitionContractState::Alpha);
+    next.set_if_different(TransitionContractState::Alpha);
     assert!(matches!(
         next,
         NextState::Pending(TransitionContractState::Alpha)
     ));
 
     next.set(TransitionContractState::Beta);
-    next.set_if_neq(TransitionContractState::Alpha);
+    next.set_if_different(TransitionContractState::Alpha);
     assert!(matches!(
         next,
-        NextState::PendingIfNeq(TransitionContractState::Alpha)
+        NextState::PendingIfDifferent(TransitionContractState::Alpha)
     ));
 
-    next.set_if_neq(TransitionContractState::Beta);
+    next.set_if_different(TransitionContractState::Beta);
     assert!(matches!(
         next,
-        NextState::PendingIfNeq(TransitionContractState::Beta)
+        NextState::PendingIfDifferent(TransitionContractState::Beta)
     ));
 
     next.set(TransitionContractState::Gamma);

@@ -12,7 +12,7 @@ Bevy (Rust):
     }
 
 PyBevy:
-    @material(fragment_shader="shaders/examples/animate_shader.wgsl")
+    @material(fragment_shader="shaders/examples/animate_shader.wesl")
     class AnimatedMaterial(Material):
         pass  # no fields — all animation is in the shader via globals.time
 """
@@ -20,12 +20,12 @@ PyBevy:
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 
-SHADER_ASSET_PATH = "shaders/examples/animate_shader.wgsl"
+SHADER_ASSET_PATH = "shaders/examples/animate_shader.wesl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)
 class AnimatedMaterial(Material):
-    """Material with time-based color animation done entirely in WGSL."""
+    """Material with time-based color animation done entirely in the shader."""
 
 
 @system

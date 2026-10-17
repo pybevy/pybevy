@@ -15,7 +15,7 @@ Bevy (Rust):
     impl Material for CustomMaterial { ... }
 
 PyBevy:
-    @material(fragment_shader="shaders/examples/screenspace_texture.wgsl")
+    @material(fragment_shader="shaders/examples/screenspace_texture.wesl")
     class ScreenspaceMaterial(Material):
         texture: Handle[Image] | None = None  # bindings 101 (texture) / 102 (sampler)
 """
@@ -23,7 +23,7 @@ PyBevy:
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 
-SHADER_ASSET_PATH = "shaders/examples/screenspace_texture.wgsl"
+SHADER_ASSET_PATH = "shaders/examples/screenspace_texture.wesl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)

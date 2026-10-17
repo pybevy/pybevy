@@ -1,5 +1,5 @@
-#import bevy_pbr::{forward_io::VertexOutput, mesh_functions}
-#import pybevy::gen::SharedImage as params
+import bevy_pbr::render::{forward_io::VertexOutput, mesh_functions};
+import pybevy::gen::SharedImage as params;
 
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {

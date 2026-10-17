@@ -521,6 +521,7 @@ pub(crate) fn create_python_object_descriptor(name: String) -> ComponentDescript
             Layout::new::<Py<PyAny>>(),
             Some(drop_py_object),
             true,
+            false,
             ComponentCloneBehavior::Default,
             None,
         )
@@ -538,6 +539,7 @@ pub(crate) fn create_python_resource_object_descriptor(name: String) -> Componen
             Layout::new::<Py<PyAny>>(),
             Some(drop_py_object),
             true,
+            false,
             ComponentCloneBehavior::Default,
             None,
         )

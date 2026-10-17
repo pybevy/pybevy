@@ -1,6 +1,7 @@
 use bevy::{
-    math::{InvalidDirectionError, Isometry2d, Ray2d, Rot2, primitives::Segment2d},
+    math::{InvalidDirectionError, Isometry2d, Rot2},
     mesh::Meshable,
+    shape::{Ray2d, Segment2d},
 };
 use pybevy_core::{public_error, repr::float_list_repr};
 use pybevy_macros::pyconstructor;

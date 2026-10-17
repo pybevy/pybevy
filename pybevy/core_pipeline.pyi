@@ -38,6 +38,7 @@ class Tonemapping(Component):
         """True unless this is Tonemapping.None_."""
 
     None_: ClassVar[Tonemapping]
+    Linear: ClassVar[Tonemapping]
     Reinhard: ClassVar[Tonemapping]
     ReinhardLuminance: ClassVar[Tonemapping]
     AcesFitted: ClassVar[Tonemapping]

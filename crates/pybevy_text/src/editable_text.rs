@@ -1,11 +1,15 @@
 use std::time::Duration;
 
-use bevy::text::{EditableText, TextEdit};
+use bevy::{
+    math::Vec2,
+    text::{EditableText, TextViewport},
+};
 use pybevy_core::{ComponentStorage, PyComponent, domain::DurationInput};
 use pybevy_macros::pycomponent;
+use pybevy_math::vec2::PyVec2;
 use pyo3::prelude::*;
 
-use crate::text_edit::PyTextEdit;
+use crate::{text_edit::PyTextEdit, text_viewport::PyTextViewport};
 
 #[pycomponent(
     EditableText,
@@ -30,6 +34,7 @@ impl PyEditableText {
     #[pyo3(signature = (
         text = "",
         *,
+        cursor_margin = PyVec2::vec2(Vec2::splat(0.2)),
         cursor_width = 0.2,
         cursor_blink_period = DurationInput::Exact(EditableText::default().cursor_blink_period),
         max_characters = None,
@@ -39,6 +44,7 @@ impl PyEditableText {
     ))]
     pub fn new(
         text: &str,
+        cursor_margin: PyVec2,
         cursor_width: f32,
         cursor_blink_period: DurationInput,
         max_characters: Option<usize>,
@@ -47,6 +53,7 @@ impl PyEditableText {
         allow_newlines: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let mut editable = EditableText::new(text);
+        editable.cursor_margin = Vec2::try_from(cursor_margin)?;
         editable.cursor_width = Self::check_cursor_width(cursor_width)?;
         editable.cursor_blink_period =
             Self::check_cursor_blink_period(cursor_blink_period)?.stored();
@@ -65,9 +72,7 @@ impl PyEditableText {
 
     /// Clear the text buffer and pending edits, and reset the cursor.
     pub fn clear(&mut self) -> PyResult<()> {
-        let mut editable = self.as_mut()?;
-        editable.clear();
-        editable.queue_edit(TextEdit::TextStart(false));
+        self.as_mut()?.clear();
         Ok(())
     }
 
@@ -100,6 +105,34 @@ impl PyEditableText {
     #[setter]
     pub fn set_allow_newlines(&mut self, value: bool) -> PyResult<()> {
         self.as_mut()?.allow_newlines = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn viewport(&self) -> PyResult<PyTextViewport> {
+        Ok(self
+            .storage
+            .borrow_field_as(|editable| &editable.viewport)?)
+    }
+
+    #[setter]
+    pub fn set_viewport(&mut self, value: PyTextViewport) -> PyResult<()> {
+        let value = TextViewport::try_from(value)?;
+        self.as_mut()?.viewport = value;
+        Ok(())
+    }
+
+    #[getter]
+    pub fn cursor_margin(&self) -> PyResult<PyVec2> {
+        Ok(self
+            .storage
+            .borrow_field_as(|editable| &editable.cursor_margin)?)
+    }
+
+    #[setter]
+    pub fn set_cursor_margin(&mut self, value: PyVec2) -> PyResult<()> {
+        let value = Vec2::try_from(value)?;
+        self.as_mut()?.cursor_margin = value;
         Ok(())
     }
 

@@ -237,7 +237,7 @@ impl PyLazyWrapperProxy {
     /// Callers must not run Python code between calling this and using the pointer: a
     /// re-entrant structural mutation would invalidate it. Re-resolve again instead.
     #[inline]
-    fn resolved_ptr(&self) -> PyResult<*mut u8> {
+    fn resolved_ptr(&self) -> PyResult<*const u8> {
         match self.kind {
             ProxyKind::WorldGet => {
                 // SAFETY: world_ptr is valid while `validity` is active (callers run
@@ -256,7 +256,7 @@ impl PyLazyWrapperProxy {
                     )
                 })
             }
-            ProxyKind::QueryItem => Ok(self.data_ptr),
+            ProxyKind::QueryItem => Ok(self.data_ptr.cast_const()),
         }
     }
 
@@ -376,27 +376,13 @@ impl PyLazyWrapperProxy {
                 let val = unsafe { *(bytes_ptr as *const bool) };
                 Py::from(pyo3::types::PyBool::new(py, val)).into()
             }
-            PrimitiveType::Vec3 => {
-                self.composite_field::<Vec3, PyVec3>(py, bytes_ptr, field.offset)?
-            }
-            PrimitiveType::Vec2 => {
-                self.composite_field::<Vec2, PyVec2>(py, bytes_ptr, field.offset)?
-            }
-            PrimitiveType::Vec4 => {
-                self.composite_field::<Vec4, PyVec4>(py, bytes_ptr, field.offset)?
-            }
-            PrimitiveType::Quat => {
-                self.composite_field::<Quat, PyQuat>(py, bytes_ptr, field.offset)?
-            }
-            PrimitiveType::Mat2 => {
-                self.composite_field::<Mat2, PyMat2>(py, bytes_ptr, field.offset)?
-            }
-            PrimitiveType::Mat3 => {
-                self.composite_field::<Mat3, PyMat3>(py, bytes_ptr, field.offset)?
-            }
-            PrimitiveType::Mat4 => {
-                self.composite_field::<Mat4, PyMat4>(py, bytes_ptr, field.offset)?
-            }
+            PrimitiveType::Vec3 => self.composite_field::<Vec3, PyVec3>(py, field.offset)?,
+            PrimitiveType::Vec2 => self.composite_field::<Vec2, PyVec2>(py, field.offset)?,
+            PrimitiveType::Vec4 => self.composite_field::<Vec4, PyVec4>(py, field.offset)?,
+            PrimitiveType::Quat => self.composite_field::<Quat, PyQuat>(py, field.offset)?,
+            PrimitiveType::Mat2 => self.composite_field::<Mat2, PyMat2>(py, field.offset)?,
+            PrimitiveType::Mat3 => self.composite_field::<Mat3, PyMat3>(py, field.offset)?,
+            PrimitiveType::Mat4 => self.composite_field::<Mat4, PyMat4>(py, field.offset)?,
         };
 
         Ok(value)
@@ -406,12 +392,7 @@ impl PyLazyWrapperProxy {
     ///
     /// Safety contract: `bytes_ptr` is this field's current address, `offset` its layout
     /// offset, and the layout placed a `T` there at `T`'s native alignment.
-    fn composite_field<T, W>(
-        &self,
-        py: Python,
-        bytes_ptr: *mut u8,
-        offset: usize,
-    ) -> PyResult<Py<PyAny>>
+    fn composite_field<T, W>(&self, py: Python, offset: usize) -> PyResult<Py<PyAny>>
     where
         T: Copy,
         W: FromBorrowedStorage<ValueStorage<T>> + PyClass + Into<PyClassInitializer<W>>,
@@ -432,10 +413,14 @@ impl PyLazyWrapperProxy {
             },
             // Query iteration: the ValidityFlag covers the access window, so a borrowed
             // (write-through) sub-proxy is safe and preserves mutation.
-            // SAFETY: `bytes_ptr` is the field's live, `T`-aligned address for the
-            // validity window, and write mode follows the query's access.
+            // SAFETY: the query's data pointer plus the field offset is the field's live,
+            // `T`-aligned address for the validity window, and write mode follows the
+            // query's access.
             ProxyKind::QueryItem => unsafe {
-                ValueStorage::borrowed(bytes_ptr as *mut T, self.query_field_validity(offset))
+                ValueStorage::borrowed(
+                    self.data_ptr.add(offset) as *mut T,
+                    self.query_field_validity(offset),
+                )
             },
         };
         Ok(Py::new(py, W::from_borrowed(storage))?.into_any())

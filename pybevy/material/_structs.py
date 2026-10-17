@@ -10,21 +10,10 @@ from typing import ClassVar, cast, dataclass_transform, get_origin, get_type_hin
 
 from .. import _pybevy  # pyright: ignore[reportAttributeAccessIssue]
 from ..math import Vec2, Vec3, Vec4
-from ._layout import _validate_wgsl_identifier
+from ._layout import _WGSL_BUILTIN_TYPES, _validate_wgsl_identifier
 from ._scalars import U32
 
 _LAYOUT_ATTRIBUTE = "_pybevy_shader_type_layout"
-_WGSL_BUILTIN_TYPES = frozenset({
-    "array", "atomic", "bool", "f16", "f32", "f64", "i32", "i64", "u32", "u64",
-    "ptr", "sampler", "sampler_comparison", "binding_array",
-    "acceleration_structure", "ray_query", "RayDesc", "RayIntersection",
-    "coop_mat8x8", "coop_mat16x16", "texture_external",
-    *(f"vec{n}{suffix}" for n in (2, 3, 4) for suffix in ("", "f", "h", "i", "u")),
-    *(f"mat{n}x{m}{suffix}" for n in (2, 3, 4) for m in (2, 3, 4) for suffix in ("", "f", "h")),
-    *(f"texture_{dimension}" for dimension in ("1d", "2d", "2d_array", "3d", "cube", "cube_array", "multisampled_2d")),
-    *(f"texture_depth_{dimension}" for dimension in ("2d", "2d_array", "cube", "cube_array", "multisampled_2d")),
-    *(f"texture_storage_{dimension}" for dimension in ("1d", "2d", "2d_array", "3d")),
-})
 _TYPES: dict[type, str] = {
     float: "f32",
     int: "i32",

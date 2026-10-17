@@ -1,9 +1,7 @@
 use bevy::{
-    math::{
-        Vec2,
-        primitives::{Measured2d, Rectangle},
-    },
+    math::Vec2,
     mesh::Meshable,
+    shape::{Measured2d, Rectangle},
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
 use pybevy_macros::{pyconstructor, pyvalue};

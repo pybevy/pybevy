@@ -77,6 +77,15 @@ fn material_shaders(descriptor: &PipelineDescriptor) -> Vec<u64> {
                 .into_iter()
                 .collect()
         }
+        PipelineDescriptor::MeshPipelineDescriptor(mesh) => mesh
+            .task
+            .as_ref()
+            .map(|task| &task.shader)
+            .into_iter()
+            .chain(iter::once(&mesh.mesh.shader))
+            .chain(mesh.fragment.as_ref().map(|fragment| &fragment.shader))
+            .filter_map(material_shader_path_id)
+            .collect(),
     };
     ids.sort_unstable();
     ids.dedup();
@@ -315,12 +324,25 @@ pub fn track_unresolved_shader_imports(
         .iter()
         .filter(|(_, shader)| !shader.path.starts_with("embedded://"))
         .flat_map(|(_, shader)| {
-            shader.imports.iter().filter_map(|import| match import {
-                ShaderImport::Custom(path) if !provided.contains(path.as_str()) => {
-                    Some(public_error::shader_import_unresolved(&shader.path, path))
-                }
-                _ => None,
-            })
+            let imported: HashSet<&str> = shader
+                .imports
+                .iter()
+                .filter_map(|import| match import {
+                    ShaderImport::Custom(path) => Some(path.as_str()),
+                    ShaderImport::AssetPath(_) => None,
+                })
+                .collect();
+            // WESL lists each imported item beside its module; report the module once.
+            imported
+                .iter()
+                .filter(|path| {
+                    !path
+                        .rsplit_once("::")
+                        .is_some_and(|(module, _)| imported.contains(module))
+                })
+                .filter(|path| !provided.contains(**path))
+                .map(|path| public_error::shader_import_unresolved(&shader.path, path))
+                .collect::<Vec<_>>()
         })
         .collect();
     missing.sort_unstable();
@@ -349,7 +371,7 @@ mod tests {
         ShaderMaterialExtension {
             fragment_shader_path: Some(fragment.to_owned()),
             deferred_fragment_shader_path: Some(fragment.to_owned()),
-            bindings_wgsl: Some(format!("#define_import_path pybevy::gen::{class_name}\n")),
+            bindings_wgsl: Some(format!("// module pybevy::gen::{class_name}\n")),
             ..Default::default()
         }
     }

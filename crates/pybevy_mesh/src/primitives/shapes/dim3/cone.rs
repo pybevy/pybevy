@@ -1,6 +1,6 @@
 use bevy::{
-    math::primitives::{Cone, Measured3d},
     mesh::Meshable,
+    shape::{Cone, Measured3d},
 };
 use pybevy_core::repr::float_repr;
 use pybevy_math::primitives::dimension::dimension;

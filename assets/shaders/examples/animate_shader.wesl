@@ -1,11 +1,11 @@
 // PyBevy equivalent of Bevy's animate_shader example.
 // Uses globals.time from mesh_view_bindings for time-based animation.
-// No custom uniforms needed — all animation is done in WGSL.
+// No custom uniforms are needed; all animation is done in the shader.
 
-#import bevy_pbr::{
+import bevy_pbr::render::{
     mesh_view_bindings::globals,
     forward_io::VertexOutput,
-}
+};
 
 fn oklab_to_linear_srgb(c: vec3<f32>) -> vec3<f32> {
     let L = c.x;

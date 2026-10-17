@@ -1,9 +1,7 @@
 use bevy::{
-    math::{
-        Vec2,
-        primitives::{Annulus, Circle, Measured2d},
-    },
+    math::Vec2,
     mesh::Meshable,
+    shape::{Annulus, Circle, Measured2d},
 };
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;

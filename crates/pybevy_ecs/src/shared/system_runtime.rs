@@ -23,8 +23,8 @@ use bevy::{
         query::FilteredAccessSet,
         schedule::{BoxedCondition, InternedSystemSet},
         system::{
-            BoxedSystem, In, ReadOnlySystem, RunSystemError, System, SystemIn, SystemInput,
-            SystemParamValidationError, SystemStateFlags,
+            BoxedSystem, In, ReadOnlySystem, RunSystemError, System, SystemAccess, SystemIn,
+            SystemInput, SystemParamValidationError, SystemStateFlags,
         },
         world::{CommandQueue, DeferredWorld, World, WorldId, unsafe_world_cell::UnsafeWorldCell},
     },
@@ -86,7 +86,7 @@ impl System for ErasedConditionSystem {
         self.inner.queue_deferred(world);
     }
 
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         self.inner.initialize(world)
     }
 
@@ -157,7 +157,7 @@ impl<I: SystemInput + 'static, O: 'static> System for ErasedSystem<I, O> {
         self.inner.queue_deferred(world);
     }
 
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         self.inner.initialize(world)
     }
 
@@ -896,7 +896,7 @@ where
 
     fn queue_deferred(&mut self, _world: DeferredWorld) {}
 
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         if let Some(world_id) = self.world_id {
             assert_eq!(
                 world_id,
@@ -920,7 +920,7 @@ where
             .map(|resource| resource.0.clone());
 
         if self.flags.needs_exclusive {
-            return FilteredAccessSet::default();
+            return SystemAccess::Exclusive;
         }
 
         let mut access = initialized.access;
@@ -928,7 +928,7 @@ where
         if self.profiler.is_some() {
             access.add_resource_read(world.register_component::<Time>());
         }
-        access
+        SystemAccess::Shared(access)
     }
 
     fn check_change_tick(&mut self, check: CheckChangeTicks) {
@@ -993,7 +993,7 @@ impl<B: SystemInterpreter> System for DynamicConditionCore<B> {
         self.0.queue_deferred(world);
     }
 
-    fn initialize(&mut self, world: &mut World) -> FilteredAccessSet {
+    fn initialize(&mut self, world: &mut World) -> SystemAccess {
         self.0.initialize(world)
     }
 
@@ -1607,11 +1607,8 @@ mod tests {
         assert!(condition.run((), &mut world).unwrap());
     }
 
-    /// Exclusive systems must use Bevy's empty access-set shape. Declaring
-    /// read-all/write-all can wedge the multithreaded executor when mixed with
-    /// Bevy's own empty-access exclusive systems.
     #[test]
-    fn exclusive_system_declares_empty_access() {
+    fn exclusive_system_declares_exclusive_access() {
         let mut world = World::new();
         let mut fixture = fixture(FakeCall::Unit, FakePlan::default(), InvocationKind::System);
         fixture.prepared.flags.needs_exclusive = true;
@@ -1619,9 +1616,9 @@ mod tests {
 
         let access = system.initialize(&mut world);
 
-        assert!(!access.combined_access().has_any_read());
-        assert!(!access.combined_access().has_any_write());
-        assert!(system.flags().contains(SystemStateFlags::EXCLUSIVE));
+        assert_eq!(access, SystemAccess::Exclusive);
+        assert!(!access.is_compatible(&SystemAccess::Shared(Default::default())));
+        assert!(system.flags() == SystemStateFlags::NON_SEND);
     }
 
     #[test]
@@ -2105,8 +2102,18 @@ mod tests {
         let access = system.initialize(&mut world);
         let generation_id = world.register_component::<HotReloadGeneration>();
         let time_id = world.register_component::<Time<()>>();
-        assert!(access.combined_access().has_read(generation_id));
-        assert!(access.combined_access().has_read(time_id));
+        assert!(
+            access
+                .to_filtered_access_set()
+                .combined_access()
+                .has_read(generation_id)
+        );
+        assert!(
+            access
+                .to_filtered_access_set()
+                .combined_access()
+                .has_read(time_id)
+        );
         system.run((), &mut world).unwrap();
         assert!(profiler.called.load(Ordering::SeqCst));
     }

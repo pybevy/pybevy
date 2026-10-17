@@ -71,6 +71,30 @@ class AlphaMode2d:
         __match_args__: ClassVar[tuple[()]]
         def __init__(self) -> None: ...
 
+class SpriteAlphaMode:
+    """How a sprite's alpha channel is handled after tinting."""
+
+    def __copy__(self) -> SpriteAlphaMode: ...
+    def __deepcopy__(self, memo: dict[int, object]) -> SpriteAlphaMode: ...
+
+
+    class Opaque(SpriteAlphaMode):
+        """Override base-color alpha to fully opaque."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
+    class Mask(SpriteAlphaMode):
+        """Use binary transparency at the cutoff ``value``."""
+        __match_args__ = ("value",)
+        @property
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
+
+    class Blend(SpriteAlphaMode):
+        """Use standard alpha blending."""
+        __match_args__: ClassVar[tuple[()]]
+        def __init__(self) -> None: ...
+
 class SpriteImageMode:
     """Sprite image rendering mode configuration.
 
@@ -609,6 +633,9 @@ class Sprite(Component):
     image_mode: SpriteImageMode
     """How the sprite image is scaled/tiled (default: Auto)."""
 
+    alpha_mode: SpriteAlphaMode
+    """How the sprite's alpha channel is handled (default: Blend)."""
+
     def __init__(
         self,
         *,
@@ -619,7 +646,8 @@ class Sprite(Component):
         flip_y: bool = False,
         custom_size: Vec2 | None = None,
         rect: Rect | None = None,
-        image_mode: SpriteImageMode = ...
+        image_mode: SpriteImageMode = ...,
+        alpha_mode: SpriteAlphaMode = SpriteAlphaMode.Blend()
     ) -> None:
         """Create a sprite with the specified configuration.
 
@@ -632,6 +660,7 @@ class Sprite(Component):
             rect: Sub-rectangle to render (None = full image)
             texture_atlas: Texture atlas for sprite sheets
             image_mode: How the sprite image is scaled/tiled (default: Auto)
+            alpha_mode: How the alpha channel is handled (default: Blend)
         """
 
     @staticmethod

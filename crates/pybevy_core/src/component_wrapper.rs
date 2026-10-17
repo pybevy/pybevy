@@ -485,6 +485,7 @@ mod tests {
                     Layout::new::<u64>(),
                     None,
                     false,
+                    false,
                     bevy::ecs::component::ComponentCloneBehavior::Default,
                     None,
                 )

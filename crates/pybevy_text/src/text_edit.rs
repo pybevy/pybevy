@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
-    repr::{ReprLiteral, str_repr},
+    repr::{ReprLiteral, float_repr, str_repr},
 };
 use pybevy_macros::{pyenum, pyvalue};
 use pybevy_math::snapshot::Snapshot;
@@ -179,6 +179,15 @@ pub enum PyTextEdit {
     ImeCommit {
         value: String,
     },
+    ScrollByLines {
+        value: f32,
+    },
+    ScrollTo {
+        value: Snapshot<Vec2>,
+    },
+    ScrollBy {
+        value: Snapshot<Vec2>,
+    },
 }
 
 fn from_smol(value: smol_str::SmolStr) -> String {
@@ -247,6 +256,13 @@ impl From<&TextEdit> for PyTextEdit {
             TextEdit::ImeCommit { value } => Self::ImeCommit {
                 value: from_smol(value.clone()),
             },
+            TextEdit::ScrollByLines(value) => Self::ScrollByLines { value: *value },
+            TextEdit::ScrollTo(value) => Self::ScrollTo {
+                value: Snapshot(*value),
+            },
+            TextEdit::ScrollBy(value) => Self::ScrollBy {
+                value: Snapshot(*value),
+            },
         }
     }
 }
@@ -296,6 +312,9 @@ impl TryFrom<PyTextEdit> for TextEdit {
             PyTextEdit::ImeCommit { value } => TextEdit::ImeCommit {
                 value: to_smol(value),
             },
+            PyTextEdit::ScrollByLines { value } => TextEdit::ScrollByLines(value),
+            PyTextEdit::ScrollTo { value } => TextEdit::ScrollTo(value.0),
+            PyTextEdit::ScrollBy { value } => TextEdit::ScrollBy(value.0),
         })
     }
 }
@@ -363,6 +382,15 @@ impl PyTextEdit {
             }
             PyTextEdit::ImeCommit { value } => {
                 format!("TextEdit.ImeCommit(value={})", str_repr(value))
+            }
+            PyTextEdit::ScrollByLines { value } => {
+                format!("TextEdit.ScrollByLines({})", float_repr(*value))
+            }
+            PyTextEdit::ScrollTo { value } => {
+                format!("TextEdit.ScrollTo({})", value.0.repr_literal())
+            }
+            PyTextEdit::ScrollBy { value } => {
+                format!("TextEdit.ScrollBy({})", value.0.repr_literal())
             }
         })
     }

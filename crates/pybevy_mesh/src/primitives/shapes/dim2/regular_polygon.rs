@@ -1,6 +1,6 @@
 use bevy::{
-    math::primitives::{Measured2d, RegularPolygon},
     mesh::Meshable,
+    shape::{Measured2d, RegularPolygon},
 };
 use pybevy_core::{
     domain::{IntegerInput, check_for},

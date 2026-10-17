@@ -10,7 +10,7 @@ from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import ShaderBuffer
 
-SHADER_PATH = "shaders/examples/storage_buffer.wgsl"
+SHADER_PATH = "shaders/examples/storage_buffer.wesl"
 
 
 @material(vertex_shader=SHADER_PATH, fragment_shader=SHADER_PATH)

@@ -1,4 +1,7 @@
-use bevy::math::{Ray2d, Ray3d, Vec2, Vec3};
+use bevy::{
+    math::{Vec2, Vec3},
+    shape::{Ray2d, Ray3d},
+};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     repr::{ReprLiteral, object_repr},

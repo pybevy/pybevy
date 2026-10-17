@@ -3,7 +3,6 @@ pub mod shader_def_val;
 pub mod shader_import;
 pub mod shader_ref;
 pub mod shader_source;
-pub mod shader_stage;
 pub mod validate_shader;
 
 use pyo3::prelude::*;

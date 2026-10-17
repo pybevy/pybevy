@@ -676,7 +676,7 @@ pub(crate) fn traverse_world_python(
             visit.call(&entry.type_object)?;
         }
     }
-    for component in world.components().iter_registered() {
+    for (component_id, component) in world.components().iter_registered() {
         if component.layout() != Layout::new::<Py<PyAny>>()
             || !component
                 .drop()
@@ -690,7 +690,7 @@ pub(crate) fn traverse_world_python(
                     continue;
                 };
                 // SAFETY: the gate excludes writes to Python object storage slots.
-                if let Some(value) = unsafe { entity.get_by_id(component.id()) } {
+                if let Some(value) = unsafe { entity.get_by_id(component_id) } {
                     // SAFETY: layout and drop identify the exact Python storage type.
                     visit.call(unsafe { value.deref::<Py<PyAny>>() })?;
                 }

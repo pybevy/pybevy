@@ -1,5 +1,5 @@
-#import bevy_pbr::forward_io::VertexOutput
-#import pybevy::gen::VolumeSlice as params
+import bevy_pbr::render::forward_io::VertexOutput;
+import pybevy::gen::VolumeSlice as params;
 
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {

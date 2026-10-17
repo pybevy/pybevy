@@ -23,12 +23,14 @@ impl PyWireframeMaterial {
         *,
         color = Color::WHITE.into(),
         line_width = 1.0,
-        topology = Omittable::default()
+        topology = Omittable::default(),
+        xray_mode = false
     ))]
     pub fn new(
         color: PyColor,
         line_width: f32,
         topology: Omittable<PyRef<'_, PyWireframeTopology>>,
+        xray_mode: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let line_width = Self::check_line_width(line_width)?;
         let color = color.try_into()?;
@@ -39,8 +41,20 @@ impl PyWireframeMaterial {
                 .into_option()
                 .map(|topology| topology.0)
                 .unwrap_or(WireframeTopology::Triangles),
+            xray_mode,
         };
         Ok(Self::from_owned(material).into())
+    }
+
+    #[getter]
+    pub fn xray_mode(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.xray_mode)
+    }
+
+    #[setter]
+    pub fn set_xray_mode(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.xray_mode = value;
+        Ok(())
     }
 
     #[getter]

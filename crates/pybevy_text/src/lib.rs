@@ -1,4 +1,5 @@
 pub mod editable_text;
+pub mod em_size;
 pub mod font;
 pub mod font_atlas;
 pub mod font_atlas_sets;
@@ -11,6 +12,7 @@ pub mod font_source;
 pub mod font_style;
 pub mod font_weight;
 pub mod font_width;
+pub mod generic_font_family;
 pub mod justify;
 pub mod letter_spacing;
 pub mod line_break;
@@ -26,6 +28,7 @@ pub mod text_edit;
 pub mod text_font;
 pub mod text_layout;
 pub mod text_span;
+pub mod text_viewport;
 
 use pyo3::prelude::*;
 
@@ -46,7 +49,8 @@ pub mod prelude {
     pub use crate::{
         editable_text::PyEditableText, font::PyFont, font_hinting::PyFontHinting,
         font_size::PyFontSize, font_source::PyFontSource, font_style::PyFontStyle,
-        font_weight::PyFontWeight, font_width::PyFontWidth, justify::PyJustify,
+        font_weight::PyFontWeight, font_width::PyFontWidth,
+        generic_font_family::PyGenericFontFamily, justify::PyJustify,
         letter_spacing::PyLetterSpacing, line_break::PyLineBreak, plugin::PyTextPlugin,
         text_background_color::PyTextBackgroundColor, text_color::PyTextColor,
         text_cursor_style::PyTextCursorStyle, text_font::PyTextFont, text_layout::PyTextLayout,
@@ -57,6 +61,7 @@ pub mod prelude {
 pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "text")?;
     m.add_class::<plugin::PyTextPlugin>()?;
+    m.add_class::<em_size::PyEmSize>()?;
     m.add_class::<rem_size::PyRemSize>()?;
 
     m.add_class::<text_color::PyTextColor>()?;
@@ -69,6 +74,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<text_span::PyTextSpan>()?;
     m.add_class::<text_bounds::PyTextBounds>()?;
     m.add_class::<editable_text::PyEditableText>()?;
+    m.add_class::<text_viewport::PyTextViewport>()?;
     m.add_class::<letter_spacing::PyLetterSpacing>()?;
     letter_spacing::register_letter_spacing_variants(&m)?;
 
@@ -82,6 +88,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<font_features::PyFontFeaturesBuilder>()?;
     m.add_class::<font_size::PyFontSize>()?;
     m.add_class::<font_source::PyFontSource>()?;
+    m.add_class::<generic_font_family::PyGenericFontFamily>()?;
     m.add_class::<font_smoothing::PyFontSmoothing>()?;
     m.add_class::<font_style::PyFontStyle>()?;
     m.add_class::<font_weight::PyFontWeight>()?;

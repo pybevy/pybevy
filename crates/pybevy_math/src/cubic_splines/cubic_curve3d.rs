@@ -1,4 +1,5 @@
-use bevy::math::{Vec3, cubic_splines::CubicCurve, curve::Curve};
+use bevy::curve::{Curve, cubic_splines::CubicCurve};
+use bevy::math::Vec3;
 use pyo3::prelude::*;
 
 use super::cubic_segment3d::PyCubicSegment3d;

@@ -1,6 +1,6 @@
 # Custom Shaders with `@material`
 
-`@material` generates WGSL bindings, packs GPU data, and integrates Python materials with Bevy PBR.
+`@material` generates a WESL bindings module, packs GPU data, and integrates Python materials with Bevy PBR.
 Always call it: `@material()` with no options, or `@material(fragment_shader=...)`.
 Uniform and texture field names and the material class name become WGSL
 identifiers. WGSL keywords and reserved words such as `loop`, `module`, and
@@ -19,7 +19,7 @@ from pybevy.prelude import *
 from pybevy.color import LinearRgba
 from pybevy.pbr import ShaderMaterialPlugin
 
-@material(fragment_shader="shaders/glow.wgsl")  # relative to assets/ directory
+@material(fragment_shader="shaders/glow.wesl")  # relative to assets/ directory
 class GlowMaterial(Material):
     color: LinearRgba = LinearRgba(0.0, 1.0, 0.5, 1.0)
     intensity: float = 1.5
@@ -54,12 +54,17 @@ if __name__ == "__main__":
 ```
 
 **Shader paths** are relative to the `assets/` directory (Bevy's default asset root).
-For a file at `assets/shaders/glow.wgsl`, use `fragment_shader="shaders/glow.wgsl"`.
+For a file at `assets/shaders/glow.wesl`, use `fragment_shader="shaders/glow.wesl"`.
 Malformed paths, such as a trailing `#` with no label, raise `ValueError` when
 the material is converted to `ShaderMaterial`, before consuming its base.
-All custom material shader paths must name `.wgsl` assets. The separate
-`Shader`/`Source` GLSL and WESL constructors do not establish support for those
-languages in this material API.
+
+Material shaders are [WESL](https://wesl-lang.dev) modules (`.wesl`), as in
+Bevy 0.20: `import` statements and `@if` conditional compilation work only in
+`.wesl` files. A plain `.wgsl` file is also accepted, but Bevy passes it to the
+GPU unprocessed, so it cannot import the generated bindings or Bevy modules.
+Other extensions raise `ValueError`. See
+[Migrating naga_oil shaders](#migrating-naga_oil-shaders) for the old
+`#import`/`#ifdef` syntax.
 
 ## Base Material Properties
 
@@ -67,7 +72,7 @@ The `@material` decorator accepts a copied `StandardMaterial` template:
 
 ```python
 @material(
-    fragment_shader="shaders/glass.wgsl",
+    fragment_shader="shaders/glass.wesl",
     base=StandardMaterial(
         alpha_mode=AlphaMode.Blend(),
         double_sided=True,
@@ -107,9 +112,10 @@ value and also works through `get_mut()`; it does not consume the replacement.
 Unknown assignments raise AttributeError: base settings such as `mat.unlit` point
 to `mat.base.unlit`, and typos such as `mat.opacitiy` suggest `opacity`.
 
-`AlphaMode.Mask(cutoff)` selects the alpha-mask pass, but custom fragment WGSL
-must perform the discard. In the PBR fragment pattern below, call
-`alpha_discard(pbr_input.material, output_color)` before returning the color.
+`AlphaMode.Mask(cutoff)` selects the alpha-mask pass, but a custom fragment
+shader must perform the discard. In the PBR fragment pattern below, call
+`alpha_discard(pbr_input.material.flags, pbr_input.material.alpha_cutoff, output_color)`
+before returning the color.
 Without `alpha_discard` or equivalent explicit discard logic, a custom shader does
 not perform automatic alpha-mask rejection and may appear opaque, with no warning
 about the missing discard.
@@ -118,7 +124,7 @@ The cutoff is a per-material float uniform; materials can share a shader file
 with different thresholds. A fragment that simply returns `vec4(...)` does not
 apply the mask threshold. Match discards in custom prepass/deferred hooks too.
 Bevy's default prepass fragment (`prepass_alpha_discard` in
-`pbr_prepass_functions.wgsl`) reads only the StandardMaterial base color and
+`bevy_pbr::render::pbr_prepass_functions`) reads only the StandardMaterial base color and
 `base_color_texture`, so a cutout from a custom texture also needs
 `prepass_fragment_shader`; otherwise depth and shadows keep the uncut shape.
 See the [complete prepass template](#complete-prepass-template).
@@ -143,7 +149,7 @@ from pybevy.material import SamplerBinding, StorageBinding, TextureBinding, mate
 from pybevy.math import Vec4
 from pybevy.pbr import Material
 
-@material(fragment_shader="shaders/surface.wgsl")
+@material(fragment_shader="shaders/surface.wesl")
 class Surface(Material):
     colors: StorageBinding[Vec4]                 # required ShaderBuffer handle
     image: TextureBinding                       # required Image handle
@@ -175,7 +181,7 @@ samplers use the same `ShaderMaterialPlugin()`.
 | `Vec3`         | `vec3<f32>`    | 12 bytes, 16-byte aligned      |
 | `Vec4`         | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
 | `LinearRgba`   | `vec4<f32>`    | 16 bytes, 16-byte aligned      |
-| `bool`         | shader def     | `#ifdef FIELD_NAME` in WGSL    |
+| `bool`         | shader def     | `@if(FIELD_NAME)` in WESL      |
 | `Handle[Image] \| None` | texture slot | `texture_2d<f32>` + `sampler` |
 | `Annotated[Handle[Image] \| None, TextureBinding(dimension=...)]` | sampled texture | cube/3D/array dimensions and sample controls |
 | `StorageBinding[Vec4]` | read-only storage | concise typed array declaration |
@@ -275,11 +281,11 @@ from pybevy.image import Image
 from pybevy.material import TextureBinding, material
 from pybevy.pbr import Material
 
-@material(fragment_shader="shaders/glass.wgsl")
+@material(fragment_shader="shaders/glass.wesl")
 class Glass(Material):
     sky: TextureBinding = TextureBinding(dimension="cube")
 
-@material(fragment_shader="shaders/water.wgsl")
+@material(fragment_shader="shaders/water.wesl")
 class Water(Material):
     sky: TextureBinding = TextureBinding(dimension="cube")
 
@@ -311,8 +317,11 @@ returned material handles as usual.
 ## Raw Shader Buffers
 
 Construct `ShaderBuffer` from `bytes` or a bounded `uint8` `Array`, or reserve
-space with `ShaderBuffer.with_size()`. Mutate it through `Assets[ShaderBuffer]`;
-`resize_in_place()` preserves GPU data when no CPU copy is available.
+space with `ShaderBuffer.with_size()`. Sizes must be multiples of 4 bytes, as wgpu
+requires; other sizes raise `ValueError`. Mutate it through `Assets[ShaderBuffer]`;
+`resize()` changes both CPU data and GPU size, `resize_buffer()` only the GPU
+size, and `buffer_size()` reports it. Set `copy_on_resize = True` to preserve
+GPU data across a resize when no CPU copy is available.
 Use `with buffer.data() as data` for read-only CPU bytes, `data_mut()` for
 scoped writes, and `data_copy()` for an independent copy. Views block conflicting
 asset mutations and expire on context exit or system completion. `data_len()`
@@ -356,7 +365,7 @@ from pybevy.math import Vec4
 from pybevy.pbr import Material, ShaderMaterialPlugin
 from pybevy.render import ShaderBuffer
 
-@material(fragment_shader="shaders/palette.wgsl")
+@material(fragment_shader="shaders/palette.wesl")
 class Palette(Material):
     colors: StorageBinding[Vec4]
 
@@ -391,7 +400,7 @@ from pybevy.material import StorageBinding, material
 from pybevy.math import Vec4
 from pybevy.pbr import Material, StandardMaterial
 
-@material(fragment_shader="shaders/palette.wgsl")
+@material(fragment_shader="shaders/palette.wesl")
 class BasedPalette(Material):
     colors: StorageBinding[Vec4]
 
@@ -400,11 +409,11 @@ surface = BasedPalette(base=StandardMaterial(unlit=True), colors=None)
 
 `base` is reserved constructor input and never a shader field.
 
-`assets/shaders/palette.wgsl` can read the array directly in a vertex or
+`assets/shaders/palette.wesl` can read the array directly in a vertex or
 fragment stage, including custom prepass/deferred shaders:
 
-```wgsl
-#import pybevy::gen::Palette as params
+```wesl
+import pybevy::gen::Palette as params;
 
 @fragment
 fn fragment() -> @location(0) vec4<f32> {
@@ -412,7 +421,7 @@ fn fragment() -> @location(0) vec4<f32> {
 }
 ```
 
-The generated declaration is `@group(#{MATERIAL_BIND_GROUP}) @binding(109) var<storage, read>
+The generated declaration is `@group(constants::MATERIAL_BIND_GROUP) @binding(109) var<storage, read>
 colors: array<vec4<f32>>`. `arrayLength(&params::colors)` gives its current row
 count. Existing uniform, texture, bool-definition and pass-hook syntax works
 alongside the storage field. For per-instance lookup, use `MeshTag` and Bevy's
@@ -478,8 +487,7 @@ slots; the device determines the maximum count. No new Cargo feature flag is
 needed. This path is tested on native Vulkan; WebGL and other backends/devices
 are not qualified by that result. Ordinary materials retain their existing
 layout. Writable storage and general user-selected binding numbers remain
-outside this API. Bevy 0.20's changing
-buffer/shader APIs still require a separate port.
+outside this API.
 
 Material constructors are keyword-only. Decorate subclasses with `@material` too;
 otherwise construction raises an error. `copy.copy()` and `copy.deepcopy()` make
@@ -518,7 +526,7 @@ class Tile:
     scale: float
     color: Vec4
 
-@material(fragment_shader="shaders/tiles.wgsl")
+@material(fragment_shader="shaders/tiles.wesl")
 class Tiles(Material):
     records: StorageBinding[Tile]
 
@@ -539,8 +547,7 @@ The first version accepts `float` (`f32`), `int` (`i32`), `U32` (`u32`), and `Ve
 Import `U32` from `pybevy.material`: `indices: StorageBinding[U32] = StorageBinding()`
 declares an unsigned index buffer. In shader structs, `index: U32` accepts ordinary
 Python integers; packing checks the range `0..2**32 - 1`.
-Struct members must end in a letter or underscore: the current WGSL composer
-cannot round-trip trailing digits. Conflicting generated names are rejected before rendering.
+Struct members must end in a letter or underscore. Conflicting generated names are rejected before rendering.
 
 Packing validates value types, finite f32 ranges and signed/unsigned 32-bit integer ranges.
 It writes little-endian bytes, zeroes padding and uses Naga's field offsets,
@@ -577,7 +584,7 @@ from pybevy.material import TextureBinding, material
 from pybevy.pbr import Material, ShaderMaterialPlugin
 from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
-@material(fragment_shader="shaders/environment.wgsl")
+@material(fragment_shader="shaders/environment.wesl")
 class Environment(Material):
     sky: TextureBinding = TextureBinding(dimension="cube")
 
@@ -591,8 +598,8 @@ image.sampler = ImageSampler.linear()
 # Add image to Assets[Image] and assign its handle to Environment.sky.
 ```
 
-```wgsl
-#import pybevy::gen::Environment as params
+```wesl
+import pybevy::gen::Environment as params;
 
 @fragment
 fn fragment() -> @location(0) vec4<f32> {
@@ -672,16 +679,16 @@ from pybevy.image import ImageSamplerDescriptor
 from pybevy.material import SamplerBinding, TextureBinding, material
 from pybevy.pbr import Material, ShaderMaterialPlugin
 
-@material(fragment_shader="shaders/sampling.wgsl")
+@material(fragment_shader="shaders/sampling.wesl")
 class Sampling(Material):
     image: TextureBinding = TextureBinding(sampler_type=None)
     sharp: SamplerBinding = SamplerBinding("non_filtering")
     soft: SamplerBinding = SamplerBinding(default=ImageSamplerDescriptor.linear())
 ```
 
-```wgsl
-#import pybevy::gen::Sampling as params
-#import bevy_pbr::forward_io::VertexOutput
+```wesl
+import pybevy::gen::Sampling as params;
+import bevy_pbr::render::forward_io::VertexOutput;
 
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
@@ -724,7 +731,7 @@ Binding arrays, storage textures and multisampled textures remain unsupported.
 ## Runnable Binding Examples
 
 The [material examples](../../../examples/materials/README.md) include complete
-Python scenes and WGSL, with procedural assets and no downloads:
+Python scenes and WESL shaders, with procedural assets and no downloads:
 
 | Example | Binding technique |
 |---|---|
@@ -741,37 +748,36 @@ The volume example displays slices; ray-marched volume rendering requires its ow
 shader. Pixel regressions exercise the examples' actual setup systems and data
 updates; finite-frame smoke tests exercise their entrypoints.
 
-## WGSL Shader Side
+## WESL Shader Side
 
 Both vertex and fragment shaders can read the material uniforms at
-`@group(#{MATERIAL_BIND_GROUP}) @binding(100)`. The decorator generates a WGSL module containing
-the matching uniform, texture, sampler, and optional storage declarations. Import that module by
-the material class name:
+`@group(constants::MATERIAL_BIND_GROUP) @binding(100)`. The decorator generates a WESL module
+containing the matching uniform, texture, sampler, and optional storage declarations. Import
+that module by the material class name; WESL imports come first in the file and end with `;`:
 
 Independent classes with the same short name can keep this import spelling.
 PyBevy selects their matching generated layouts through pipeline specialization,
 including when old material assets survive a class reload. Import the bindings
 for the material drawing the mesh; importing another material's module is an error.
 
-```wgsl
-#import pybevy::gen::GlowMaterial as params
+```wesl
+import pybevy::gen::GlowMaterial as params;
 
 // Standard PBR imports
-#import bevy_pbr::{
+import bevy_pbr::render::{
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::alpha_discard,
-}
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::{
-    prepass_io::{VertexOutput, FragmentOutput},
-    pbr_deferred_functions::deferred_output,
-}
-#else
-#import bevy_pbr::{
+};
+@if(PREPASS_PIPELINE)
+import bevy_pbr::{
+    prepass::io::{VertexOutput, FragmentOutput},
+    deferred::functions::deferred_output,
+};
+@else
+import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-}
-#endif
+};
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -779,25 +785,34 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // alpha is the exposure weight, not opacity: keep it 0.0
     pbr_input.material.emissive = vec4<f32>(
         params::material.color.rgb * params::material.intensity, 0.0);
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
-#ifdef PREPASS_PIPELINE
-    let out = deferred_output(in, pbr_input);
-#else
+    pbr_input.material.base_color = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        pbr_input.material.base_color,
+    );
     var out: FragmentOutput;
-    out.color = apply_pbr_lighting(pbr_input);
-    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
-#endif
+    @if(PREPASS_PIPELINE) {
+        out = deferred_output(in, pbr_input);
+    } @else {
+        out.color = apply_pbr_lighting(pbr_input);
+        out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+    }
     return out;
 }
 ```
 
-### Shared WGSL helper files
+`@if(...)`, `@elif(...)` and `@else` attach to a whole import, declaration,
+struct member, parameter or statement; wrap several statements in `{ ... }`.
+Boolean shader definitions, including the [bool fields](#shader-defs-bool-fields),
+are the conditions. Integer definitions are read as `constants::NAME`.
 
-Put helper functions in their own file under `assets/` and import them by
-asset path instead of copying them into every shader:
+### Shared WESL helper files
 
-```wgsl
-// assets/shaders/common/noise.wgsl
+Put helper functions in their own `.wesl` file under `assets/` and import them by
+module path instead of copying them into every shader:
+
+```wesl
+// assets/shaders/common/noise.wesl
 fn hash33(p: vec3<f32>) -> vec3<f32> {
     var q = fract(p * vec3(0.1031, 0.1030, 0.0973));
     q += dot(q, q.yxz + 33.33);
@@ -815,9 +830,9 @@ fn fbm(p: vec3<f32>) -> f32 {
 }
 ```
 
-```wgsl
-#import bevy_pbr::forward_io::VertexOutput
-#import "shaders/common/noise.wgsl"::{fbm, hash33}
+```wesl
+import bevy_pbr::render::forward_io::VertexOutput;
+import package::shaders::common::noise::{fbm, hash33};
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -827,19 +842,45 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 ```
 
-The quoted path is relative to `assets/`, like material shader paths, and the
-helper file needs no `#define_import_path`. Helper files may import other
-helper files the same way.
+An asset's module path is its path under `assets/` without the extension:
+`package::shaders::common::noise` names `assets/shaders/common/noise.wesl`, and
+`super::common::noise` names the same file from a shader in `assets/shaders/`.
+Bevy loads such imported files automatically; helper files may import other
+helpers the same way and need no module declaration.
 
-A named import such as `#import lab::common::tint` resolves only once a shader
-declaring `#define_import_path lab::common` is loaded; nothing loads it for you.
-Until then Bevy keeps the material's pipeline waiting and the mesh draws nothing,
-and `get_last_error.shader_errors` names the missing module. Prefer the quoted
-asset-path form above, which loads the helper automatically.
+Any other leading name, such as `import lab::common::tint;`, is a package
+import. Packages are Bevy's built-in modules, the generated `pybevy::gen`
+bindings, and shaders registered from Rust; an asset file cannot declare one.
+Until a package module exists Bevy keeps the material's pipeline waiting, the
+mesh draws nothing, and `get_last_error.shader_errors` names the missing module.
+
+### Migrating naga_oil shaders
+
+Bevy 0.20 replaced the naga_oil preprocessor with WESL. Rename a material
+shader from `.wgsl` to `.wesl` (and update its `@material` path), then
+translate the directives:
+
+| Bevy 0.19 (naga_oil) | Bevy 0.20 (WESL) |
+|---|---|
+| `#import pybevy::gen::Glow as params` | `import pybevy::gen::Glow as params;` |
+| `#import bevy_pbr::forward_io::VertexOutput` | `import bevy_pbr::render::forward_io::VertexOutput;` |
+| `#import "shaders/common/noise.wgsl"::fbm` | `import package::shaders::common::noise::fbm;` |
+| `#ifdef X` / `#else ifdef Y` / `#else` / `#endif` | `@if(X)` / `@elif(Y)` / `@else` on each item, or on a `{ ... }` block |
+| `#ifndef X` | `@if(!X)` |
+| `@group(#{MATERIAL_BIND_GROUP})` | `@group(constants::MATERIAL_BIND_GROUP)` |
+| `#define_import_path my::module` | none: import assets by path; see above |
+
+Bevy module names now follow their source path. Frequently used ones:
+`bevy_pbr::render::{forward_io, mesh_functions, mesh_view_bindings,
+view_transformations, pbr_fragment, pbr_functions, pbr_prepass_functions, pbr_types, utils}`,
+`bevy_pbr::prepass::{io, utils, bindings}` (formerly `prepass_io`,
+`prepass_utils`, `prepass_bindings`), `bevy_pbr::deferred::functions` (formerly
+`pbr_deferred_functions`), and `bevy_render::{globals, maths, utils}`.
+`alpha_discard` now takes `(material.flags, material.alpha_cutoff, color)`.
 
 ## One File for Vertex and Fragment Stages
 
-Set both shader paths to the same WGSL file when its vertex and fragment entry
+Set both shader paths to the same WESL file when its vertex and fragment entry
 points share parameters:
 
 ```python
@@ -848,8 +889,8 @@ from pybevy.math import Vec3
 from pybevy.prelude import Material, material
 
 @material(
-    vertex_shader="shaders/offset_color.wgsl",
-    fragment_shader="shaders/offset_color.wgsl",
+    vertex_shader="shaders/offset_color.wesl",
+    fragment_shader="shaders/offset_color.wesl",
 )
 class OffsetColorMaterial(Material):
     offset: Vec3 = Vec3.ZERO
@@ -860,17 +901,17 @@ The vertex and fragment paths may also name different files. Omit
 `vertex_shader` to keep Bevy's default vertex stage, or omit `fragment_shader`
 to keep Bevy's default PBR fragment stage.
 
-The matching `assets/shaders/offset_color.wgsl` below is suitable for ordinary
+The matching `assets/shaders/offset_color.wesl` below is suitable for ordinary
 static meshes. A custom vertex shader replaces Bevy's vertex stage, so it must
 produce the required `VertexOutput` fields:
 
-```wgsl
-#import bevy_pbr::{
+```wesl
+import bevy_pbr::render::{
     mesh_functions,
     forward_io::{Vertex, VertexOutput},
     view_transformations::position_world_to_clip,
-}
-#import pybevy::gen::OffsetColorMaterial as params
+};
+import pybevy::gen::OffsetColorMaterial as params;
 
 @vertex
 fn vertex(vertex_in: Vertex) -> VertexOutput {
@@ -879,38 +920,32 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     vertex.position += params::material.offset;
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
 
-#ifdef VERTEX_NORMALS
+    @if(VERTEX_NORMALS)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(
         vertex.normal,
         vertex.instance_index,
     );
-#endif
-#ifdef VERTEX_POSITIONS
-    out.world_position = mesh_functions::mesh_position_local_to_world(
-        world_from_local,
-        vec4<f32>(vertex.position, 1.0),
-    );
-    out.position = position_world_to_clip(out.world_position.xyz);
-#endif
-#ifdef VERTEX_UVS_A
+    @if(VERTEX_POSITIONS) {
+        out.world_position = mesh_functions::mesh_position_local_to_world(
+            world_from_local,
+            vec4<f32>(vertex.position, 1.0),
+        );
+        out.position = position_world_to_clip(out.world_position.xyz);
+    }
+    @if(VERTEX_UVS_A)
     out.uv = vertex.uv;
-#endif
-#ifdef VERTEX_UVS_B
+    @if(VERTEX_UVS_B)
     out.uv_b = vertex.uv_b;
-#endif
-#ifdef VERTEX_TANGENTS
+    @if(VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
         world_from_local,
         vertex.tangent,
         vertex.instance_index,
     );
-#endif
-#ifdef VERTEX_COLORS
+    @if(VERTEX_COLORS)
     out.color = vertex.color;
-#endif
-#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = vertex.instance_index;
-#endif
     return out;
 }
 
@@ -934,9 +969,9 @@ a forward shader is never copied automatically into a different pass.
 
 | Decorator / `ShaderMaterial` keyword | Runs in | Shader interface |
 |---|---|---|
-| `vertex_shader`, `fragment_shader` | Forward rendering | `bevy_pbr::forward_io` |
-| `prepass_vertex_shader`, `prepass_fragment_shader` | Depth, normal, motion-vector prepasses and shadow maps | `bevy_pbr::prepass_io` |
-| `deferred_vertex_shader`, `deferred_fragment_shader` | Deferred G-buffer pass | `bevy_pbr::prepass_io`, `pbr_deferred_functions::deferred_output` |
+| `vertex_shader`, `fragment_shader` | Forward rendering | `bevy_pbr::render::forward_io` |
+| `prepass_vertex_shader`, `prepass_fragment_shader` | Depth, normal, motion-vector prepasses and shadow maps | `bevy_pbr::prepass::io` |
+| `deferred_vertex_shader`, `deferred_fragment_shader` | Deferred G-buffer pass | `bevy_pbr::prepass::io`, `bevy_pbr::deferred::functions::deferred_output` |
 
 These optional keywords need no additional Bevy feature flags in the standard
 native build. Shader loading errors identify the stage, and file edits reload
@@ -953,8 +988,8 @@ from pybevy.material import material
 from pybevy.pbr import Material
 
 @material(
-    fragment_shader="shaders/glow.wgsl",
-    deferred_fragment_shader="shaders/glow.wgsl",
+    fragment_shader="shaders/glow.wesl",
+    deferred_fragment_shader="shaders/glow.wesl",
 )
 class GlowMaterial(Material):
     color: LinearRgba = LinearRgba(0.0, 1.0, 0.5, 1.0)
@@ -976,7 +1011,7 @@ check `PREPASS_PIPELINE` first when sharing a file across stages.
 
 In prepass fragments, `NORMAL_PREPASS`, `MOTION_VECTOR_PREPASS` and
 `UNCLIPPED_DEPTH_ORTHO_EMULATION` determine the outputs. `PREPASS_FRAGMENT`
-enables `prepass_io::FragmentOutput`; a depth-only or shadow fragment can have
+enables `bevy_pbr::prepass::io::FragmentOutput`; a depth-only or shadow fragment can have
 no color output and return nothing. Providing `prepass_fragment_shader` runs
 that fragment even for an opaque depth-only pass, allowing custom `discard`.
 Match the forward cutout in every relevant pass. Ordinary blend transparency
@@ -985,7 +1020,7 @@ does not acquire opaque prepass participation just by providing a hook.
 Animated vertex deformation must provide **current and previous** positions.
 Use the current object transform for the current deformation and
 `mesh_functions::get_previous_world_from_local` for the previous deformation;
-the prepass fragment can use `pbr_prepass_functions::calculate_motion_vector`.
+the prepass fragment can use `bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector`.
 Keep the previous animation parameters yourself. Camera/object transform
 history alone cannot recover an arbitrary shader's previous shape.
 Matching depth and motion are prerequisites for correct depth effects and
@@ -993,7 +1028,7 @@ motion blur. `MotionBlur` (see the [camera guide](camera.md#motion-blur))
 consumes motion vectors and `DepthOfField` (see
 [depth of field](camera.md#depth-of-field)) reads depth; TAA is not wrapped yet
 (see the [anti-aliasing notes](camera.md#anti-aliasing-msaa)). You can also read
-motion vectors yourself with `bevy_pbr::prepass_utils::prepass_motion_vector` in a forward
+motion vectors yourself with `bevy_pbr::prepass::utils::prepass_motion_vector` in a forward
 fragment on a camera with `MotionVectorPrepass()`, or through a
 [TensorPass](tensor-pass.md#g-buffer-and-motion-input-bundles) motion input.
 Shader displacement still does not update CPU culling bounds;
@@ -1001,7 +1036,7 @@ use conservative mesh bounds or `NoFrustumCulling()` where appropriate.
 
 ### Complete prepass template
 
-One file, four entry points: displacement plus alpha cutout. The same WGSL
+One file, four entry points: displacement plus alpha cutout. The same WESL
 file is the forward vertex and fragment and the prepass vertex and fragment,
 so depth, normals, motion vectors and shadows see the displaced, cut-out shape
 that the forward pass draws.
@@ -1017,7 +1052,7 @@ from pybevy.material import AlphaMode, TextureBinding, material
 from pybevy.pbr import Material, StandardMaterial
 from pybevy.time import Time
 
-SHADER = "shaders/my_cutout.wgsl"
+SHADER = "shaders/my_cutout.wesl"
 
 @material(
     vertex_shader=SHADER,
@@ -1053,32 +1088,29 @@ def animate(
 ```
 
 Keep the material handles in a resource when adding the materials, and add
-`animate` to `Update`. `assets/shaders/my_cutout.wgsl`:
+`animate` to `Update`. `assets/shaders/my_cutout.wesl`:
 
-```wgsl
-// Forward vertex/fragment when PREPASS_PIPELINE is undefined; prepass
-// vertex/fragment (depth, normal, motion-vector and shadow passes) when defined.
-#import bevy_pbr::{
+```wesl
+// Forward vertex/fragment when PREPASS_PIPELINE is off; prepass
+// vertex/fragment (depth, normal, motion-vector and shadow passes) when on.
+import bevy_pbr::render::{
     mesh_functions,
     view_transformations::position_world_to_clip,
-}
-#import pybevy::gen::MyCutout as params
+};
+import pybevy::gen::MyCutout as params;
 
-#ifdef PREPASS_PIPELINE
-#import bevy_pbr::prepass_io::{Vertex, VertexOutput}
-#ifdef PREPASS_FRAGMENT
-#import bevy_pbr::prepass_io::FragmentOutput
-#endif
-#ifdef MOTION_VECTOR_PREPASS
-#import bevy_pbr::pbr_prepass_functions::calculate_motion_vector
-#endif
-#else
-#import bevy_pbr::{
+@if(PREPASS_PIPELINE)
+import bevy_pbr::prepass::io::{Vertex, VertexOutput};
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+import bevy_pbr::prepass::io::FragmentOutput;
+@if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS)
+import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
+@if(!PREPASS_PIPELINE)
+import bevy_pbr::render::{
     forward_io::{Vertex, VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
-}
-#endif
+};
 
 // Keep equal to the AlphaMode.Mask cutoff used by the forward alpha_discard.
 const CUTOFF: f32 = 0.5;
@@ -1090,11 +1122,10 @@ fn displace(world: vec3<f32>, local: vec3<f32>, t: f32) -> vec3<f32> {
 }
 
 fn surface_alpha(in: VertexOutput) -> f32 {
-#ifdef VERTEX_UVS_A
+    @if(VERTEX_UVS_A)
     return textureSample(params::mask, params::mask_sampler, in.uv).a;
-#else
+    @else
     return 1.0;
-#endif
 }
 
 @vertex
@@ -1110,99 +1141,86 @@ fn vertex(vin: Vertex) -> VertexOutput {
     out.world_position = vec4(world, 1.0);
     out.position = position_world_to_clip(world);
 
-#ifdef VERTEX_UVS_A
+    @if(VERTEX_UVS_A)
     out.uv = vin.uv;
-#endif
-#ifdef VERTEX_UVS_B
+    @if(VERTEX_UVS_B)
     out.uv_b = vin.uv_b;
-#endif
-#ifdef VERTEX_COLORS
+    @if(VERTEX_COLORS)
     out.color = vin.color;
-#endif
-#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     out.instance_index = vin.instance_index;
-#endif
 
-#ifdef PREPASS_PIPELINE
-    // prepass_io declares normals only for normal or deferred prepasses.
-#ifdef NORMAL_PREPASS_OR_DEFERRED_PREPASS
-#ifdef VERTEX_NORMALS
+    // The prepass VertexOutput has normals only for normal or deferred prepasses.
+    @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vin.normal, vin.instance_index);
-#endif
-#endif
-#ifdef MOTION_VECTOR_PREPASS
     // The previous shape needs the previous transform and the previous time.
-    let previous_from_local = mesh_functions::get_previous_world_from_local(vin.instance_index);
-    let previous = displace(
-        mesh_functions::mesh_position_local_to_world(previous_from_local, local).xyz,
-        vin.position,
-        params::material.prev_time
-    );
-    out.previous_world_position = vec4(previous, 1.0);
-#endif
-#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) {
+        let previous_from_local = mesh_functions::get_previous_world_from_local(vin.instance_index);
+        let previous = displace(
+            mesh_functions::mesh_position_local_to_world(previous_from_local, local).xyz,
+            vin.position,
+            params::material.prev_time
+        );
+        out.previous_world_position = vec4(previous, 1.0);
+    }
     // Directional shadow maps on GPUs without depth-clip control.
-    out.unclipped_depth = out.position.z;
-    out.position.z = min(out.position.z, 1.0);
-#endif
-#else
-#ifdef VERTEX_NORMALS
+    @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {
+        out.unclipped_depth = out.position.z;
+        out.position.z = min(out.position.z, 1.0);
+    }
+    @if(!PREPASS_PIPELINE && VERTEX_NORMALS)
     out.world_normal = mesh_functions::mesh_normal_local_to_world(vin.normal, vin.instance_index);
-#endif
-#ifdef VERTEX_TANGENTS
+    @if(!PREPASS_PIPELINE && VERTEX_TANGENTS)
     out.world_tangent = mesh_functions::mesh_tangent_local_to_world(
         world_from_local,
         vin.tangent,
         vin.instance_index
     );
-#endif
-#endif
     return out;
 }
 
-#ifndef PREPASS_PIPELINE
+// Forward pass: performs the AlphaMode.Mask discard.
+@if(!PREPASS_PIPELINE)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     let color = vec4(pbr_input.material.base_color.rgb, surface_alpha(in));
-    // Performs the AlphaMode.Mask discard.
-    pbr_input.material.base_color = alpha_discard(pbr_input.material, color);
+    pbr_input.material.base_color = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        color,
+    );
     var out: FragmentOutput;
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     return out;
 }
-#else
-#ifdef PREPASS_FRAGMENT
 // Normal and motion-vector prepasses, and shadows that need unclipped depth.
+@elif(PREPASS_FRAGMENT)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     if surface_alpha(in) < CUTOFF {
         discard;
     }
     var out: FragmentOutput;
-#ifdef NORMAL_PREPASS
-    let normal = normalize(in.world_normal);
-    out.normal = vec4(select(-normal, normal, is_front) * 0.5 + 0.5, 1.0);
-#endif
-#ifdef MOTION_VECTOR_PREPASS
+    @if(NORMAL_PREPASS) {
+        let normal = normalize(in.world_normal);
+        out.normal = vec4(select(-normal, normal, is_front) * 0.5 + 0.5, 1.0);
+    }
+    @if(MOTION_VECTOR_PREPASS)
     out.motion_vector = calculate_motion_vector(in.world_position, in.previous_world_position);
-#endif
-#ifdef UNCLIPPED_DEPTH_ORTHO_EMULATION
+    @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
     out.frag_depth = in.unclipped_depth;
-#endif
     return out;
 }
-#else
 // Depth-only and shadow passes have no color outputs.
+@else
 @fragment
 fn fragment(in: VertexOutput) {
     if surface_alpha(in) < CUTOFF {
         discard;
     }
 }
-#endif
-#endif
 ```
 
 Rules of thumb:
@@ -1214,8 +1232,9 @@ Rules of thumb:
    `globals` declared as in [Bevy Globals in Shaders](#bevy-globals-in-shaders).
    Motion vectors also need the previous value, so keep a `prev_time` field (or
    the previous animation parameters) and update it before the current value.
-3. Guard every `Vertex` and `VertexOutput` field with the `#ifdef` that
-   declares it in `bevy_pbr::prepass_io` or `forward_io`; they differ. Prepass
+3. Guard every `Vertex` and `VertexOutput` field with the `@if` that
+   declares it in `bevy_pbr::prepass::io` or `bevy_pbr::render::forward_io`;
+   they differ. Prepass
    normals need both `NORMAL_PREPASS_OR_DEFERRED_PREPASS` and `VERTEX_NORMALS`,
    and `previous_world_position` exists only under `MOTION_VECTOR_PREPASS`.
 4. Without `prepass_fragment_shader`, the prepass uses Bevy's default fragment,
@@ -1223,7 +1242,7 @@ Rules of thumb:
 5. `textureSample` needs uniform control flow. Inside a branch or loop that
    depends on per-fragment values, use `textureSampleLevel`.
 6. This template does not handle skinned or morph-target meshes; start from
-   Bevy's `prepass.wgsl` and mesh vertex flow for those. It also does not write
+   Bevy's `bevy_pbr/src/prepass/prepass.wesl` and mesh vertex flow for those. It also does not write
    `DEFERRED_PREPASS` outputs; deferred rendering uses the `deferred_*` hooks.
 
 ### Grouping Parameters
@@ -1232,7 +1251,7 @@ One `@material` class defines one flat material bind group shared by its
 shader stages. Nested classes and dataclasses are not supported as material fields.
 Keep related values together by declaration order and use descriptive prefixes
 such as `wave_amplitude`, `wave_frequency`, and `surface_color`. The generated
-WGSL module preserves the Python declaration order and corresponding WGSL types.
+WESL module preserves the Python declaration order and corresponding WGSL types.
 
 Uniform fields occupy binding 100. A `bool` is a shader definition rather than
 uniform data, and each `Handle[Image] | None` field uses a separate texture and
@@ -1243,9 +1262,9 @@ The decorator does not expose additional custom bind groups.
 
 For materials that don't use PBR lighting:
 
-```wgsl
-#import bevy_pbr::forward_io::VertexOutput
-#import pybevy::gen::MyMaterial as params
+```wesl
+import bevy_pbr::render::forward_io::VertexOutput;
+import pybevy::gen::MyMaterial as params;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -1266,7 +1285,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 `StandardMaterial.emissive_exposure_weight` into the alpha channel of the
 material's `emissive` value, and `apply_pbr_lighting` computes:
 
-```wgsl
+```wesl
 emissive_light = emissive.rgb * mix(1.0, view.exposure, emissive.a);
 ```
 
@@ -1291,30 +1310,28 @@ Two consequences for a PBR extension shader:
 
 ## Shader Defs (bool fields)
 
-Bool fields become compile-time `#ifdef` directives instead of uniform data:
+Bool fields become compile-time `@if` conditions instead of uniform data:
 
 ```python
-@material(fragment_shader="shaders/character.wgsl")
+@material(fragment_shader="shaders/character.wesl")
 class CharacterMaterial(Material):
     color: LinearRgba = LinearRgba(1.0, 1.0, 1.0, 1.0)
-    is_highlighted: bool = False  # enables #ifdef IS_HIGHLIGHTED
-    is_damaged: bool = False      # enables #ifdef IS_DAMAGED
+    is_highlighted: bool = False  # enables @if(IS_HIGHLIGHTED)
+    is_damaged: bool = False      # enables @if(IS_DAMAGED)
 ```
 
 In WGSL:
-```wgsl
-#import bevy_pbr::forward_io::VertexOutput
-#import pybevy::gen::CharacterMaterial as params
+```wesl
+import bevy_pbr::render::forward_io::VertexOutput;
+import pybevy::gen::CharacterMaterial as params;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = params::material.color;
-#ifdef IS_HIGHLIGHTED
+    @if(IS_HIGHLIGHTED)
     color = mix(color, vec4(1.0, 0.9, 0.3, 1.0), 0.5);
-#endif
-#ifdef IS_DAMAGED
+    @if(IS_DAMAGED)
     color = mix(color, vec4(1.0, 0.0, 0.0, 1.0), 0.3);
-#endif
     return color;
 }
 ```
@@ -1335,7 +1352,7 @@ Up to 4 `Handle[Image] | None` fields map to texture/sampler bindings:
 from pybevy.assets import Handle
 from pybevy.image import Image
 
-@material(fragment_shader="shaders/terrain.wgsl")
+@material(fragment_shader="shaders/terrain.wesl")
 class TerrainMaterial(Material):
     blend_sharpness: float = 2.0
     grass: Handle[Image] | None = None  # slot 0: bindings 101/102
@@ -1368,9 +1385,9 @@ materials reject writes. A returned handle is an ordinary strong handle that
 stays valid after the system and keeps its image alive.
 
 In WGSL:
-```wgsl
-#import bevy_pbr::forward_io::VertexOutput
-#import pybevy::gen::TerrainMaterial as params
+```wesl
+import bevy_pbr::render::forward_io::VertexOutput;
+import pybevy::gen::TerrainMaterial as params;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -1393,8 +1410,8 @@ commands.spawn(Mesh3d(mesh), MeshMaterial3d(material), MeshTag(3))
 
 Read it from a fragment shader whose input is `VertexOutput`:
 
-```wgsl
-#import bevy_pbr::mesh_functions
+```wesl
+import bevy_pbr::render::mesh_functions;
 
 let tag = mesh_functions::get_tag(in.instance_index);
 ```
@@ -1445,7 +1462,7 @@ example `mat.color = LinearRgba(1.0, 0.0, 0.0, 0.25)`.
 | 108     | sampler_3    | `sampler`                 |
 | 109     | opt-in storage | `var<storage, read>` vec4 array |
 
-All bindings are at `@group(#{MATERIAL_BIND_GROUP})` (the material bind group).
+All bindings are at `@group(constants::MATERIAL_BIND_GROUP)` (the material bind group).
 Unused texture slots automatically get Bevy's 1x1 white fallback texture.
 
 ## Bevy Globals in Shaders
@@ -1453,15 +1470,16 @@ Unused texture slots automatically get Bevy's 1x1 white fallback texture.
 Bevy's `globals` (`time`, `delta_time`, `frame_count`) are available without
 custom uniforms, but the declaration depends on the pass:
 
-```wgsl
-#ifdef PREPASS_PIPELINE
-#import bevy_render::globals::Globals
+```wesl
+@if(PREPASS_PIPELINE)
+import bevy_render::globals::Globals;
+@else
+import bevy_pbr::render::mesh_view_bindings::globals;
+import bevy_pbr::render::forward_io::VertexOutput;
+
 // Prepass, shadow and deferred views bind Globals here; no Bevy module declares it.
+@if(PREPASS_PIPELINE)
 @group(0) @binding(1) var<uniform> globals: Globals;
-#else
-#import bevy_pbr::mesh_view_bindings::globals
-#endif
-#import bevy_pbr::forward_io::VertexOutput
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -1470,15 +1488,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 ```
 
-Copy the `#ifdef` block to the top of any file that also serves as a
+Copy the `@if(PREPASS_PIPELINE)` imports and declaration into any file that also serves as a
 `prepass_*` or `deferred_*` stage. The forward view binds `globals` at
 binding 11 through `mesh_view_bindings`. The prepass/shadow view layout binds
-the same uniform at binding 1, but `bevy_pbr::prepass_bindings` declares only
+the same uniform at binding 1, but `bevy_pbr::prepass::bindings` declares only
 `previous_view_uniforms`. Importing `mesh_view_bindings::globals` into a
 prepass stage compiles, then fails pipeline creation because binding 11 is not
 in that layout. The whole frame, not just that mesh, can then
 render black; `get_last_error` names the failing pipeline under
-`wgpu_validation`. A shader that does not compile, such as a WGSL syntax error,
+`wgpu_validation`. A shader that does not compile, such as a WESL syntax error,
 is listed under `get_last_error.shader_errors` instead.
 
 Alternatively, add a `time: float` material field and set it from Python each
@@ -1548,6 +1566,6 @@ unsupported material types raise `TypeError`. Raw ordered `shader_def_names` and
 
 See `examples/bevy/shaders/` for complete working examples:
 - `shader_material.py` - basic uniform tint + emissive
-- `shader_defs.py` - bool fields enable `#ifdef` conditional compilation
+- `shader_defs.py` - bool fields enable `@if` conditional compilation
 - `extended_material.py` - PBR extension with posterize effect
 - `animate_shader.py` - time-based animation via `globals.time`

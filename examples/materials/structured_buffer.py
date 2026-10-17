@@ -9,7 +9,7 @@ from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import ShaderBuffer
 
-SHADER_PATH = "shaders/examples/structured_buffer.wgsl"
+SHADER_PATH = "shaders/examples/structured_buffer.wesl"
 RECORD_COUNT = 7
 
 

@@ -1,7 +1,4 @@
-use bevy::{
-    math::{Vec2, primitives::Polyline2d},
-    mesh::Meshable,
-};
+use bevy::{math::Vec2, mesh::Meshable, shape::Polyline2d};
 use pybevy_core::{
     domain::{IntegerInput, NON_NEGATIVE, check_for},
     public_error::polyline_mesh_too_short,

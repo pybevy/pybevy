@@ -1,4 +1,5 @@
-use bevy::math::{Vec3, primitives::Polyline3d};
+use bevy::math::Vec3;
+use bevy::shape::Polyline3d;
 use pybevy_core::{
     domain::{IntegerInput, NON_NEGATIVE, check_for},
     public_error::polyline_mesh_too_short,

@@ -559,13 +559,17 @@ pub unsafe fn gather_table_batches_from_cell(
             // its first `table_entity_count` bytes, not the rows read below.
             // SAFETY: the range check above proves the table holds row 0, and
             // the caller owns scheduler access to this declared component for
-            // the returned pointer's lifetime.
-            let pointer =
-                unsafe { table.get_component(component_id, TableRow::new(NonMaxU32::ZERO)) }
+            // the returned pointer's lifetime. Column storage is valid for
+            // writes, and only components declared mutable are written through.
+            let pointer = unsafe {
+                table
+                    .get_component(component_id, TableRow::new(NonMaxU32::ZERO))
                     .ok_or(ViewEngineError::SparseDataComponentUnsupported(
                         component_id,
                     ))?
-                    .as_ptr();
+                    .assert_unique()
+            }
+            .as_ptr();
             component_bases.insert(component_id, pointer);
         }
 

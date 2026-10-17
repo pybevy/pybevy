@@ -13,7 +13,10 @@ use bevy::{
     ecs::{
         component::ComponentId,
         event::{EntityComponentsTrigger, EventKey},
-        lifecycle::{ADD, DESPAWN, DISCARD, INSERT, REMOVE},
+        lifecycle::{
+            ADD, AddEvent, DESPAWN, DISCARD, DespawnEvent, DiscardEvent, INSERT, InsertEvent,
+            REMOVE, RemoveEvent,
+        },
         observer::{ObserverRunner, TriggerContext},
         ptr::PtrMut,
         world::DeferredWorld,
@@ -61,20 +64,20 @@ fn lifecycle_name(event_key: EventKey) -> &'static str {
 /// `event` must be the event value identified by `event_key`.
 unsafe fn lifecycle_target(event_key: EventKey, event: &PtrMut<'_>) -> Entity {
     if event_key == ADD {
-        // SAFETY: the ADD event key guarantees an Add value.
-        unsafe { event.as_ref().deref::<Add>() }.entity
+        // SAFETY: the ADD event key guarantees an AddEvent value.
+        unsafe { event.as_ref().deref::<AddEvent>() }.entity
     } else if event_key == INSERT {
-        // SAFETY: the INSERT event key guarantees an Insert value.
-        unsafe { event.as_ref().deref::<Insert>() }.entity
+        // SAFETY: the INSERT event key guarantees an InsertEvent value.
+        unsafe { event.as_ref().deref::<InsertEvent>() }.entity
     } else if event_key == DISCARD {
-        // SAFETY: the DISCARD event key guarantees a Discard value.
-        unsafe { event.as_ref().deref::<Discard>() }.entity
+        // SAFETY: the DISCARD event key guarantees a DiscardEvent value.
+        unsafe { event.as_ref().deref::<DiscardEvent>() }.entity
     } else if event_key == REMOVE {
-        // SAFETY: the REMOVE event key guarantees a Remove value.
-        unsafe { event.as_ref().deref::<Remove>() }.entity
+        // SAFETY: the REMOVE event key guarantees a RemoveEvent value.
+        unsafe { event.as_ref().deref::<RemoveEvent>() }.entity
     } else if event_key == DESPAWN {
-        // SAFETY: the DESPAWN event key guarantees a Despawn value.
-        unsafe { event.as_ref().deref::<Despawn>() }.entity
+        // SAFETY: the DESPAWN event key guarantees a DespawnEvent value.
+        unsafe { event.as_ref().deref::<DespawnEvent>() }.entity
     } else {
         panic!("observer invariant runner received a non-lifecycle event key")
     }
@@ -333,7 +336,9 @@ fn deferred_world_reads_old_value_but_queued_world_runs_after_deletion() {
 #[test]
 fn native_observer_rejects_exclusive_world_parameter() {
     let result = catch_unwind(AssertUnwindSafe(|| {
-        Observer::new(|_: On<Add, LifecycleA>, _world: &mut World| {});
+        let mut world = World::new();
+        world.add_observer(|_: On<Add<LifecycleA>>, _world: &mut World| {});
+        world.flush();
     }));
     assert!(result.is_err());
 }

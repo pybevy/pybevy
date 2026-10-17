@@ -4,11 +4,11 @@ use bevy::{
         schedule::IntoScheduleConfigs,
         system::{Query, Res, ResMut},
     },
-    pbr::{BinUnpackingBindGroups, ViewKeyCache, ViewKeyPrepassCache},
+    pbr::{BinUnpackingBindGroups, ViewKeyPrepassCache},
     platform::collections::{HashMap, HashSet},
     render::{
         Render, RenderApp, RenderSystems,
-        batching::gpu_preprocessing::{BinUnpackingBuffers, BinUnpackingBuffersKey},
+        batching::gpu_preprocessing::{SceneUnpackingBuffers, SceneUnpackingBuffersKey},
         view::ExtractedView,
     },
 };
@@ -31,34 +31,28 @@ impl Plugin for RenderCacheCleanupPlugin {
 
 fn prune_view_keys(
     views: Query<&ExtractedView>,
-    keys: Option<ResMut<ViewKeyCache>>,
     prepass_keys: Option<ResMut<ViewKeyPrepassCache>>,
 ) {
-    if keys.is_none() && prepass_keys.is_none() {
+    let Some(mut keys) = prepass_keys else {
         return;
-    }
+    };
     let live: HashSet<_> = views.iter().map(|view| view.retained_view_entity).collect();
-    if let Some(mut keys) = keys {
-        keys.retain(|view, _| live.contains(view));
-    }
-    if let Some(mut keys) = prepass_keys {
-        keys.retain(|view, _| live.contains(view));
-    }
+    keys.retain(|view, _| live.contains(view));
 }
 
 fn prune_bin_bind_groups(
-    buffers: Option<Res<BinUnpackingBuffers>>,
+    buffers: Option<Res<SceneUnpackingBuffers>>,
     groups: Option<ResMut<BinUnpackingBindGroups>>,
 ) {
     if let (Some(buffers), Some(mut groups)) = (buffers, groups) {
-        // Bevy 0.19.1 prunes the buffers but leaves their bind groups alive.
+        // Bevy 0.20.0 prunes the buffers but leaves their bind groups alive.
         retain_buffer_keys(&buffers, &mut groups);
     }
 }
 
 fn retain_buffer_keys<T>(
-    buffers: &BinUnpackingBuffers,
-    groups: &mut HashMap<BinUnpackingBuffersKey, T>,
+    buffers: &SceneUnpackingBuffers,
+    groups: &mut HashMap<SceneUnpackingBuffersKey, T>,
 ) {
     groups.retain(|key, _| buffers.view_phase_buffers.contains_key(key));
 }

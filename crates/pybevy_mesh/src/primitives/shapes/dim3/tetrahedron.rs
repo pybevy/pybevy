@@ -1,9 +1,7 @@
 use bevy::{
-    math::{
-        Vec3,
-        primitives::{Measured3d, Tetrahedron},
-    },
+    math::Vec3,
     mesh::Meshable,
+    shape::{Measured3d, Tetrahedron},
 };
 use pybevy_core::repr::ReprLiteral;
 use pybevy_macros::pyconstructor;

@@ -5,15 +5,15 @@ from typing import ClassVar, Literal
 
 from pybevy.assets import Asset
 from pybevy.assets import Handle as AssetHandle
-from pybevy.render import ShaderStage
 
 class ShaderImport:
     """
     Represents a shader import path.
 
     Shader imports can be either:
-    - Asset paths: References to shader files in the asset system (e.g., "shaders/utils.wgsl")
-    - Custom: Named module imports (e.g., "bevy_pbr::utils")
+    - Asset paths: References to shader files in the asset system (e.g., "/shaders/utils"
+      for the WESL asset "shaders/utils.wesl")
+    - Custom: Named WESL package modules (e.g., "bevy_pbr::render::utils")
     """
 
     def __copy__(self) -> ShaderImport: ...
@@ -58,10 +58,11 @@ class ValidateShader:
 
 class ShaderDefVal:
     """
-    Shader preprocessor definition value.
+    Shader definition value for WESL conditional compilation.
 
-    Used to define conditional compilation directives in shaders,
-    similar to C preprocessor #define directives.
+    ``Bool`` definitions are ``@if`` feature flags; ``Int`` and ``UInt``
+    definitions are readable as ``constants::NAME`` and also enable the flag
+    of the same name.
 
     Example:
         ```python
@@ -143,7 +144,7 @@ class ShaderRef:
         shader_ref = ShaderRef.Handle(shader_handle)
 
         # Reference by path
-        shader_ref = ShaderRef.Path("shaders/custom.wgsl")
+        shader_ref = ShaderRef.Path("shaders/custom.wesl")
         ```
     """
 
@@ -186,60 +187,6 @@ class Source:
         def value(self) -> str: ...
         def __init__(self, value: str) -> None: ...
 
-    class GlslVertex(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslTask(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslMesh(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslRayGeneration(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslMiss(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslAnyHit(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslClosestHit(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslFragment(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
-    class GlslCompute(Source):
-        __match_args__: ClassVar[tuple[Literal["value"]]]
-        @property
-        def value(self) -> str: ...
-        def __init__(self, value: str) -> None: ...
-
     class SpirV(Source):
         __match_args__: ClassVar[tuple[Literal["value"]]]
         @property
@@ -259,7 +206,10 @@ class Source:
 
 class Shader(Asset):
     """
-    A shader asset containing WGSL, GLSL, or SPIR-V source code.
+    A shader asset containing WGSL, WESL, or SPIR-V source code.
+
+    WESL assets (``.wesl``) are composed with ``import`` statements and
+    ``@if`` conditional compilation; plain WGSL is passed through unprocessed.
 
     Shaders define how vertices and pixels are processed during rendering.
     Use this class to create custom rendering effects and materials.
@@ -311,8 +261,10 @@ class Shader(Asset):
         """
         Create a new shader from WGSL source code with shader definitions.
 
-        Shader definitions allow conditional compilation of shaders based on
-        runtime values, similar to C preprocessor #define directives.
+        Bevy composes and applies shader definitions only for WESL modules,
+        where boolean definitions drive ``@if`` attributes and integer
+        definitions are readable as ``constants::NAME``. A WGSL source is
+        passed through unprocessed, so these definitions do not change it.
 
         Args:
             source: WGSL shader source code
@@ -325,40 +277,11 @@ class Shader(Asset):
         Example:
             ```python
             shader = Shader.from_wgsl_with_defs('''
-                #ifdef ENABLE_FEATURE
-                const ITERATIONS: u32 = #{ITERATIONS};
-                #endif
+                const ITERATIONS: u32 = 10u;
             ''', "custom_shader", [
                 ShaderDefVal.Bool("ENABLE_FEATURE", True),
                 ShaderDefVal.Int("ITERATIONS", 10),
             ])
-            ```
-        """
-
-    @staticmethod
-    def from_glsl(source: str, stage: ShaderStage, path: str) -> Shader:
-        """
-        Create a new shader from GLSL source code.
-
-        Args:
-            source: GLSL shader source code
-            stage: Pipeline stage the source belongs to
-            path: Shader path/name for debugging
-
-        Returns:
-            New Shader instance
-
-        Example:
-            ```python
-            from pybevy.shader import Shader
-            from pybevy.render import ShaderStage
-
-            shader = Shader.from_glsl('''
-                #version 450
-                void main() {
-                    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
-                }
-            ''', ShaderStage.Fragment, "custom_shader")
             ```
         """
 
@@ -370,6 +293,24 @@ class Shader(Asset):
         Args:
             source: SPIR-V shader bytecode
             path: Shader path/name for debugging
+
+        Returns:
+            New Shader instance
+        """
+
+    @staticmethod
+    def from_wesl(source: str, path: str) -> Shader:
+        """
+        Create a new shader from WESL source code.
+
+        WESL is WGSL with imports (`import a::b;`) and conditional compilation
+        (`@if(FLAG)`). The path sets the module path other shaders import:
+        `embedded://crate/dir/file.wesl` is `crate::dir::file`, any other path is
+        imported by its asset path.
+
+        Args:
+            source: WESL shader source code
+            path: Shader path, which also determines its import path
 
         Returns:
             New Shader instance

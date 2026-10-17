@@ -1,4 +1,5 @@
 use bevy::math::{Mat4, Vec3, Vec4};
+use glam::camera::{lh, rh};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     domain::{POSITIVE, check_for},
@@ -288,7 +289,7 @@ impl PyMat4 {
         check_for::<Self, _>("z_far", z_far, POSITIVE)?;
         finite_projection(
             "perspective_lh",
-            Mat4::perspective_lh(fov_y_radians, aspect_ratio, z_near, z_far),
+            lh::proj::directx::perspective(fov_y_radians, aspect_ratio, z_near, z_far),
         )
     }
 
@@ -303,7 +304,7 @@ impl PyMat4 {
         check_for::<Self, _>("z_far", z_far, POSITIVE)?;
         finite_projection(
             "perspective_rh",
-            Mat4::perspective_rh(fov_y_radians, aspect_ratio, z_near, z_far),
+            rh::proj::directx::perspective(fov_y_radians, aspect_ratio, z_near, z_far),
         )
     }
 
@@ -316,7 +317,7 @@ impl PyMat4 {
         check_for::<Self, _>("z_near", z_near, POSITIVE)?;
         finite_projection(
             "perspective_infinite_reverse_rh",
-            Mat4::perspective_infinite_reverse_rh(fov_y_radians, aspect_ratio, z_near),
+            rh::proj::directx::perspective_infinite_reverse(fov_y_radians, aspect_ratio, z_near),
         )
     }
 
@@ -331,7 +332,7 @@ impl PyMat4 {
     ) -> PyResult<Self> {
         finite_projection(
             "orthographic_lh",
-            Mat4::orthographic_lh(left, right, bottom, top, near, far),
+            lh::proj::directx::orthographic(left, right, bottom, top, near, far),
         )
     }
 
@@ -346,32 +347,32 @@ impl PyMat4 {
     ) -> PyResult<Self> {
         finite_projection(
             "orthographic_rh",
-            Mat4::orthographic_rh(left, right, bottom, top, near, far),
+            rh::proj::directx::orthographic(left, right, bottom, top, near, far),
         )
     }
 
     #[staticmethod]
     pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(PyMat4::mat4(Mat4::look_to_lh(eye, dir, up)))
+        Ok(PyMat4::mat4(lh::view::look_to_mat4(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(PyMat4::mat4(Mat4::look_to_rh(eye, dir, up)))
+        Ok(PyMat4::mat4(rh::view::look_to_mat4(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_to_lh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
-        Ok(PyMat4::mat4(Mat4::look_to_lh(eye, dir, up)))
+        Ok(PyMat4::mat4(lh::view::look_to_mat4(eye, dir, up)))
     }
 
     #[staticmethod]
     pub fn look_to_rh(eye: &PyVec3, dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (eye, dir, up) = look_to_inputs(eye, dir, up)?;
-        Ok(PyMat4::mat4(Mat4::look_to_rh(eye, dir, up)))
+        Ok(PyMat4::mat4(rh::view::look_to_mat4(eye, dir, up)))
     }
 
     pub fn col(&self, index: isize) -> PyResult<PyVec4> {
@@ -646,7 +647,7 @@ impl PyMat4 {
         check_for::<Self, _>("z_near", z_near, POSITIVE)?;
         finite_projection(
             "perspective_infinite_lh",
-            Mat4::perspective_infinite_lh(fov_y_radians, aspect_ratio, z_near),
+            lh::proj::directx::perspective_infinite(fov_y_radians, aspect_ratio, z_near),
         )
     }
 
@@ -659,7 +660,7 @@ impl PyMat4 {
         check_for::<Self, _>("z_near", z_near, POSITIVE)?;
         finite_projection(
             "perspective_infinite_rh",
-            Mat4::perspective_infinite_rh(fov_y_radians, aspect_ratio, z_near),
+            rh::proj::directx::perspective_infinite(fov_y_radians, aspect_ratio, z_near),
         )
     }
 
@@ -672,7 +673,7 @@ impl PyMat4 {
         check_for::<Self, _>("z_near", z_near, POSITIVE)?;
         finite_projection(
             "perspective_infinite_reverse_lh",
-            Mat4::perspective_infinite_reverse_lh(fov_y_radians, aspect_ratio, z_near),
+            lh::proj::directx::perspective_infinite_reverse(fov_y_radians, aspect_ratio, z_near),
         )
     }
 }

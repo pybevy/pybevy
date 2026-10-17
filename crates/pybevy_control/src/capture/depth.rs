@@ -1,8 +1,9 @@
 use bevy::{
     camera::{Projection, RenderTarget, primitives::Aabb, visibility::RenderLayers},
     ecs::{entity::Entity, name::Name, world::World},
-    math::{Ray3d, UVec2, Vec3},
+    math::{UVec2, Vec3},
     prelude::*,
+    shape::Ray3d,
     window::PrimaryWindow,
 };
 use tokio::sync::oneshot;

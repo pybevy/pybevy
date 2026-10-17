@@ -1,7 +1,8 @@
 use bevy::{
     color::{
-        Alpha, Color, Hsla, Hsva, Hue, Hwba, Laba, Lcha, LinearRgba, Luminance, Mix, Oklaba,
-        Oklcha, Saturation, Srgba, Xyza, color_difference::EuclideanDistance,
+        Alpha, Color, Hsla, Hsva, Hue, Hwba, Laba, Lcha, LinearRgba, Luminance, Mix, Okhsla,
+        Okhsva, Okhwba, Oklaba, Oklcha, Saturation, Srgba, Xyza,
+        color_difference::EuclideanDistance,
     },
     ecs::{component::Component, resource::Resource},
     math::TryStableInterpolate,
@@ -23,7 +24,8 @@ use pyo3::{
 
 use super::{
     hsla::PyHsla, hsva::PyHsva, hwba::PyHwba, laba::PyLaba, lcha::PyLcha,
-    linear_rgba::PyLinearRgba, oklaba::PyOklaba, oklcha::PyOklcha, srgba::PySrgba, xyza::PyXyza,
+    linear_rgba::PyLinearRgba, okhsla::PyOkhsla, okhsva::PyOkhsva, okhwba::PyOkhwba,
+    oklaba::PyOklaba, oklcha::PyOklcha, srgba::PySrgba, xyza::PyXyza,
 };
 
 #[pyenum(Color, manual)]
@@ -123,6 +125,9 @@ pub fn extract_color_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Color> {
     extract_space!(PyOklaba, Oklaba);
     extract_space!(PyOklcha, Oklcha);
     extract_space!(PyXyza, Xyza);
+    extract_space!(PyOkhsla, Okhsla);
+    extract_space!(PyOkhsva, Okhsva);
+    extract_space!(PyOkhwba, Okhwba);
     Err(PyTypeError::new_err(COLOR_INPUT_TYPES))
 }
 
@@ -138,6 +143,9 @@ enum ColorVariant {
     Oklaba,
     Oklcha,
     Xyza,
+    Okhsla,
+    Okhsva,
+    Okhwba,
 }
 
 impl ColorVariant {
@@ -153,6 +161,9 @@ impl ColorVariant {
             Color::Oklaba(_) => Self::Oklaba,
             Color::Oklcha(_) => Self::Oklcha,
             Color::Xyza(_) => Self::Xyza,
+            Color::Okhsla(_) => Self::Okhsla,
+            Color::Okhsva(_) => Self::Okhsva,
+            Color::Okhwba(_) => Self::Okhwba,
         }
     }
 
@@ -168,6 +179,9 @@ impl ColorVariant {
             Self::Oklaba => "Color.Oklaba",
             Self::Oklcha => "Color.Oklcha",
             Self::Xyza => "Color.Xyza",
+            Self::Okhsla => "Color.Okhsla",
+            Self::Okhsva => "Color.Okhsva",
+            Self::Okhwba => "Color.Okhwba",
         }
     }
 }
@@ -247,6 +261,9 @@ impl PyColor {
             Color::Oklaba(_) => materialize_variant!(PyColorOklaba),
             Color::Oklcha(_) => materialize_variant!(PyColorOklcha),
             Color::Xyza(_) => materialize_variant!(PyColorXyza),
+            Color::Okhsla(_) => materialize_variant!(PyColorOkhsla),
+            Color::Okhsva(_) => materialize_variant!(PyColorOkhsva),
+            Color::Okhwba(_) => materialize_variant!(PyColorOkhwba),
         }
     }
 
@@ -333,6 +350,9 @@ impl PyColor {
             Color::Oklaba(value) => variant_repr!("Oklaba", value, lightness, a, b),
             Color::Oklcha(value) => variant_repr!("Oklcha", value, lightness, chroma, hue),
             Color::Xyza(value) => variant_repr!("Xyza", value, x, y, z),
+            Color::Okhsla(value) => variant_repr!("Okhsla", value, hue, saturation, lightness),
+            Color::Okhsva(value) => variant_repr!("Okhsva", value, hue, saturation, value),
+            Color::Okhwba(value) => variant_repr!("Okhwba", value, hue, whiteness, blackness),
         };
         if ColorVariant::of(&color) != self.expected {
             // Render variant-stale wrappers without bypassing storage validity.
@@ -543,6 +563,54 @@ impl PyColor {
         Self::from_color(Color::xyza(x, y, z, alpha), py)
     }
 
+    #[staticmethod]
+    pub fn okhsl(hue: f32, saturation: f32, lightness: f32, py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_color(Color::okhsl(hue, saturation, lightness), py)
+    }
+
+    #[staticmethod]
+    pub fn okhsla(
+        hue: f32,
+        saturation: f32,
+        lightness: f32,
+        alpha: f32,
+        py: Python<'_>,
+    ) -> PyResult<Py<Self>> {
+        Self::from_color(Color::okhsla(hue, saturation, lightness, alpha), py)
+    }
+
+    #[staticmethod]
+    pub fn okhsv(hue: f32, saturation: f32, value: f32, py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_color(Color::okhsv(hue, saturation, value), py)
+    }
+
+    #[staticmethod]
+    pub fn okhsva(
+        hue: f32,
+        saturation: f32,
+        value: f32,
+        alpha: f32,
+        py: Python<'_>,
+    ) -> PyResult<Py<Self>> {
+        Self::from_color(Color::okhsva(hue, saturation, value, alpha), py)
+    }
+
+    #[staticmethod]
+    pub fn okhwb(hue: f32, whiteness: f32, blackness: f32, py: Python<'_>) -> PyResult<Py<Self>> {
+        Self::from_color(Color::okhwb(hue, whiteness, blackness), py)
+    }
+
+    #[staticmethod]
+    pub fn okhwba(
+        hue: f32,
+        whiteness: f32,
+        blackness: f32,
+        alpha: f32,
+        py: Python<'_>,
+    ) -> PyResult<Py<Self>> {
+        Self::from_color(Color::okhwba(hue, whiteness, blackness, alpha), py)
+    }
+
     pub fn to_linear(&self) -> PyResult<PyLinearRgba> {
         let linear: LinearRgba = self.resolved_copy()?.into();
         Ok(PyLinearRgba::from_owned(linear))
@@ -730,6 +798,9 @@ define_color_variant!(PyColorLcha, "Lcha", Lcha, Lcha, PyLcha);
 define_color_variant!(PyColorOklaba, "Oklaba", Oklaba, Oklaba, PyOklaba);
 define_color_variant!(PyColorOklcha, "Oklcha", Oklcha, Oklcha, PyOklcha);
 define_color_variant!(PyColorXyza, "Xyza", Xyza, Xyza, PyXyza);
+define_color_variant!(PyColorOkhsla, "Okhsla", Okhsla, Okhsla, PyOkhsla);
+define_color_variant!(PyColorOkhsva, "Okhsva", Okhsva, Okhsva, PyOkhsva);
+define_color_variant!(PyColorOkhwba, "Okhwba", Okhwba, Okhwba, PyOkhwba);
 
 pub fn register_color_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = module.py();
@@ -744,5 +815,8 @@ pub fn register_color_variants(module: &Bound<'_, PyModule>) -> PyResult<()> {
     base.setattr("Oklaba", py.get_type::<PyColorOklaba>())?;
     base.setattr("Oklcha", py.get_type::<PyColorOklcha>())?;
     base.setattr("Xyza", py.get_type::<PyColorXyza>())?;
+    base.setattr("Okhsla", py.get_type::<PyColorOkhsla>())?;
+    base.setattr("Okhsva", py.get_type::<PyColorOkhsva>())?;
+    base.setattr("Okhwba", py.get_type::<PyColorOkhwba>())?;
     Ok(())
 }

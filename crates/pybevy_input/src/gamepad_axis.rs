@@ -21,7 +21,7 @@ pub enum PyGamepadAxis {
     RightZ(),
     #[py_bevy(tuple)]
     Other {
-        value: u8,
+        value: u32,
     },
 }
 

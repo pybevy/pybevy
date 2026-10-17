@@ -1,7 +1,5 @@
-use bevy::math::{
-    Vec3,
-    cubic_splines::{CubicNurbs, RationalGenerator},
-};
+use bevy::curve::cubic_splines::{CubicNurbs, RationalGenerator};
+use bevy::math::Vec3;
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{exceptions::PyValueError, prelude::*};
 

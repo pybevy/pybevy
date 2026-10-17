@@ -19,7 +19,7 @@ pybevy_sprite = { workspace = true }
 
 [dependencies.bevy]
 workspace = true
-features = ["bevy_ui", "bevy_image"]
+features = ["bevy_ui", "bevy_ui_widgets", "bevy_picking", "bevy_image"]
 
 [lints]
 workspace = true

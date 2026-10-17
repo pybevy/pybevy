@@ -1,6 +1,6 @@
 use bevy::{
-    math::primitives::{Measured3d, Sphere},
     mesh::Meshable,
+    shape::{Measured3d, Sphere},
 };
 use pybevy_core::repr::float_repr;
 use pybevy_math::{primitives::dimension::dimension, vec3::PyVec3};

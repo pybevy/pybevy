@@ -147,7 +147,7 @@ Integer rectangle arithmetic raises `OverflowError` for out-of-range results; `I
 
 Owned nested UI gradient values and `Isometry2d` vector fields are read-only snapshots; replace the whole parent field to change them. Live accumulated-mouse and `ComputedNode` vector fields write through only with mutable resource/component access and expire at system exit.
 
-Vector payloads of messages, `WindowEvent` variants, `TextEdit` point variants, and `Touch` are also read-only snapshots (for example `CursorMoved.position`, `MouseMotion.delta`, `TouchInput.position`); replace the complete field on an owned message before sending it.
+Vector payloads of messages, `WindowEvent` variants, `TextEdit` point and scroll variants, and `Touch` are also read-only snapshots (for example `CursorMoved.position`, `MouseMotion.delta`, `TouchInput.position`); replace the complete field on an owned message before sending it.
 
 - Primitive dimensions and their corresponding field alternative are mutually exclusive: use `Cuboid(x_length=..., y_length=..., z_length=...)` or `Cuboid(half_size=...)`, not both, even when dimensions equal their defaults.
 - For these dual-form constructors, omit defaulted arguments instead of passing `None`.

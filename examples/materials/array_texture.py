@@ -10,7 +10,7 @@ from pybevy.prelude import *
 from pybevy.render import Extent3d, TextureViewDescriptor, TextureViewDimension
 
 
-@material(fragment_shader="shaders/examples/array_texture.wgsl")
+@material(fragment_shader="shaders/examples/array_texture.wesl")
 class LayeredTiles(Material):
     layers: TextureBinding = TextureBinding(dimension="2d_array")
     layer_offset: float = 0.0

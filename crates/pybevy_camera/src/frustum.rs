@@ -1,4 +1,4 @@
-use bevy::{camera::primitives::Frustum, math::primitives::ViewFrustum};
+use bevy::{camera::primitives::Frustum, shape::ViewFrustum};
 use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pybevy_math::{

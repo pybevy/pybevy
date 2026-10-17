@@ -280,12 +280,14 @@ impl PyImageLoaderSettings {
         *,
         format = Omittable::default(),
         is_srgb = true,
-        sampler = PyImageSampler::from(ImageSampler::Default)
+        sampler = PyImageSampler::from(ImageSampler::Default),
+        expand_grayscale = true
     ))]
     pub fn new(
         format: Omittable<PyRef<'_, PyImageFormatSetting>>,
         is_srgb: bool,
         sampler: PyImageSampler,
+        expand_grayscale: bool,
     ) -> PyResult<Self> {
         Ok(Self::from_owned(ImageLoaderSettings {
             format: format
@@ -298,6 +300,7 @@ impl PyImageLoaderSettings {
             sampler: ImageSampler::try_from(sampler)?,
             asset_usage: RenderAssetUsages::default(),
             array_layout: None,
+            expand_grayscale,
         }))
     }
 
@@ -353,13 +356,29 @@ impl PyImageLoaderSettings {
         Ok(())
     }
 
+    #[getter]
+    pub fn expand_grayscale(&self) -> PyResult<bool> {
+        Ok(self.as_ref()?.expand_grayscale)
+    }
+
+    #[setter]
+    pub fn set_expand_grayscale(&mut self, value: bool) -> PyResult<()> {
+        self.as_mut()?.expand_grayscale = value;
+        Ok(())
+    }
+
     pub fn __repr__(&self) -> PyResult<String> {
         let settings = self.as_ref()?;
         Ok(format!(
-            "ImageLoaderSettings(format={}, is_srgb={}, sampler={})",
+            "ImageLoaderSettings(format={}, is_srgb={}, sampler={}, expand_grayscale={})",
             PyImageFormatSetting::from(settings.format.clone()).__repr__(),
             if settings.is_srgb { "True" } else { "False" },
-            PyImageSampler::from(settings.sampler.clone()).__repr__()?
+            PyImageSampler::from(settings.sampler.clone()).__repr__()?,
+            if settings.expand_grayscale {
+                "True"
+            } else {
+                "False"
+            }
         ))
     }
 }

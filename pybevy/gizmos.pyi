@@ -62,7 +62,8 @@ class GizmoLineConfig:
         width: float = 2.0,
         perspective: bool = False,
         style: GizmoLineStyle = GizmoLineStyle.Solid(),
-        joints: GizmoLineJoint = GizmoLineJoint.None_()
+        joints: GizmoLineJoint = GizmoLineJoint.None_(),
+        animation_offset: float = 0.0
     ) -> None: ...
     @property
     def width(self) -> float: ...
@@ -80,6 +81,10 @@ class GizmoLineConfig:
     def joints(self) -> GizmoLineJoint: ...
     @joints.setter
     def joints(self, value: GizmoLineJoint) -> None: ...
+    @property
+    def animation_offset(self) -> float: ...
+    @animation_offset.setter
+    def animation_offset(self, value: float) -> None: ...
 
 class GizmoConfig:
     def __init__(

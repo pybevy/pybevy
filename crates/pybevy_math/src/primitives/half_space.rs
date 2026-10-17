@@ -1,4 +1,5 @@
-use bevy::math::{Vec4, primitives::HalfSpace};
+use bevy::math::Vec4;
+use bevy::shape::HalfSpace;
 use pybevy_core::{Omittable, repr::ReprLiteral};
 use pyo3::prelude::*;
 

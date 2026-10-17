@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 #[pyresource(
     RemSize,
     bridge,
-    no_reflect,
     no_user_remove,
     domains = [0 as value => [positive, range_inclusive(0.0, 4096.0)]]
 )]

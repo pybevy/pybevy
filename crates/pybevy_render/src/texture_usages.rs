@@ -76,15 +76,15 @@ impl PyTextureUsages {
     }
 
     #[staticmethod]
-    #[pyo3(name = "STORAGE_ATOMIC")]
-    pub fn storage_atomic_flag() -> Self {
-        TextureUsages::STORAGE_ATOMIC.into()
+    #[pyo3(name = "TRANSIENT_ATTACHMENT")]
+    pub fn transient_attachment_flag() -> Self {
+        TextureUsages::TRANSIENT_ATTACHMENT.into()
     }
 
     #[staticmethod]
-    #[pyo3(name = "TRANSIENT")]
-    pub fn transient_flag() -> Self {
-        TextureUsages::TRANSIENT.into()
+    #[pyo3(name = "STORAGE_ATOMIC")]
+    pub fn storage_atomic_flag() -> Self {
+        TextureUsages::STORAGE_ATOMIC.into()
     }
 
     fn __or__(&self, other: &Self) -> PyResult<Self> {
@@ -145,11 +145,11 @@ impl PyTextureUsages {
         if usages.contains(TextureUsages::RENDER_ATTACHMENT) {
             parts.push("RENDER_ATTACHMENT");
         }
+        if usages.contains(TextureUsages::TRANSIENT_ATTACHMENT) {
+            parts.push("TRANSIENT_ATTACHMENT");
+        }
         if usages.contains(TextureUsages::STORAGE_ATOMIC) {
             parts.push("STORAGE_ATOMIC");
-        }
-        if usages.contains(TextureUsages::TRANSIENT) {
-            parts.push("TRANSIENT");
         }
         Ok(if parts.is_empty() {
             "TextureUsages()".to_string()

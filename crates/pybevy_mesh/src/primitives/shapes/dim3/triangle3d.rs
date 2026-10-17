@@ -1,6 +1,6 @@
 use bevy::{
-    math::primitives::{Measured2d, Triangle3d},
     mesh::Meshable,
+    shape::{Measured2d, Triangle3d},
 };
 use pybevy_core::repr::ReprLiteral;
 use pybevy_macros::pyconstructor;

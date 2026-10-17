@@ -1,4 +1,5 @@
 use bevy::math::{Mat3, Vec3};
+use glam::camera::{lh, rh};
 use pybevy_core::{
     FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{UNSUPPORTED_COMPARISON, affine_transform_last_row, euler_axes_not_normalized},
@@ -435,24 +436,24 @@ impl PyMat3 {
     #[staticmethod]
     pub fn look_to_lh(dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (dir, up) = look_to_axes(dir, up)?;
-        Ok(PyMat3::mat3(Mat3::look_to_lh(dir, up)))
+        Ok(PyMat3::mat3(lh::view::look_to_mat3(dir, up)))
     }
 
     #[staticmethod]
     pub fn look_to_rh(dir: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (dir, up) = look_to_axes(dir, up)?;
-        Ok(PyMat3::mat3(Mat3::look_to_rh(dir, up)))
+        Ok(PyMat3::mat3(rh::view::look_to_mat3(dir, up)))
     }
 
     #[staticmethod]
     pub fn look_at_lh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (_, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(PyMat3::mat3(Mat3::look_to_lh(dir, up)))
+        Ok(PyMat3::mat3(lh::view::look_to_mat3(dir, up)))
     }
 
     #[staticmethod]
     pub fn look_at_rh(eye: &PyVec3, center: &PyVec3, up: &PyVec3) -> PyResult<Self> {
         let (_, dir, up) = look_at_inputs(eye, center, up)?;
-        Ok(PyMat3::mat3(Mat3::look_to_rh(dir, up)))
+        Ok(PyMat3::mat3(rh::view::look_to_mat3(dir, up)))
     }
 }

@@ -16,16 +16,16 @@ use crate::{
 };
 
 pub const BEVY_REPOSITORY: &str = "https://github.com/bevyengine/bevy";
-pub const BEVY_TAG: &str = "v0.19.1";
-pub const BEVY_REVISION: &str = "b56fc29d3016e641754765244b5ba3f9cc504671";
+pub const BEVY_TAG: &str = "v0.20.0";
+pub const BEVY_REVISION: &str = "b3bdd75becaffe9a16677cf5bae5bd6d198f052b";
 pub const CARGO_PUBLIC_API_VERSION: &str = "0.50.1";
-pub const PINNED_LOCKFILE_PATH: &str = "tests/parity/bevy_019_Cargo.lock";
+pub const PINNED_LOCKFILE_PATH: &str = "tests/parity/bevy_020_Cargo.lock";
 
-pub const DEFAULT_RAW_PATH: &str = "tests/parity/bevy_019_public_api.txt";
-pub const DEFAULT_CLASSIFIED_PATH: &str = "tests/parity/bevy_019_binding_inventory.txt";
+pub const DEFAULT_RAW_PATH: &str = "tests/parity/bevy_020_public_api.txt";
+pub const DEFAULT_CLASSIFIED_PATH: &str = "tests/parity/bevy_020_binding_inventory.txt";
 pub const DEFAULT_COVERAGE_PATH: &str = "docs/coverage.md";
-pub const COVERAGE_BEGIN: &str = "<!-- BEGIN GENERATED BEVY 0.19 COVERAGE -->";
-pub const COVERAGE_END: &str = "<!-- END GENERATED BEVY 0.19 COVERAGE -->";
+pub const COVERAGE_BEGIN: &str = "<!-- BEGIN GENERATED BEVY 0.20 COVERAGE -->";
+pub const COVERAGE_END: &str = "<!-- END GENERATED BEVY 0.20 COVERAGE -->";
 
 #[derive(Debug, Clone)]
 pub struct Provenance {
@@ -130,7 +130,7 @@ pub fn check_pinned_lockfile(checkout: &Path) -> Result<()> {
         .context("the pinned Bevy audit Cargo.lock is missing")?;
     if actual != pinned_lockfile()? {
         bail!(
-            "the Bevy audit dependency graph changed while extracting the API; refresh tests/parity/bevy_019_Cargo.lock explicitly"
+            "the Bevy audit dependency graph changed while extracting the API; refresh tests/parity/bevy_020_Cargo.lock explicitly"
         );
     }
     Ok(())
@@ -556,7 +556,7 @@ fn render_coverage_block(report: &CoverageReport) -> String {
         })
         .collect();
     let mut output = format!(
-        "{COVERAGE_BEGIN}\n## Current Coverage (Bevy 0.19)\n\nProvenance: [`{BEVY_TAG}`]({BEVY_REPOSITORY}/tree/{BEVY_REVISION}) at `{BEVY_REVISION}`, generated with `cargo-public-api {CARGO_PUBLIC_API_VERSION} {}`.\n\n| Module | Types | Type % | Methods | Meth % |\n|--------|------:|-------:|--------:|-------:|\n",
+        "{COVERAGE_BEGIN}\n## Current Coverage (Bevy 0.20)\n\nProvenance: [`{BEVY_TAG}`]({BEVY_REPOSITORY}/tree/{BEVY_REVISION}) at `{BEVY_REVISION}`, generated with `cargo-public-api {CARGO_PUBLIC_API_VERSION} {}`.\n\n| Module | Types | Type % | Methods | Meth % |\n|--------|------:|-------:|--------:|-------:|\n",
         crate::bevy_parser::public_api_flags()
     );
     for (module, coverage) in reverse_module_map {

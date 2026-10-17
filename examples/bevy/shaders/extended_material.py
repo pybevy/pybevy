@@ -12,7 +12,7 @@ Bevy (Rust):
     impl MaterialExtension for MyExtension { ... }
 
 PyBevy:
-    @material(fragment_shader="shaders/examples/extended_material.wgsl")
+    @material(fragment_shader="shaders/examples/extended_material.wesl")
     class QuantizeMaterial(Material):
         quantize_steps: float = 3.0
 """
@@ -20,7 +20,7 @@ PyBevy:
 from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 
-SHADER_ASSET_PATH = "shaders/examples/extended_material.wgsl"
+SHADER_ASSET_PATH = "shaders/examples/extended_material.wesl"
 
 
 @material(fragment_shader=SHADER_ASSET_PATH)

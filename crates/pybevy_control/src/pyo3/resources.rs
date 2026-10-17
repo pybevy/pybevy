@@ -742,6 +742,7 @@ mod tests {
                 Layout::new::<Py<PyAny>>(),
                 Some(drop_test_py_object),
                 true,
+                false,
                 ComponentCloneBehavior::Default,
                 None,
             )

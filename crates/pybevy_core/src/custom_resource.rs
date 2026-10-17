@@ -340,6 +340,7 @@ mod tests {
                     Layout::new::<u64>(),
                     None,
                     false,
+                    false,
                     ComponentCloneBehavior::Default,
                     None,
                 )

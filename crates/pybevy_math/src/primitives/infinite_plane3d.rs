@@ -1,4 +1,5 @@
-use bevy::math::{Dir3, Isometry3d, Quat, Vec3, Vec3A, primitives::InfinitePlane3d};
+use bevy::math::{Dir3, Isometry3d, Quat, Vec3, Vec3A};
+use bevy::shape::InfinitePlane3d;
 use pybevy_core::{
     FromBorrowedStorage, Omittable, ValueStorage,
     public_error::{INFINITE_PLANE_POINTS, UNSUPPORTED_COMPARISON},

@@ -32,11 +32,16 @@ pub struct StorageStructLayout {
     pub fields: Vec<StorageStructField>,
 }
 
-pub fn validate_bindings(source: &str) -> Result<(), String> {
-    let source = source.replace(
-        "#{MATERIAL_BIND_GROUP}",
+/// Naga-readable bindings: the generated module's only WESL construct is its bind group constant.
+pub fn generated_bindings_wgsl(source: &str) -> String {
+    source.replace(
+        "constants::MATERIAL_BIND_GROUP",
         &MATERIAL_BIND_GROUP_INDEX.to_string(),
-    );
+    )
+}
+
+pub fn validate_bindings(source: &str) -> Result<(), String> {
+    let source = generated_bindings_wgsl(source);
     let module = wgsl::parse_str(&source).map_err(|error| error.emit_to_string(&source))?;
     validate_member_names(&module)
 }

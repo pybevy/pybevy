@@ -1,4 +1,5 @@
-use bevy::math::{Vec3, cubic_splines::CubicSegment, curve::Curve};
+use bevy::curve::{Curve, cubic_splines::CubicSegment};
+use bevy::math::Vec3;
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage, public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
 };

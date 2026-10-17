@@ -393,6 +393,7 @@ class ScreenSpaceAmbientOcclusion(Component):
         self,
         *,
         quality_level: ScreenSpaceAmbientOcclusionQualityLevel = ...,
+        radius: float = 0.7285,
         constant_object_thickness: float = 0.25
     ) -> None: ...
 
@@ -405,6 +406,12 @@ class ScreenSpaceAmbientOcclusion(Component):
     def quality_level(self, value: ScreenSpaceAmbientOcclusionQualityLevel) -> None: ...
 
     @property
+    def radius(self) -> float:
+        """Maximum sample distance in view-space units; must be greater than 0."""
+    @radius.setter
+    def radius(self, value: float) -> None: ...
+
+    @property
     def constant_object_thickness(self) -> float:
         """Constant object thickness assumption for SSAO."""
     @constant_object_thickness.setter
@@ -413,6 +420,7 @@ class ScreenSpaceAmbientOcclusion(Component):
     @staticmethod
     def batch(  # type: ignore[override]
         *,
+        radius: np.typing.ArrayLike | None = None,
         constant_object_thickness: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
@@ -534,6 +542,18 @@ class WireframeLineWidth(Component):
         width: np.typing.ArrayLike | None = None,
     ) -> Batchable: ...
 
+class WireframeXray(Component):
+    """Per-entity override of ``WireframeConfig.xray_mode``."""
+
+    def __init__(self, value: bool = False) -> None: ...
+    @property
+    def value(self) -> bool: ...
+    @value.setter
+    def value(self, value: bool) -> None: ...
+    @staticmethod
+    def batch(*, value: np.typing.ArrayLike | None = None) -> Batchable: ...  # type: ignore[override]
+    def __eq__(self, other: WireframeXray) -> bool: ...  # type: ignore[override]
+
 class WireframePlugin(Plugin):
     """Enables wireframe rendering for meshes with Wireframe or WireframeConfig.global_."""
 
@@ -554,7 +574,8 @@ class WireframeConfig(Resource):
         global_: bool = False,
         default_color: Color = ...,
         default_line_width: float = 1.0,
-        default_topology: WireframeTopology = ...
+        default_topology: WireframeTopology = ...,
+        xray_mode: bool = False
     ) -> None: ...
 
     @property
@@ -585,6 +606,12 @@ class WireframeConfig(Resource):
     @default_topology.setter
     def default_topology(self, value: WireframeTopology) -> None: ...
 
+    @property
+    def xray_mode(self) -> bool:
+        """Render every wireframe as an x-ray overlay: both sides, no depth test."""
+    @xray_mode.setter
+    def xray_mode(self, value: bool) -> None: ...
+
 class WireframeMaterial(Asset):
     """Material asset for wireframe rendering.
 
@@ -599,7 +626,8 @@ class WireframeMaterial(Asset):
         *,
         color: Color = ...,
         line_width: float = 1.0,
-        topology: WireframeTopology = ...
+        topology: WireframeTopology = ...,
+        xray_mode: bool = False
     ) -> None: ...
     @property
     def color(self) -> Color: ...
@@ -618,6 +646,10 @@ class WireframeMaterial(Asset):
     def topology(self) -> WireframeTopology: ...
     @topology.setter
     def topology(self, value: WireframeTopology) -> None: ...
+    @property
+    def xray_mode(self) -> bool: ...
+    @xray_mode.setter
+    def xray_mode(self, value: bool) -> None: ...
 
 class Mesh3dWireframe(Component):
     """Component holding a wireframe material handle.
@@ -991,7 +1023,7 @@ class ShaderMaterial(Material):
         shader_def_names: Names for each bit (bit 0 = names[0], etc.).
         textures: List of up to 4 texture handles (or None per slot).
 
-    All custom shader paths must name .wgsl assets. Omitted stage paths keep
+    All custom shader paths must name .wesl or .wgsl assets. Omitted stage paths keep
     native defaults; forward paths are not applied to prepass/deferred passes.
 
     Example:

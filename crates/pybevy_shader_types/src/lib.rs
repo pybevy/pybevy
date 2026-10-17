@@ -52,6 +52,8 @@ static SHADER_REGISTRY: OnceLock<RwLock<HashMap<u64, Handle<Shader>>>> = OnceLoc
 /// Retains generated shader modules so their assets remain available for imports.
 static BINDINGS_REGISTRY: OnceLock<RwLock<BindingsRegistry>> = OnceLock::new();
 const GENERATED_MATERIAL_IMPORT_PREFIX: &str = "pybevy::gen::";
+/// WESL has no module declaration, so generated bindings name their import path in a comment.
+const GENERATED_MODULE_HEADER: &str = "// module ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ShaderStage {
@@ -145,17 +147,18 @@ pub fn clear_shader_registries() {
     }
 }
 
-/// Custom material imports and generated bindings currently use the WGSL composer.
+/// Material shaders are WESL modules, or plain WGSL without imports or conditionals.
 pub fn validate_material_shader_path(path: &str) -> Result<(), String> {
     let asset_path = AssetPath::try_parse(path).map_err(|error| error.to_string())?;
-    if asset_path
-        .path()
-        .extension()
-        .and_then(|extension| extension.to_str())
-        != Some("wgsl")
-    {
+    if !matches!(
+        asset_path
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str()),
+        Some("wesl" | "wgsl")
+    ) {
         return Err(format!(
-            "Custom material shader '{path}' must use a .wgsl asset; GLSL, WESL and SPIR-V material shaders are not supported by this API"
+            "Custom material shader '{path}' must use a .wesl or .wgsl asset; SPIR-V material shaders are not supported by this API"
         ));
     }
     Ok(())
@@ -188,27 +191,29 @@ fn stage_uses_shader(
 fn expected_generated_material_import(bindings_wgsl: &str) -> Option<&str> {
     bindings_wgsl.lines().find_map(|line| {
         line.trim()
-            .strip_prefix("#define_import_path ")
+            .strip_prefix(GENERATED_MODULE_HEADER)
             .map(str::trim)
             .filter(|path| path.starts_with(GENERATED_MATERIAL_IMPORT_PREFIX))
     })
 }
 
+/// WESL import scanning lists each imported module and item path; compare their material segment.
 fn mismatched_generated_material_imports<'a>(
     shader: &'a Shader,
     expected: &'a str,
 ) -> impl Iterator<Item = &'a str> + 'a {
-    shader
-        .imports
-        .iter()
-        .filter_map(move |import| match import {
-            ShaderImport::Custom(actual)
-                if actual.starts_with(GENERATED_MATERIAL_IMPORT_PREFIX) && actual != expected =>
-            {
-                Some(actual.as_str())
-            }
-            _ => None,
-        })
+    let mut seen = HashSet::new();
+    shader.imports.iter().filter_map(move |import| {
+        let ShaderImport::Custom(actual) = import else {
+            return None;
+        };
+        let class = actual.strip_prefix(GENERATED_MATERIAL_IMPORT_PREFIX)?;
+        let module = match class.find("::") {
+            Some(end) => &actual[..GENERATED_MATERIAL_IMPORT_PREFIX.len() + end],
+            None => actual.as_str(),
+        };
+        (module != expected && seen.insert(module)).then_some(module)
+    })
 }
 
 fn validate_material_shader_import(
@@ -361,9 +366,9 @@ pub struct ShaderMaterialExtension {
     #[reflect(ignore)]
     pub logical_type_id: Option<u64>,
 
-    /// In-memory WGSL source for generated binding declarations.
-    /// Contains `#define_import_path` so user shaders can `#import` it.
-    /// Injected into `Assets<Shader>` by `sync_shader_handles`.
+    /// In-memory WESL source for generated binding declarations.
+    /// Its `// module pybevy::gen::<Class>` header names the import path user
+    /// shaders `import`; `sync_shader_handles` injects it into `Assets<Shader>`.
     #[reflect(ignore)]
     pub bindings_wgsl: Option<String>,
 }
@@ -425,7 +430,7 @@ impl MaterialExtension for ShaderMaterialExtension {
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         if let Some(id) = key.bind_group_data.bindings_id {
-            let definition = ShaderDefVal::Bool(binding_definition(id), true);
+            let definition = ShaderDefVal::Bool(binding_definition(id).into(), true);
             descriptor.vertex.shader_defs.push(definition.clone());
             if let Some(fragment) = &mut descriptor.fragment {
                 fragment.shader_defs.push(definition);
@@ -477,7 +482,7 @@ impl MaterialExtension for ShaderMaterialExtension {
                 "Material pipeline {:?}: shader define '{name}' conflicts with an existing pipeline definition (prepass={is_prepass}, deferred={is_deferred})",
                 descriptor.label
             );
-            // Bevy 0.19 only exposes a missing-vertex-attribute specialization error.
+            // Bevy only exposes a missing-vertex-attribute specialization error.
             descriptor.vertex.shader = material_shader_variants::rejected_material_shader();
             return Ok(());
         }
@@ -489,12 +494,12 @@ impl MaterialExtension for ShaderMaterialExtension {
                     if let Some(fragment) = &mut descriptor.fragment {
                         fragment
                             .shader_defs
-                            .push(ShaderDefVal::Bool(name.clone(), true));
+                            .push(ShaderDefVal::Bool(name.clone().into(), true));
                     }
                     descriptor
                         .vertex
                         .shader_defs
-                        .push(ShaderDefVal::Bool(name.clone(), true));
+                        .push(ShaderDefVal::Bool(name.clone().into(), true));
                 }
             }
         }
@@ -678,20 +683,25 @@ mod material_import_validation_tests {
 
     #[test]
     fn generated_import_path_comes_from_the_materials_own_bindings() {
-        let bindings = "// generated\n#define_import_path pybevy::gen::ExpectedMaterial\n";
+        let bindings = "// generated\n// module pybevy::gen::ExpectedMaterial\n";
 
         assert_eq!(
             expected_generated_material_import(bindings),
             Some("pybevy::gen::ExpectedMaterial")
         );
+        assert_eq!(
+            expected_generated_material_import("// module other::ExpectedMaterial\n"),
+            None
+        );
     }
 
     #[test]
     fn another_generated_material_import_is_a_mismatch() {
-        let shader = Shader::from_wgsl(
-            "#import pybevy::gen::OtherMaterial as params\n\n@fragment\nfn fragment() -> \
-             @location(0) vec4<f32> { return params::material.color; }\n",
-            "shader.wgsl",
+        let shader = Shader::from_wesl(
+            "import pybevy::gen::OtherMaterial as params;\nimport \
+             pybevy::gen::OtherMaterial::material;\nimport pybevy::gen::ExpectedMaterial::{tint};\n\n\
+             @fragment\nfn fragment() -> @location(0) vec4<f32> { return params::material.color; }\n",
+            "shaders/shader.wesl",
         );
 
         assert_eq!(
@@ -699,11 +709,19 @@ mod material_import_validation_tests {
                 .collect::<Vec<_>>(),
             vec!["pybevy::gen::OtherMaterial"]
         );
-        assert!(
+        assert_eq!(
             mismatched_generated_material_imports(&shader, "pybevy::gen::OtherMaterial")
-                .next()
-                .is_none()
+                .collect::<Vec<_>>(),
+            vec!["pybevy::gen::ExpectedMaterial"]
         );
+    }
+
+    #[test]
+    fn material_shader_paths_accept_wesl_and_plain_wgsl_only() {
+        assert!(validate_material_shader_path("shaders/glow.wesl").is_ok());
+        assert!(validate_material_shader_path("shaders/plain.wgsl").is_ok());
+        let error = validate_material_shader_path("shaders/glow.spv").unwrap_err();
+        assert!(error.contains("must use a .wesl or .wgsl asset"), "{error}");
     }
 }
 

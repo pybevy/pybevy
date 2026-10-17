@@ -1,5 +1,5 @@
-#import bevy_pbr::{forward_io::VertexOutput, mesh_view_bindings::view}
-#import pybevy::gen::CubeReflection as params
+import bevy_pbr::render::{forward_io::VertexOutput, mesh_view_bindings::view};
+import pybevy::gen::CubeReflection as params;
 
 @fragment
 fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {

@@ -1,4 +1,4 @@
-use bevy::math::bounding::{AabbCast2d, IntersectsVolume};
+use bevy::shape::{AabbCast2d, IntersectsVolume};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
     repr::{ReprLiteral, float_repr, object_repr},

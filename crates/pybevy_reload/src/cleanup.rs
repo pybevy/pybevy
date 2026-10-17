@@ -537,7 +537,7 @@ mod tests {
         let mut world = World::new();
         let base = world.spawn(Marker).id();
         insert_base_set(&mut world, vec![base]);
-        let observer = world.add_observer(|_: On<Add, Marker>| {}).id();
+        let observer = world.add_observer(|_: On<Add<Marker>>| {}).id();
         let python_observer = world.spawn(PythonObserver).id();
         let window = world.spawn(Window::default()).id();
         let monitor = world

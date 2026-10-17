@@ -10,6 +10,7 @@ pub mod color_stop;
 pub mod computed_node;
 pub mod computed_stack_index;
 pub mod conic_gradient;
+pub mod corner_radius;
 pub mod enums;
 pub mod focus_policy;
 pub mod gradient;
@@ -17,9 +18,9 @@ mod gradient_snapshot;
 pub mod grid_placement;
 pub mod grid_track;
 pub mod grid_track_repetition;
+pub mod hovered;
 pub mod ignore_scroll;
 pub mod image_node;
-pub mod interaction;
 pub mod linear_gradient;
 pub mod markers;
 pub mod node;
@@ -43,6 +44,7 @@ pub mod ui_target_camera;
 pub mod ui_transform;
 pub mod val;
 pub mod val2;
+pub mod widgets;
 pub mod z_index;
 
 use enums::{
@@ -57,6 +59,7 @@ pub mod prelude {
         background_color::PyBackgroundColor,
         border_color::PyBorderColor,
         border_radius::PyBorderRadius,
+        corner_radius::PyCornerRadius,
         enums::{
             PyAlignContent, PyAlignItems, PyAlignSelf, PyDisplay, PyFlexDirection, PyFlexWrap,
             PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
@@ -65,8 +68,7 @@ pub mod prelude {
         grid_placement::PyGridPlacement,
         grid_track::PyGridTrack,
         image_node::PyImageNode,
-        interaction::PyInteraction,
-        markers::{PyButton, PyLabel},
+        markers::PyLabel,
         node::PyNode,
         outline::PyOutline,
         overflow::PyOverflow,
@@ -109,11 +111,9 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<markers::PyPressed>()?;
     m.add_class::<markers::PyInteractionDisabled>()?;
     m.add_class::<markers::PyIsDefaultUiCamera>()?;
-    m.add_class::<markers::PyButton>()?;
     m.add_class::<markers::PySelectable>()?;
 
     m.add_class::<focus_policy::PyFocusPolicy>()?;
-    m.add_class::<interaction::PyInteraction>()?;
     m.add_class::<z_index::PyZIndex>()?;
     m.add_class::<z_index::PyGlobalZIndex>()?;
 
@@ -144,6 +144,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ignore_scroll::PyIgnoreScroll>()?;
 
     m.add_class::<border_radius::PyBorderRadius>()?;
+    m.add_class::<corner_radius::PyCornerRadius>()?;
     m.add_class::<angular_color_stop::PyAngularColorStop>()?;
     m.add_class::<grid_track::PyGridTrack>()?;
     m.add_class::<grid_track::PyGridTracks>()?;
@@ -154,6 +155,8 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(val::py_vh, &m)?)?;
     m.add_function(wrap_pyfunction!(val::py_vmin, &m)?)?;
     m.add_function(wrap_pyfunction!(val::py_vmax, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_em, &m)?)?;
+    m.add_function(wrap_pyfunction!(val::py_rem, &m)?)?;
     m.add_class::<ui_rect::PyUiRect>()?;
     m.add_class::<val2::PyVal2>()?;
     m.add_class::<radial_gradient::PyRadialGradient>()?;
@@ -167,5 +170,14 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<gradient::PyGradients>()?;
 
     m.add_class::<ui_scale::PyUiScale>()?;
-    parent.add_submodule(&m)
+    parent.add_submodule(&m)?;
+
+    let widgets = PyModule::new(parent.py(), "ui_widgets")?;
+    widgets.add_class::<widgets::PyButton>()?;
+    widgets.add_class::<widgets::PyTextInput>()?;
+    parent.add_submodule(&widgets)?;
+
+    let picking = PyModule::new(parent.py(), "picking")?;
+    picking.add_class::<hovered::PyHovered>()?;
+    parent.add_submodule(&picking)
 }

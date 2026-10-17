@@ -624,7 +624,7 @@ impl PyApp {
         system_stage: SystemStage,
         is_startup: bool,
     ) -> PyResult<()> {
-        build_system_unit(
+        let _ = build_system_unit(
             system,
             generation,
             error_state.clone(),

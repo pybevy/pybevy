@@ -1,7 +1,5 @@
-use bevy::math::{
-    Isometry3d, Mat3, Vec3, Vec3A,
-    bounding::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume},
-};
+use bevy::math::{Isometry3d, Mat3, Vec3, Vec3A};
+use bevy::shape::{Aabb3d, BoundingSphere, BoundingVolume, IntersectsVolume};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     domain::{NON_NEGATIVE, check_for},

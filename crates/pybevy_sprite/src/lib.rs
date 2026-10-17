@@ -7,6 +7,7 @@ pub mod plugin;
 pub mod scaling_mode;
 pub mod slice_scale_mode;
 pub mod sprite;
+pub mod sprite_alpha_mode;
 pub mod sprite_image_mode;
 pub mod text2d;
 pub mod text2d_shadow;
@@ -41,6 +42,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<mesh_material_2d::PyMeshMaterial2d>()?;
 
     m.add_class::<alpha_mode_2d::PyAlphaMode2d>()?;
+    m.add_class::<sprite_alpha_mode::PySpriteAlphaMode>()?;
     m.add_class::<border_rect::PyBorderRect>()?;
     m.add_class::<scaling_mode::PySpriteScalingMode>()?;
     m.add_class::<slice_scale_mode::PySliceScaleMode>()?;
