@@ -8,14 +8,12 @@
 //! - ValueStorage stores Copy types directly (Owned(T))
 //! - ComponentStorage stores larger types in Box (Owned(Box<T>))
 
-use bevy::ecs::{
-    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
-};
+use bevy::ecs::{component::ComponentId, entity::Entity};
 
 use crate::{
     ReadField, ReadVariant, RevalidatingSource, StorageMut, StorageRef, ValidateField, WriteField,
     WriteVariant,
-    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField, RevalidatingWorld},
     component_change::ComponentWriteContext,
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
@@ -145,8 +143,8 @@ impl<T: Copy> BorrowableStorage<T> for ValueStorage<T> {
         }
     }
 
-    unsafe fn revalidating_field(
-        world: UnsafeWorldCell<'_>,
+    unsafe fn revalidating_field<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -223,11 +221,11 @@ impl<T: Copy> ValueStorage<T> {
     ///
     /// # Safety
     /// - `world` must remain live while `validity` is active.
-    /// - The cell must permit component access matching the validity mode.
+    /// - The World origin must permit access matching the validity mode.
     /// - `entity`, `component_id` and `offset` must identify a field of type `T` at
     ///   `offset` bytes into that component's storage.
-    pub unsafe fn revalidating(
-        world: UnsafeWorldCell<'_>,
+    pub unsafe fn revalidating<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -501,10 +499,16 @@ impl<T: Copy> ValueStorage<T> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
+    use std::cell::UnsafeCell;
+
     use bevy::ecs::world::World;
 
     use super::*;
-    use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
+    use crate::{
+        owned_cell::TestWorld,
+        validity_guard::{AccessMode, ValidityFlag, ValidityGuard},
+        world_traversal::WorldTraversalState,
+    };
 
     #[derive(Clone, Copy, Debug, PartialEq)]
     struct TestValue {
@@ -762,10 +766,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_reads_and_writes_live_component() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         // Handle to v[1]: offset = one f32 = 4 bytes.
@@ -781,10 +785,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_tracks_after_archetype_move() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage: ValueStorage<f32> =
@@ -802,10 +806,10 @@ mod tests {
 
     #[test]
     fn test_revalidating_errors_after_despawn() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let mut storage: ValueStorage<f32> =
@@ -820,11 +824,66 @@ mod tests {
     }
 
     #[test]
-    fn test_revalidating_read_mode_rejects_write() {
+    fn test_revalidating_owned_world_origin_after_structural_move() {
+        let owner = Box::new(UnsafeCell::new(World::new()));
+        let world_ptr = owner.get();
+        // SAFETY: the box owns the world and all accesses in this test are sequential.
+        let world = unsafe { &mut *world_ptr };
+        let cid = world.register_component::<Holder>();
+        let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
+        let traversal = WorldTraversalState::new(world.id());
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // SAFETY: retain the same stable origin used by the exclusive World owner.
+        let mut storage: ValueStorage<f32> = unsafe {
+            ValueStorage::revalidating(
+                RevalidatingWorld::from_exclusive(world_ptr),
+                e,
+                cid,
+                0,
+                validity.clone(),
+            )
+        };
+        assert_eq!(storage.get().unwrap(), 1.0);
+        // SAFETY: matches PyWorld::world_mut's fresh borrow from the owned box.
+        unsafe { &mut *world_ptr }.entity_mut(e).insert(Tag);
+        assert_eq!(storage.get().unwrap(), 1.0);
+        *storage.as_mut().unwrap() = 7.0;
+        // SAFETY: the previous storage guard has been dropped.
+        assert_eq!(
+            unsafe { &*world_ptr }.entity(e).get::<Holder>().unwrap().v[0],
+            7.0
+        );
+        assert!(traversal.try_traverse().is_some());
+        validity.flag.set_invalid();
+        let _guard = traversal.suspend();
+        traversal.close();
+        drop(owner);
+        assert!(matches!(storage.get(), Err(StorageError::InvalidAccess)));
+        assert!(matches!(storage.as_mut(), Err(StorageError::InvalidAccess)));
+    }
+
+    #[test]
+    fn test_revalidating_cell_origin_survives_child_world_borrows() {
         let mut world = World::new();
         let cid = world.register_component::<Holder>();
         let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
         let cell = world.as_unsafe_world_cell();
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        // SAFETY: this cell is the sole World origin for all subsequent accesses.
+        let mut storage = unsafe { ValueStorage::<f32>::revalidating(cell, e, cid, 0, validity) };
+        // SAFETY: no competing references exist; structural access uses the original cell.
+        unsafe { cell.world_mut() }.entity_mut(e).insert(Tag);
+        assert_eq!(storage.get().unwrap(), 1.0);
+        *storage.as_mut().unwrap() = 9.0;
+        assert_eq!(storage.get().unwrap(), 9.0);
+    }
+
+    #[test]
+    fn test_revalidating_read_mode_rejects_write() {
+        let mut world = TestWorld::new();
+        let cid = world.register_component::<Holder>();
+        let e = world.spawn(Holder { v: [1.0, 2.0, 3.0] }).id();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         let mut storage: ValueStorage<f32> =

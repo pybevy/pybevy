@@ -94,7 +94,7 @@ pub use pybevy_storage::{
     DefaultPluginKind, LogicalTypeId, LogicalTypeMap, NativeGroupCallback, NativePluginSlot,
     PluginGroupAddition, PluginGroupCallback, PluginGroupMembers, PluginGroupPlacement,
     batch_columns, default_plugin_slots, domain, field_storage, pyasset, pycomponent, pyresource,
-    storage_error, storage_traits, validity_guard, value_storage, view_bridge,
+    storage_error, storage_traits, validity_guard, value_storage, view_bridge, world_traversal,
 };
 use pyo3::{PyTypeInfo, exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
 pub use repr::{ReprLiteral, float_list_repr, float_repr, object_repr, str_repr};
@@ -107,8 +107,10 @@ pub use scene_module::ActiveSceneModule;
 /// dereference and presence check live in one place.
 ///
 /// # Safety
-/// `world_ptr` must permit exclusive World access for this call and stay valid
-/// while `validity` is active. The mode must authorize access to this component.
+/// `world_ptr` must retain the exclusive owner's stable provenance for the
+/// validity window, with no competing World references during handle access.
+/// The mode must authorize this component. Registered GC gates require handle
+/// accesses to remain attached to the interpreter. Construction must exclude GC.
 pub unsafe fn resolve_revalidating_component<B: Component>(
     entity_id: Entity,
     world_ptr: *mut World,
@@ -122,7 +124,7 @@ pub unsafe fn resolve_revalidating_component<B: Component>(
     // SAFETY: identity verified above; the handle re-resolves the address per access.
     Some(unsafe {
         ComponentStorage::revalidating(
-            world.as_unsafe_world_cell(),
+            RevalidatingWorld::from_exclusive(world_ptr),
             entity_id,
             component_id,
             validity,
@@ -133,8 +135,10 @@ pub unsafe fn resolve_revalidating_component<B: Component>(
 /// Build revalidating storage for a native resource reached through its entity.
 ///
 /// # Safety
-/// `world_ptr` must permit exclusive World access for this call and stay valid
-/// while `validity` is active. The mode must authorize access to this resource.
+/// `world_ptr` must retain the exclusive owner's stable provenance for the
+/// validity window, with no competing World references during handle access.
+/// The mode must authorize this resource. Registered GC gates require handle
+/// accesses to remain attached to the interpreter. Construction must exclude GC.
 pub unsafe fn resolve_revalidating_resource<B: Resource>(
     entity_id: Entity,
     world_ptr: *mut World,
@@ -148,7 +152,7 @@ pub unsafe fn resolve_revalidating_resource<B: Resource>(
     // SAFETY: verified identity; the cell is fenced by the supplied validity flag.
     Some(unsafe {
         ResourceStorage::revalidating(
-            world.as_unsafe_world_cell(),
+            RevalidatingWorld::from_exclusive(world_ptr),
             entity_id,
             component_id,
             validity,
@@ -493,10 +497,10 @@ pub use pybevy_storage::{
     AssetResourceState, AssetResourceWriteGuard, AssetRuntimeCore, AssetRuntimeError, AssetStorage,
     BorrowableStorage, ComponentStorage, ComponentStorageInner, ComponentWriteContext, FieldOffset,
     FieldStorage, FieldStorageInner, FieldType, FilteredEntityAccess, FromBorrowedStorage,
-    PendingViewClaim, ReadViewClaim, ResourceStorage, ResourceStorageInner, StorageError,
-    StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ValidityGuard, ValueStorage,
-    ValueStorageInner, ViewBridge, ViewCounters, allocate_id, computed_owned, consume_unstored_id,
-    ensure_asset_access_registry,
+    PendingViewClaim, ReadViewClaim, ResourceStorage, ResourceStorageInner, RevalidatingWorld,
+    StorageError, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode, ValidityGuard,
+    ValueStorage, ValueStorageInner, ViewBridge, ViewCounters, allocate_id, computed_owned,
+    consume_unstored_id, ensure_asset_access_registry,
 };
 pub use reflect_registration::{
     ReflectTypeRegistration, register_wrapped_reflect_types,

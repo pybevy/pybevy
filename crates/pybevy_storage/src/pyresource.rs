@@ -3,13 +3,10 @@
 //! This module provides a unified storage mechanism for all PyBevy resource types,
 //! enabling zero-copy access to Bevy resources through borrowed references.
 
-use bevy::ecs::{
-    component::ComponentId, entity::Entity, prelude::Resource,
-    world::unsafe_world_cell::UnsafeWorldCell,
-};
+use bevy::ecs::{component::ComponentId, entity::Entity, prelude::Resource};
 
 use crate::{
-    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField, RevalidatingWorld},
     component_change::ComponentWriteContext,
     storage_error::StorageError,
     validity_guard::{AccessMode, ValidityFlag, ValidityFlagWithMode},
@@ -174,9 +171,9 @@ impl<T: Resource> ResourceStorage<T> {
     /// # Safety
     /// `world` must remain live while `validity` permits access, and
     /// `(entity, component_id)` must identify a value of `T`. The cell must permit
-    /// component access matching the validity mode, with no competing references.
-    pub unsafe fn revalidating(
-        world: UnsafeWorldCell<'_>,
+    /// access matching the validity mode, with no competing references.
+    pub unsafe fn revalidating<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         validity: ValidityFlagWithMode,
@@ -396,12 +393,12 @@ mod tests {
     use bevy::ecs::{
         change_detection::DetectChanges,
         prelude::{Component, Resource},
-        world::World,
     };
 
     use super::*;
     use crate::{
-        AccessMode, FieldStorage, ValidityFlag, ValidityGuard, value_storage::ValueStorage,
+        AccessMode, FieldStorage, ValidityFlag, ValidityGuard, owned_cell::TestWorld,
+        value_storage::ValueStorage,
     };
 
     #[derive(Clone, Debug, PartialEq, Resource)]
@@ -697,12 +694,12 @@ mod tests {
 
     #[test]
     fn revalidating_storage_survives_resource_entity_moves() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         world.insert_resource(TestResource { value: 42 });
         let component_id = world.components().component_id::<TestResource>().unwrap();
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
         // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage = unsafe {
             ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
@@ -716,14 +713,14 @@ mod tests {
 
     #[test]
     fn revalidating_resource_write_marks_change_detection() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         world.insert_resource(TestResource { value: 42 });
         world.clear_trackers();
 
         let component_id = world.components().component_id::<TestResource>().unwrap();
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
         // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage = unsafe {
             ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)
@@ -741,12 +738,12 @@ mod tests {
 
     #[test]
     fn revalidating_read_storage_rejects_mutation() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         world.insert_resource(TestResource { value: 42 });
         let component_id = world.components().component_id::<TestResource>().unwrap();
         let entity = world.resource_entities().get(component_id).unwrap();
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
         // SAFETY: The registered type/offset match; the live World is accessed sequentially.
         let mut storage = unsafe {
             ResourceStorage::<TestResource>::revalidating(cell, entity, component_id, validity)

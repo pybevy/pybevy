@@ -1075,6 +1075,14 @@ exclusive systems, `app.world(...)` callbacks, and `run_code`, or `copy.copy` /
 `copy.deepcopy` while valid to keep an owned value. Pass the type itself:
 `world.resource(ResMut[T])` raises `TypeError`.
 
+Handles from `world.get()`/`get_mut()` and native `world.resource()`/
+`resource_mut()`, including nested fields, re-resolve after structural World
+changes. Reads do not mark native values changed; writes do. Removing the
+component or resource makes existing handles raise `RuntimeError`; handles from
+an App callback or system also expire when that call finishes. Read-only handles
+reject nested writes.
+
+
 <!-- pybevy-snippet: typecheck -->
 ```python
 from pybevy.prelude import Resource, World, resource, system

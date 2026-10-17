@@ -28,7 +28,7 @@ pub type TypeKey = usize;
 
 /// Insert a dynamically registered resource value through Bevy's resource-entity cache.
 ///
-/// Bevy 0.19 does not expose by-ID required-component registration. Dynamic resource
+/// Bevy 0.20 does not expose by-ID required-component registration. Dynamic resource
 /// adapters therefore establish the canonical entity with [`IsResource`] before using
 /// `World::insert_resource_by_id`. Replacements and reinsertion after removal reuse the
 /// same entity through Bevy's cache.

@@ -833,7 +833,31 @@ impl PyWorld {
         let validity = self.validity.clone().unwrap_or_default();
 
         // Retrieve the resource from the world
-        let value = py_resource_type.get_from_world(world, py, validity.clone())?;
+        let value = match py_resource_type {
+            PyResourceType::Dynamic(type_ptr) => {
+                let bridge = global_registry::get_resource_bridge_by_py_type(type_ptr)
+                    .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+                let not_found =
+                    || PyRuntimeError::new_err(native_resource_not_found(bridge.name()));
+                let entity = bridge
+                    .resource_id(world)
+                    .and_then(|id| world.resource_entities().get(id))
+                    .ok_or_else(not_found)?;
+                let _gc = self.gc_state.as_ref().map(WorldGcState::suspend);
+                // SAFETY: the exclusive World owner retains this stable origin;
+                // the returned read-only handle shares its thread-affine validity.
+                unsafe {
+                    bridge.extract_from_entity_ref(
+                        entity,
+                        self.world_ptr(),
+                        validity.with_access_mode(AccessMode::Read),
+                        py,
+                    )
+                }?
+                .ok_or_else(not_found)?
+            }
+            _ => py_resource_type.get_from_world(world, py, validity.clone())?,
+        };
         if matches!(py_resource_type, PyResourceType::Custom(_)) {
             Ok(Py::new(py, PyRes::with_validity(value.into_bound(py), validity))?.into_any())
         } else {

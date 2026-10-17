@@ -27,13 +27,13 @@ use std::fmt::Debug;
 
 use bevy::{
     asset::Asset,
-    ecs::{component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell},
+    ecs::{component::ComponentId, entity::Entity},
 };
 
 use crate::{
     AssetStorage, ReadField, ReadIndex, ReadKey, ReadVariant, RevalidatingSource, StorageMut,
     StorageRef, ValidateField, WriteField, WriteIndex, WriteKey, WriteVariant,
-    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField},
+    borrowed::{BorrowedMut, BorrowedRef, RevalidatingField, RevalidatingWorld},
     component_change::ComponentWriteContext,
     storage_error::StorageError,
     storage_traits::{BorrowableStorage, FromBorrowedStorage},
@@ -195,8 +195,8 @@ impl<T: Clone> BorrowableStorage<T> for FieldStorage<T> {
         }
     }
 
-    unsafe fn revalidating_field(
-        world: UnsafeWorldCell<'_>,
+    unsafe fn revalidating_field<'w>(
+        world: impl Into<RevalidatingWorld<'w>>,
         entity: Entity,
         component_id: ComponentId,
         offset: usize,
@@ -655,7 +655,10 @@ mod tests {
     use bevy::ecs::{change_detection::DetectChangesMut, world::World};
 
     use super::*;
-    use crate::validity_guard::{AccessMode, ValidityFlag, ValidityGuard};
+    use crate::{
+        owned_cell::TestWorld,
+        validity_guard::{AccessMode, ValidityFlag, ValidityGuard},
+    };
 
     #[derive(Clone, Debug, PartialEq)]
     struct TestField {
@@ -1004,10 +1007,10 @@ mod tests {
         #[derive(bevy::ecs::component::Component)]
         struct Tag;
 
-        let mut world = World::new();
+        let mut world = TestWorld::new();
         let cid = world.register_component::<StringHolder>();
         let e = world.spawn(StringHolder { text: "hi".into() }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
         let comp =
@@ -1088,7 +1091,7 @@ mod tests {
 
     #[test]
     fn test_revalidating_field_read_mode_rejects_write() {
-        let mut world = World::new();
+        let mut world = TestWorld::new();
 
         #[derive(bevy::ecs::component::Component)]
         #[repr(C)]
@@ -1098,7 +1101,7 @@ mod tests {
 
         let cid = world.register_component::<StringHolder>();
         let e = world.spawn(StringHolder { text: "hi".into() }).id();
-        let cell = world.as_unsafe_world_cell();
+        let cell = world.access();
 
         let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
         // text is the first field of a #[repr(C)] struct, so offset 0.

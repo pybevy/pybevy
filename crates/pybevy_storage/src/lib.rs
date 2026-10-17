@@ -38,6 +38,7 @@ pub mod storage_traits;
 pub mod validity_guard;
 pub mod value_storage;
 pub mod view_bridge;
+pub mod world_traversal;
 
 pub use app_store::{
     AllocatedAppId, AppId, AppLifecycle, AppOperation, AppRestoreError, AppStoreCore,
@@ -56,7 +57,7 @@ pub use asset_path::{
     RevalidatingSource, ValidateField, WriteField, WriteIndex, WriteKey, WriteVariant,
 };
 pub use asset_runtime::{AssetRuntimeCore, AssetRuntimeError};
-pub use borrowed::{BorrowedMut, BorrowedRef};
+pub use borrowed::{BorrowedMut, BorrowedRef, RevalidatingWorld};
 pub use component_change::ComponentWriteContext;
 pub use field_storage::{FieldStorage, FieldStorageInner};
 pub use filtered_entity_access::FilteredEntityAccess;

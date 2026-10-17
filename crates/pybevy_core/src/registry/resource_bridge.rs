@@ -74,9 +74,10 @@ pub trait ResourceBridge: Send + Sync + 'static {
     fn entity_contains(&self, entity: &EntityRef) -> bool;
 
     /// # Safety
-    /// `world_ptr` must permit exclusive World access during handle construction
-    /// and remain live while `validity` is non-Invalid. Owned Python Worlds must
-    /// suspend GC traversal during this call; subsequent access is component-scoped.
+    /// `world_ptr` must retain the exclusive owner's stable provenance while
+    /// `validity` is non-Invalid, with no competing World references during access.
+    /// Owned Python Worlds must suspend GC traversal during construction; subsequent
+    /// writes use their registered gate and must remain interpreter-attached.
     unsafe fn extract_from_entity_ref(
         &self,
         entity_id: Entity,
