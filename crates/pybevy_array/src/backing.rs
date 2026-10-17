@@ -200,3 +200,38 @@ impl Drop for ArrayWriteGuard {
         debug_assert_eq!(previous, WRITE_GATE);
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_coexist_and_exclude_writes() {
+        let backing = ArrayBacking::new(ArrayStorage::Float32(vec![1.0]));
+        let first = backing.try_read().unwrap();
+        let second = backing.try_read().unwrap();
+        assert!(matches!(
+            backing.try_write(),
+            Err(ArrayError::AccessConflict)
+        ));
+        drop((first, second));
+        assert!(backing.try_write().is_ok());
+    }
+
+    #[test]
+    fn write_excludes_all_other_access() {
+        let backing = ArrayBacking::new(ArrayStorage::Float32(vec![1.0]));
+        let write = backing.try_write().unwrap();
+        assert!(matches!(
+            backing.try_read(),
+            Err(ArrayError::AccessConflict)
+        ));
+        assert!(matches!(
+            backing.try_write(),
+            Err(ArrayError::AccessConflict)
+        ));
+        drop(write);
+        assert!(backing.try_read().is_ok());
+    }
+}

@@ -507,3 +507,19 @@ pub fn to_numpy(py: Python<'_>, core: &DenseArrayCore) -> PyResult<Py<PyAny>> {
         }
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_copy_selects_the_contiguous_slice_path() {
+        let layout = Layout::c_contiguous(&[2, 2]).unwrap();
+
+        let (values, path) = copy_selected(&[1_i32, 2, 3, 4], &layout);
+
+        assert_eq!(values, [1, 2, 3, 4]);
+        assert_eq!(path, TypedCopyPath::Contiguous);
+    }
+}

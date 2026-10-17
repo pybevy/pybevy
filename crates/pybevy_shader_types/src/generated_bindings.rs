@@ -82,3 +82,51 @@ pub(crate) fn sync_generated_bindings<'a>(
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::{
+        asset::Assets,
+        shader::{Shader, ShaderImport},
+    };
+
+    use super::{BindingsRegistry, binding_definition, sync_generated_bindings};
+    use crate::hash_shader_path;
+
+    const FIRST: &str =
+        "#define_import_path pybevy::gen::Surface\nstruct Surface { first: f32, }\n";
+    const SECOND: &str =
+        "#define_import_path pybevy::gen::Surface\nstruct Surface { second: vec2<f32>, }\n";
+
+    #[test]
+    fn live_layouts_coexist_and_retired_layouts_are_pruned() {
+        let mut registry = BindingsRegistry::new();
+        let mut shaders = Assets::<Shader>::default();
+        let import = ShaderImport::Custom("pybevy::gen::Surface".to_owned());
+        sync_generated_bindings(&mut registry, &mut shaders, [FIRST].into_iter());
+        let handle = registry[&import].handle.clone();
+        sync_generated_bindings(&mut registry, &mut shaders, [SECOND, FIRST].into_iter());
+        let source = shaders.get(&handle).unwrap().source.as_str();
+        for variant in [FIRST, SECOND] {
+            assert!(source.contains(&format!(
+                "#ifdef {}",
+                binding_definition(hash_shader_path(variant))
+            )));
+            assert!(source.contains(variant.lines().nth(1).unwrap()));
+        }
+        assert_eq!(registry[&import].handle.id(), handle.id());
+        let combined = source.to_string();
+        sync_generated_bindings(
+            &mut registry,
+            &mut shaders,
+            [FIRST, SECOND, FIRST].into_iter(),
+        );
+        assert_eq!(shaders.get(&handle).unwrap().source.as_str(), combined);
+        sync_generated_bindings(&mut registry, &mut shaders, [SECOND].into_iter());
+        assert_eq!(shaders.get(&handle).unwrap().source.as_str(), SECOND);
+        assert_eq!(registry[&import].handle.id(), handle.id());
+        assert_eq!(shaders.len(), 1);
+        sync_generated_bindings(&mut registry, &mut shaders, [].into_iter());
+        assert!(registry.is_empty());
+    }
+}

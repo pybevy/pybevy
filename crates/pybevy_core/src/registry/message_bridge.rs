@@ -236,7 +236,6 @@ mod tests {
     use pyo3::{
         exceptions::PyTypeError,
         ffi::PyTypeObject,
-        prelude::*,
         types::{PyInt, PyType},
     };
 

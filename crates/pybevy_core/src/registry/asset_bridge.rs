@@ -285,7 +285,7 @@ mod tests {
         },
         reflect::TypePath,
     };
-    use pyo3::{exceptions::PyRuntimeError, ffi::PyTypeObject, prelude::*, types::PyType};
+    use pyo3::{exceptions::PyRuntimeError, ffi::PyTypeObject, types::PyType};
 
     use super::*;
     use crate::registry::global_registry::{

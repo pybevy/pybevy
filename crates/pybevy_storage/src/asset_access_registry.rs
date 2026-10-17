@@ -604,7 +604,7 @@ impl AssetResourceState {
     pub fn advance_epoch(&self) -> u64 {
         match self
             .epoch
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current != u64::MAX).then_some(current.saturating_add(1))
             }) {
             Ok(previous) => previous.saturating_add(1),

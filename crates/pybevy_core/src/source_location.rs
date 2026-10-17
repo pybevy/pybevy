@@ -97,7 +97,7 @@ impl AssetSourceLocations {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use bevy::{asset::Assets, prelude::*, reflect::TypePath};
+    use bevy::{asset::Assets, reflect::TypePath};
 
     use super::*;
 

@@ -829,3 +829,41 @@ impl PyArray {
         OperandRef::Array(&self.core)
     }
 }
+
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod layout_tests {
+    use std::mem::size_of;
+
+    use pyo3::{exceptions::PyRuntimeError, prelude::*};
+
+    use super::{ArrayCore, PyArray};
+    use crate::{ArrayDType, DenseArrayCore};
+
+    #[test]
+    fn pending_array_layout_is_intentional() {
+        assert_eq!(size_of::<ArrayCore>(), 88);
+        assert_eq!(size_of::<PyArray>(), 88);
+    }
+
+    #[test]
+    fn public_write_reports_a_held_read_conflict() {
+        let core = DenseArrayCore::zeros(ArrayDType::Float32, &[1]).unwrap();
+        let sibling = core.view(core.layout().clone()).unwrap();
+        let _read = sibling.read_storage().unwrap();
+
+        Python::initialize();
+        Python::attach(|py| {
+            let array = Py::new(py, PyArray::wrap(core)).unwrap();
+            let error = array
+                .bind(py)
+                .call_method1("__setitem__", (0, 1.0))
+                .unwrap_err();
+            assert!(error.is_instance_of::<PyRuntimeError>(py));
+            assert_eq!(
+                error.value(py).to_string(),
+                "array storage is already in use by another operation"
+            );
+        });
+    }
+}

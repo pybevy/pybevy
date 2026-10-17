@@ -418,7 +418,7 @@ impl AppIdAllocator {
     fn allocate(&self) -> Result<AppId, AppStoreError> {
         let current = self
             .next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| match next {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| match next {
                 0 => None,
                 u64::MAX => Some(0),
                 _ => Some(next + 1),
