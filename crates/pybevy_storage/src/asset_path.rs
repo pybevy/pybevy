@@ -945,6 +945,19 @@ impl<T: Send + Sync + 'static> BorrowedRootSource<T> {
     ) -> RevalidatingSource<Field> {
         self.extend(&[index_step(index, read, write)])
     }
+
+    pub(crate) fn key<Key, Field>(
+        &self,
+        key: Key,
+        read: ReadKey<T, Key, Field>,
+        write: WriteKey<T, Key, Field>,
+    ) -> RevalidatingSource<Field>
+    where
+        Key: Clone + fmt::Debug + Eq + Send + Sync + 'static,
+        Field: 'static,
+    {
+        self.extend(&[Arc::new(KeyedStep { key, read, write })])
+    }
 }
 
 fn field_step<Parent: 'static, Field: 'static>(
@@ -1204,11 +1217,6 @@ impl<T> RevalidatingSource<T> {
             && self.inner.path().same_identity(other.inner.path())
     }
 }
-
-// SAFETY: erased roots check thread-affine validity and retain their matching access guard.
-unsafe impl<T> Send for RevalidatingSource<T> {}
-// SAFETY: another thread cannot pass the source's validity check.
-unsafe impl<T> Sync for RevalidatingSource<T> {}
 
 #[cfg(test)]
 mod tests {

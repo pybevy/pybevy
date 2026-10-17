@@ -912,9 +912,13 @@ pub fn shader_float_range_out_of_range(start: usize, end: usize, maximum: usize)
     format!("float range {start}..{end} exceeds buffer (max {maximum})")
 }
 
+pub fn view_composite_assignment_type(shape: impl Display) -> String {
+    format!("{shape} View assignment requires a matching {shape} value or expression")
+}
+
 pub fn view_matrix_field_unsupported(field: &str, matrix_type: impl Display) -> String {
     format!(
-        "{matrix_type} field '{field}' is not available as a View column; access it through Query, or use Vec4/Quat fields for View"
+        "{matrix_type} field '{field}' is not available as a batch buffer; use View expressions or Query"
     )
 }
 

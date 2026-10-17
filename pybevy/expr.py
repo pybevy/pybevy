@@ -5,7 +5,12 @@ This module provides Python-side expression building that compiles to
 native Rust bytecode for high-performance batch operations.
 """
 
-from typing import Any, Union, overload
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Protocol, overload
+
+if TYPE_CHECKING:
+    from .math import Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4
 
 _READ_ONLY_VIEW_ASSIGNMENT = (
     "Cannot assign through a read-only View column; use column_mut() with View[Mut[T]]"
@@ -36,7 +41,7 @@ class Expr:
 
     __slots__ = ("args", "op")
 
-    def __init__(self, op: str, args: list[Any]) -> None:
+    def __init__(self, op: str, args: list[object]) -> None:
         """
         Create an expression node.
 
@@ -55,205 +60,211 @@ class Expr:
         self.op = op
         self.args = args
 
-    def __add__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __add__(self, other: Expr | float | int) -> Expr:
         """Addition: self + other"""
         return Expr(op="add", args=[self, other])
 
-    def __radd__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __radd__(self, other: Expr | float | int) -> Expr:
         """Right addition: other + self"""
         return Expr(op="add", args=[other, self])
 
-    def __sub__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __sub__(self, other: Expr | float | int) -> Expr:
         """Subtraction: self - other"""
         return Expr(op="sub", args=[self, other])
 
-    def __rsub__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __rsub__(self, other: Expr | float | int) -> Expr:
         """Right subtraction: other - self"""
         return Expr(op="sub", args=[other, self])
 
     @overload
-    def __mul__(self, other: "Expr | float | int") -> "Expr": ...
+    def __mul__(self, other: Expr | float | int) -> Expr: ...
 
     @overload
-    def __mul__(self, other: "Vec3Expr | Vec3Expression") -> "Vec3Expression": ...
+    def __mul__(self, other: Vec2Expr | Vec2Expression) -> Vec2Expression: ...
+
+    @overload
+    def __mul__(self, other: Vec4Expr | Vec4Expression) -> Vec4Expression: ...
+
+    @overload
+    def __mul__(self, other: Vec3Expr | Vec3Expression) -> Vec3Expression: ...
 
     def __mul__(
-        self, other: "Expr | float | int | Vec3Expr | Vec3Expression"
-    ) -> "Expr | Vec3Expression":
+        self, other: Expr | float | int | Vec2Expr | Vec2Expression | Vec3Expr | Vec3Expression | Vec4Expr | Vec4Expression
+    ) -> Expr | Vec2Expression | Vec3Expression | Vec4Expression:
         """Multiply scalars directly or distribute over a vector expression."""
-        if isinstance(other, Vec3Expr | Vec3Expression):
+        if isinstance(other, Vec2Expr | Vec2Expression | Vec3Expr | Vec3Expression | Vec4Expr | Vec4Expression):
             return other.__rmul__(self)
         return Expr(op="mul", args=[self, other])
 
-    def __rmul__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __rmul__(self, other: Expr | float | int) -> Expr:
         """Right multiplication: other * self"""
         return Expr(op="mul", args=[other, self])
 
-    def __truediv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __truediv__(self, other: Expr | float | int) -> Expr:
         """Division: self / other"""
         return Expr(op="div", args=[self, other])
 
-    def __rtruediv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __rtruediv__(self, other: Expr | float | int) -> Expr:
         """Right division: other / self"""
         return Expr(op="div", args=[other, self])
 
-    def __floordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __floordiv__(self, other: Expr | float | int) -> Expr:
         """Floor division: self // other."""
         return Expr(op="floordiv", args=[self, other])
 
-    def __rfloordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __rfloordiv__(self, other: Expr | float | int) -> Expr:
         """Right floor division: other // self."""
         return Expr(op="floordiv", args=[other, self])
 
-    def __pow__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __pow__(self, other: Expr | float | int) -> Expr:
         """Power: self ** other"""
         return Expr(op="pow", args=[self, other])
 
-    def __rpow__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __rpow__(self, other: Expr | float | int) -> Expr:
         """Right power: other ** self"""
         return Expr(op="pow", args=[other, self])
 
-    def __mod__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __mod__(self, other: Expr | float | int) -> Expr:
         """Python modulo: the nonzero result has the divisor's sign."""
         return Expr(op="mod", args=[self, other])
 
-    def __rmod__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __rmod__(self, other: Expr | float | int) -> Expr:
         """Python modulo other % self, with the divisor's sign."""
         return Expr(op="mod", args=[other, self])
 
-    def __neg__(self) -> "Expr":
+    def __neg__(self) -> Expr:
         """Negation: -self"""
         return Expr(op="neg", args=[self])
 
 
 
-    def __iadd__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __iadd__(self, other: Expr | float | int) -> Expr:
         """In-place addition: self += other"""
         return self.__add__(other)
 
-    def __isub__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __isub__(self, other: Expr | float | int) -> Expr:
         """In-place subtraction: self -= other"""
         return self.__sub__(other)
 
-    def __imul__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __imul__(self, other: Expr | float | int) -> Expr:
         """In-place multiplication: self *= other"""
         return self.__mul__(other)
 
-    def __itruediv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __itruediv__(self, other: Expr | float | int) -> Expr:
         """In-place division: self /= other"""
         return self.__truediv__(other)
 
-    def __ifloordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __ifloordiv__(self, other: Expr | float | int) -> Expr:
         """In-place floor division: self //= other."""
         return self.__floordiv__(other)
 
-    def __ipow__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __ipow__(self, other: Expr | float | int) -> Expr:
         """In-place power: self **= other"""
         return self.__pow__(other)
 
-    def __imod__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __imod__(self, other: Expr | float | int) -> Expr:
         """In-place modulo: self %= other"""
         return self.__mod__(other)
 
 
 
-    def sin(self) -> "Expr":
+    def sin(self) -> Expr:
         """Sine function: sin(self)"""
         return Expr(op="sin", args=[self])
 
-    def cos(self) -> "Expr":
+    def cos(self) -> Expr:
         """Cosine function: cos(self)"""
         return Expr(op="cos", args=[self])
 
-    def tan(self) -> "Expr":
+    def tan(self) -> Expr:
         """Tangent function: tan(self)"""
         return Expr(op="tan", args=[self])
 
-    def asin(self) -> "Expr":
+    def asin(self) -> Expr:
         """Arcsine function: asin(self)"""
         return Expr(op="asin", args=[self])
 
-    def acos(self) -> "Expr":
+    def acos(self) -> Expr:
         """Arccosine function: acos(self)"""
         return Expr(op="acos", args=[self])
 
-    def atan(self) -> "Expr":
+    def atan(self) -> Expr:
         """Arctangent function: atan(self)"""
         return Expr(op="atan", args=[self])
 
-    def sqrt(self) -> "Expr":
+    def sqrt(self) -> Expr:
         """Square root: sqrt(self)"""
         return Expr(op="sqrt", args=[self])
 
-    def abs(self) -> "Expr":
+    def abs(self) -> Expr:
         """Absolute value: abs(self)"""
         return Expr(op="abs", args=[self])
 
-    def floor(self) -> "Expr":
+    def floor(self) -> Expr:
         """Floor function: floor(self)"""
         return Expr(op="floor", args=[self])
 
-    def ceil(self) -> "Expr":
+    def ceil(self) -> Expr:
         """Ceiling function: ceil(self)"""
         return Expr(op="ceil", args=[self])
 
-    def round(self) -> "Expr":
+    def round(self) -> Expr:
         """Round to the nearest integer, breaking ties toward even."""
         return Expr(op="round", args=[self])
 
-    def min(self, other: Union["Expr", float, int]) -> "Expr":
+    def min(self, other: Expr | float | int) -> Expr:
         """Element-wise minimum, propagating NaN."""
         return Expr(op="min", args=[self, other])
 
-    def max(self, other: Union["Expr", float, int]) -> "Expr":
+    def max(self, other: Expr | float | int) -> Expr:
         """Element-wise maximum, propagating NaN."""
         return Expr(op="max", args=[self, other])
 
     def clamp(
         self,
-        min_val: Union["Expr", float, int],
-        max_val: Union["Expr", float, int],
-    ) -> "Expr":
+        min_val: Expr | float | int,
+        max_val: Expr | float | int,
+    ) -> Expr:
         """Clip between bounds; NaN propagates and reversed bounds return max_val."""
         return Expr(op="clamp", args=[self, min_val, max_val])
 
-    def exp(self) -> "Expr":
+    def exp(self) -> Expr:
         """Exponential function: e^self"""
         return Expr(op="exp", args=[self])
 
-    def ln(self) -> "Expr":
+    def ln(self) -> Expr:
         """Natural logarithm: ln(self)"""
         return Expr(op="ln", args=[self])
 
-    def log10(self) -> "Expr":
+    def log10(self) -> Expr:
         """Base-10 logarithm: log10(self)"""
         return Expr(op="log10", args=[self])
 
-    def log2(self) -> "Expr":
+    def log2(self) -> Expr:
         """Base-2 logarithm: log2(self)"""
         return Expr(op="log2", args=[self])
 
-    def sign(self) -> "Expr":
+    def sign(self) -> Expr:
         """Return -1.0, 0.0, or 1.0 by sign, propagating NaN."""
         return Expr(op="sign", args=[self])
 
-    def fract(self) -> "Expr":
+    def fract(self) -> Expr:
         """Signed fractional part: fract(self) = self - trunc(self)."""
         return Expr(op="fract", args=[self])
 
-    def mod(self, other: Union["Expr", float, int]) -> "Expr":
+    def mod(self, other: Expr | float | int) -> Expr:
         """Python modulo: the nonzero result has the divisor's sign."""
         return Expr(op="mod", args=[self, other])
 
     def lerp(
         self,
-        other: Union["Expr", float, int],
-        t: Union["Expr", float, int],
-    ) -> "Expr":
+        other: Expr | float | int,
+        t: Expr | float | int,
+    ) -> Expr:
         """Linear interpolation: lerp(self, other, t) = self + t * (other - self)"""
         return Expr(op="lerp", args=[self, other, t])
 
-    def random(self, *, stream: int = 0) -> "Expr":
+    def random(self, *, stream: int = 0) -> Expr:
         """Generate a random float in [0.0, 1.0).
 
         The draw depends on the entity id and stream, not on this expression's
@@ -271,11 +282,11 @@ class Expr:
 
     def random_range(
         self,
-        min: Union["Expr", float, int],
-        max: Union["Expr", float, int],
+        min: Expr | float | int,
+        max: Expr | float | int,
         *,
         stream: int = 0,
-    ) -> "Expr":
+    ) -> Expr:
         """Generate a random float in [min, max).
 
         The draw depends on the entity id and stream, not on this expression's
@@ -292,9 +303,9 @@ class Expr:
 
     def where(
         self,
-        true_value: Union["Expr", float, int],
-        false_value: Union["Expr", float, int],
-    ) -> "Expr":
+        true_value: Expr | float | int,
+        false_value: Expr | float | int,
+    ) -> Expr:
         """Conditional selection: return true_value if self is true, else false_value.
 
         This allows per-entity branching based on boolean conditions.
@@ -308,31 +319,31 @@ class Expr:
         """
         return Expr(op="where", args=[self, true_value, false_value])
 
-    def __eq__(self, other: Union["Expr", float, int]) -> "Expr":  # type: ignore[override]
+    def __eq__(self, other: Expr | float | int) -> Expr:  # type: ignore[override]
         """Equal to: self == other"""
         return Expr(op="eq", args=[self, other])
 
-    def __ne__(self, other: Union["Expr", float, int]) -> "Expr":  # type: ignore[override]
+    def __ne__(self, other: Expr | float | int) -> Expr:  # type: ignore[override]
         """Not equal to: self != other"""
         return Expr(op="ne", args=[self, other])
 
-    def __lt__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __lt__(self, other: Expr | float | int) -> Expr:
         """Less than: self < other"""
         return Expr(op="lt", args=[self, other])
 
-    def __le__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __le__(self, other: Expr | float | int) -> Expr:
         """Less than or equal: self <= other"""
         return Expr(op="le", args=[self, other])
 
-    def __gt__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __gt__(self, other: Expr | float | int) -> Expr:
         """Greater than: self > other"""
         return Expr(op="gt", args=[self, other])
 
-    def __ge__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __ge__(self, other: Expr | float | int) -> Expr:
         """Greater than or equal: self >= other"""
         return Expr(op="ge", args=[self, other])
 
-    def __and__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __and__(self, other: Expr | float | int) -> Expr:
         """Logical AND: self & other
 
         Combines two boolean expressions with AND logic.
@@ -345,7 +356,7 @@ class Expr:
         """
         return Expr(op="and", args=[self, other])
 
-    def __or__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __or__(self, other: Expr | float | int) -> Expr:
         """Logical OR: self | other
 
         Combines two boolean expressions with OR logic.
@@ -358,7 +369,7 @@ class Expr:
         """
         return Expr(op="or", args=[self, other])
 
-    def __invert__(self) -> "Expr":
+    def __invert__(self) -> Expr:
         """Logical NOT: ~self
 
         Inverts a boolean expression.
@@ -428,7 +439,7 @@ class FieldExpr(Expr):
         self._parent_proxy = parent
 
 
-    def __iadd__(self, other: Union["Expr", float, int]) -> "FieldExpr":
+    def __iadd__(self, other: Expr | float | int) -> FieldExpr:
         """In-place addition: self += other.
 
         Returns the expression; the property setter handles execution.
@@ -436,33 +447,33 @@ class FieldExpr(Expr):
         """
         return self.__add__(other)
 
-    def __isub__(self, other: Union["Expr", float, int]) -> "FieldExpr":
+    def __isub__(self, other: Expr | float | int) -> FieldExpr:
         """In-place subtraction: self -= other."""
         return self.__sub__(other)
 
-    def __imul__(self, other: Union["Expr", float, int]) -> "FieldExpr":
+    def __imul__(self, other: Expr | float | int) -> FieldExpr:
         """In-place multiplication: self *= other."""
         return self.__mul__(other)
 
     def __itruediv__(
-        self, other: Union["Expr", float, int]
-    ) -> "FieldExpr":
+        self, other: Expr | float | int
+    ) -> FieldExpr:
         """In-place division: self /= other."""
         return self.__truediv__(other)
 
-    def __ifloordiv__(self, other: Union["Expr", float, int]) -> "Expr":
+    def __ifloordiv__(self, other: Expr | float | int) -> Expr:
         """In-place floor division: self //= other."""
         return self.__floordiv__(other)
 
-    def __ipow__(self, other: Union["Expr", float, int]) -> "FieldExpr":
+    def __ipow__(self, other: Expr | float | int) -> FieldExpr:
         """In-place power: self **= other."""
         return self.__pow__(other)
 
-    def __imod__(self, other: Union["Expr", float, int]) -> "FieldExpr":
+    def __imod__(self, other: Expr | float | int) -> FieldExpr:
         """In-place modulo: self %= other."""
         return self.__mod__(other)
 
-    def set(self, value: Union["Expr", float, int]) -> None:
+    def set(self, value: Expr | float | int) -> None:
         """
         Set this field to the result of an expression.
 
@@ -483,388 +494,429 @@ class FieldExpr(Expr):
         return f"Field({self.field_name})"
 
 
-class Vec3Expression:
-    """Vec3 expression built from component-wise operations, allowing bulk
-    assignments instead of three separate field writes:
-
-        transform.translation = transform.translation + velocity
-    """
-
-    __slots__ = ("x", "y", "z")
-
-    def __init__(
-        self,
-        x_expr: Expr | float | int,
-        y_expr: Expr | float | int,
-        z_expr: Expr | float | int,
-    ) -> None:
-        """Create a Vec3 expression from component expressions."""
-        self.x = (
-            x_expr
-            if isinstance(x_expr, Expr)
-            else Expr("const", [x_expr])
-        )
-        self.y = (
-            y_expr
-            if isinstance(y_expr, Expr)
-            else Expr("const", [y_expr])
-        )
-        self.z = (
-            z_expr
-            if isinstance(z_expr, Expr)
-            else Expr("const", [z_expr])
-        )
-
-    def __add__(
-        self, other: Union["Vec3Expression", "Vec3Expr"]
-    ) -> "Vec3Expression":
-        """Vec3 + Vec3"""
-        return Vec3Expression(
-            x_expr=self.x + other.x,
-            y_expr=self.y + other.y,
-            z_expr=self.z + other.z,
-        )
-
-    def __sub__(
-        self, other: Union["Vec3Expression", "Vec3Expr"]
-    ) -> "Vec3Expression":
-        """Vec3 - Vec3"""
-        return Vec3Expression(
-            x_expr=self.x - other.x,
-            y_expr=self.y - other.y,
-            z_expr=self.z - other.z,
-        )
-
-    def __mul__(self, scalar: Expr | float | int) -> "Vec3Expression":
-        """Vec3 * scalar"""
-        return Vec3Expression(
-            x_expr=self.x * scalar,
-            y_expr=self.y * scalar,
-            z_expr=self.z * scalar,
-        )
-
-    def __rmul__(self, scalar: Expr | float | int) -> "Vec3Expression":
-        """scalar * Vec3"""
-        return self.__mul__(scalar)
-
-    def __truediv__(self, scalar: Expr | float | int) -> "Vec3Expression":
-        """Vec3 / scalar"""
-        return Vec3Expression(
-            x_expr=self.x / scalar,
-            y_expr=self.y / scalar,
-            z_expr=self.z / scalar,
-        )
-
-    def __repr__(self) -> str:
-        return f"Vec3({self.x}, {self.y}, {self.z})"
+class _AssignmentParent(Protocol):
+    def _trigger_assignment(self, field_name: str, value: object) -> None: ...
 
 
-class Vec3Expr:
-    """
-    Proxy for Vec3 fields (translation, scale) that provides x/y/z access.
-
-    When you access `transform.translation`, you get a Vec3Expr.
-    Then `translation.x` returns a FieldExpr for the x component.
-
-    Also supports Vec3 arithmetic operations for bulk assignment:
-        transform.translation = transform.translation + velocity
-    """
-
+class _CompositeField:
     __slots__ = ("_parent_proxy", "base_field_name", "base_offset", "component_id")
 
-    def __init__(
-        self, component_id: int, base_field_name: str, base_offset: int
-    ) -> None:
-        """
-        Create a Vec3 field proxy.
-
-        Args:
-            component_id: Bevy's ComponentId
-            base_field_name: The Vec3 field name ("translation", "scale")
-            base_offset: Byte offset of the Vec3 within the component
-        """
+    def __init__(self, component_id: int, base_field_name: str, base_offset: int) -> None:
         self.component_id = component_id
         self.base_field_name = base_field_name
         self.base_offset = base_offset
-        # Store reference to the parent ViewColMut for triggering assignments
-        self._parent_proxy: Any = None
+        self._parent_proxy: _AssignmentParent | None = None
 
-    def _set_parent(self, parent: Any) -> None:  # noqa: ANN401  # Internal method, parent can be various proxy types
-        """Internal: Set the parent proxy for assignment triggering."""
+    def _set_parent(self, parent: _AssignmentParent | None) -> None:
         self._parent_proxy = parent
 
+    def _assign(self, name: str, value: object) -> None:
+        parent = self._parent_proxy
+        if parent is None:
+            raise RuntimeError(_READ_ONLY_VIEW_ASSIGNMENT)
+        parent._trigger_assignment(name, value)
 
-    def __add__(
-        self, other: Union["Vec3Expr", "Vec3Expression"]
-    ) -> "Vec3Expression":
-        """Vec3 addition: self + other"""
-        return Vec3Expression(
-            x_expr=self.x + other.x,
-            y_expr=self.y + other.y,
-            z_expr=self.z + other.z,
-        )
+    def _lane(self, name: str, index: int) -> FieldExpr:
+        proxy = FieldExpr(self.component_id, f"{self.base_field_name}.{name}", self.base_offset + index * 4)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
 
-    def __sub__(
-        self, other: Union["Vec3Expr", "Vec3Expression"]
-    ) -> "Vec3Expression":
-        """Vec3 subtraction: self - other"""
-        return Vec3Expression(
-            x_expr=self.x - other.x,
-            y_expr=self.y - other.y,
-            z_expr=self.z - other.z,
-        )
 
-    def __mul__(self, scalar: Expr | float | int) -> "Vec3Expression":
-        """Vec3 scalar multiplication: self * scalar"""
-        return Vec3Expression(
-            x_expr=self.x * scalar,
-            y_expr=self.y * scalar,
-            z_expr=self.z * scalar,
-        )
+class _VectorArithmetic[VectorResult]:
+    __slots__ = ()
 
-    def __rmul__(self, scalar: Expr | float | int) -> "Vec3Expression":
-        """Vec3 scalar multiplication: scalar * self"""
+    def _coordinates(self) -> tuple[Expr, ...]:
+        raise NotImplementedError
+
+    def _build(self, coordinates: tuple[Expr, ...]) -> VectorResult:
+        raise NotImplementedError
+
+    def _combine(self, other: _VectorArithmetic[VectorResult], op: str) -> VectorResult:
+        if not isinstance(other, _VectorArithmetic):
+            raise TypeError("Vector arithmetic requires a vector expression")
+        left, right = self._coordinates(), other._coordinates()
+        if len(left) != len(right):
+            raise TypeError("Vector dimensions must match")
+        return self._build(tuple(Expr(op, [a, b]) for a, b in zip(left, right, strict=True)))
+
+    def __add__(self, other: _VectorArithmetic[VectorResult]) -> VectorResult:
+        return self._combine(other, "add")
+
+    def __sub__(self, other: _VectorArithmetic[VectorResult]) -> VectorResult:
+        return self._combine(other, "sub")
+
+    def __mul__(self, scalar: Expr | float | int) -> VectorResult:
+        return self._build(tuple(coordinate * scalar for coordinate in self._coordinates()))
+
+    def __rmul__(self, scalar: Expr | float | int) -> VectorResult:
         return self.__mul__(scalar)
 
-    def __truediv__(self, scalar: Expr | float | int) -> "Vec3Expression":
-        """Vec3 scalar division: self / scalar"""
-        return Vec3Expression(
-            x_expr=self.x / scalar,
-            y_expr=self.y / scalar,
-            z_expr=self.z / scalar,
-        )
+    def __truediv__(self, scalar: Expr | float | int) -> VectorResult:
+        return self._build(tuple(coordinate / scalar for coordinate in self._coordinates()))
 
-    @property
-    def x(self) -> FieldExpr:
-        """Access the x component (first f32 in Vec3)"""
-        proxy = FieldExpr(
-            self.component_id,
-            f"{self.base_field_name}.x",
-            self.base_offset + 0,  # x is at offset 0
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
 
-    @x.setter
-    def x(self, value: Expr | float | int) -> None:
-        """Set the x component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.x", value)
+class Vec2Expression(_VectorArithmetic["Vec2Expression"]):
+    """A 2-coordinate vector expression evaluated before assignment."""
 
-    @property
-    def y(self) -> FieldExpr:
-        """Access the y component (second f32 in Vec3)"""
-        proxy = FieldExpr(
-            self.component_id,
-            f"{self.base_field_name}.y",
-            self.base_offset + 4,  # y is at offset 4 (after 1 f32)
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+    __slots__ = ('x', 'y')
 
-    @y.setter
-    def y(self, value: Expr | float | int) -> None:
-        """Set the y component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.y", value)
+    def __init__(self, x_expr: Expr | float | int, y_expr: Expr | float | int) -> None:
+        self.x = _ensure_expr(x_expr)
+        self.y = _ensure_expr(y_expr)
 
-    @property
-    def z(self) -> FieldExpr:
-        """Access the z component (third f32 in Vec3)"""
-        proxy = FieldExpr(
-            self.component_id,
-            f"{self.base_field_name}.z",
-            self.base_offset + 8,  # z is at offset 8 (after 2 f32s)
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+    def _coordinates(self) -> tuple[Expr, ...]:
+        return (self.x, self.y)
 
-    @z.setter
-    def z(self, value: Expr | float | int) -> None:
-        """Set the z component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.z", value)
-
-    def set(self, vec3_expr: Union["Vec3Expression", "Vec3Expr"]) -> None:
-        """Bulk assignment of all three components at once (x, then y, then z):
-
-            transform.translation.set(transform.translation + velocity)
-        """
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.x", vec3_expr.x)
-        parent._trigger_assignment(f"{self.base_field_name}.y", vec3_expr.y)
-        parent._trigger_assignment(f"{self.base_field_name}.z", vec3_expr.z)
+    def _build(self, coordinates: tuple[Expr, ...]) -> Vec2Expression:
+        return Vec2Expression(coordinates[0], coordinates[1])
 
     def __repr__(self) -> str:
-        return f"Vec3Field({self.base_field_name})"
+        return f"Vec2({self.x}, {self.y})"
 
 
-class Vec2Expr:
-    """
-    Proxy for Vec2 fields that provides x/y access.
+class Vec2Expr(_CompositeField, _VectorArithmetic[Vec2Expression]):
+    """A View Vec2 field with whole-value assignment and vector arithmetic."""
 
-    When you access a Vec2 field in a View, you get a Vec2Expr.
-    Then `.x` / `.y` return FieldExpr instances for the individual components.
-    """
+    __slots__ = ()
 
-    __slots__ = ("_parent_proxy", "base_field_name", "base_offset", "component_id")
+    def _coordinates(self) -> tuple[Expr, ...]:
+        return (self.x, self.y)
 
-    def __init__(
-        self, component_id: int, base_field_name: str, base_offset: int
-    ) -> None:
-        self.component_id = component_id
-        self.base_field_name = base_field_name
-        self.base_offset = base_offset
-        self._parent_proxy: Any = None
-
-    def _set_parent(self, parent: Any) -> None:  # noqa: ANN401
-        """Internal: Set the parent proxy for assignment triggering."""
-        self._parent_proxy = parent
+    def _build(self, coordinates: tuple[Expr, ...]) -> Vec2Expression:
+        return Vec2Expression(coordinates[0], coordinates[1])
 
     @property
     def x(self) -> FieldExpr:
-        """Access the x component (first f32 in Vec2)"""
-        proxy = FieldExpr(
-            self.component_id,
-            f"{self.base_field_name}.x",
-            self.base_offset + 0,
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+        return self._lane("x", 0)
 
     @x.setter
     def x(self, value: Expr | float | int) -> None:
-        """Set the x component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.x", value)
+        self._assign(f"{self.base_field_name}.x", value)
 
     @property
     def y(self) -> FieldExpr:
-        """Access the y component (second f32 in Vec2)"""
-        proxy = FieldExpr(
-            self.component_id,
-            f"{self.base_field_name}.y",
-            self.base_offset + 4,
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+        return self._lane("y", 1)
 
     @y.setter
     def y(self, value: Expr | float | int) -> None:
-        """Set the y component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.y", value)
+        self._assign(f"{self.base_field_name}.y", value)
+
+    def set(self, value: Vec2Expr | Vec2Expression | Vec2) -> None:
+        """Assign after evaluating all coordinates, like whole-field assignment."""
+        self._assign(self.base_field_name, value)
 
     def __repr__(self) -> str:
         return f"Vec2Field({self.base_field_name})"
 
 
-class QuatExpr:
-    """
-    Proxy for Quat fields (rotation) that provides x/y/z/w access.
+class Vec3Expression(_VectorArithmetic["Vec3Expression"]):
+    """A 3-coordinate vector expression evaluated before assignment."""
 
-    When you access `transform.rotation`, you get a QuatExpr.
-    Then `rotation.x` returns a FieldExpr for the x component.
-    """
+    __slots__ = ('x', 'y', 'z')
 
-    __slots__ = ("_parent_proxy", "base_field_name", "base_offset", "component_id")
+    def __init__(self, x_expr: Expr | float | int, y_expr: Expr | float | int, z_expr: Expr | float | int) -> None:
+        self.x = _ensure_expr(x_expr)
+        self.y = _ensure_expr(y_expr)
+        self.z = _ensure_expr(z_expr)
 
-    def __init__(
-        self, component_id: int, base_field_name: str, base_offset: int
-    ) -> None:
-        """
-        Create a Quat field proxy.
+    def _coordinates(self) -> tuple[Expr, ...]:
+        return (self.x, self.y, self.z)
 
-        Args:
-            component_id: Bevy's ComponentId
-            base_field_name: The Quat field name ("rotation")
-            base_offset: Byte offset of the Quat within the component
-        """
-        self.component_id = component_id
-        self.base_field_name = base_field_name
-        self.base_offset = base_offset
-        # Store reference to the parent ViewColMut for triggering assignments
-        self._parent_proxy: Any = None
+    def _build(self, coordinates: tuple[Expr, ...]) -> Vec3Expression:
+        return Vec3Expression(coordinates[0], coordinates[1], coordinates[2])
 
-    def _set_parent(self, parent: Any) -> None:  # noqa: ANN401  # Internal method, parent can be various proxy types
-        """Internal: Set the parent proxy for assignment triggering."""
-        self._parent_proxy = parent
+    def __repr__(self) -> str:
+        return f"Vec3({self.x}, {self.y}, {self.z})"
+
+
+class Vec3Expr(_CompositeField, _VectorArithmetic[Vec3Expression]):
+    """A View Vec3 field with whole-value assignment and vector arithmetic."""
+
+    __slots__ = ()
+
+    def _coordinates(self) -> tuple[Expr, ...]:
+        return (self.x, self.y, self.z)
+
+    def _build(self, coordinates: tuple[Expr, ...]) -> Vec3Expression:
+        return Vec3Expression(coordinates[0], coordinates[1], coordinates[2])
 
     @property
     def x(self) -> FieldExpr:
-        """Access the x component (first f32 in Quat)"""
-        proxy = FieldExpr(
-            self.component_id, f"{self.base_field_name}.x", self.base_offset + 0
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+        return self._lane("x", 0)
 
     @x.setter
     def x(self, value: Expr | float | int) -> None:
-        """Set the x component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.x", value)
+        self._assign(f"{self.base_field_name}.x", value)
 
     @property
     def y(self) -> FieldExpr:
-        """Access the y component (second f32 in Quat)"""
-        proxy = FieldExpr(
-            self.component_id, f"{self.base_field_name}.y", self.base_offset + 4
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+        return self._lane("y", 1)
 
     @y.setter
     def y(self, value: Expr | float | int) -> None:
-        """Set the y component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.y", value)
+        self._assign(f"{self.base_field_name}.y", value)
 
     @property
     def z(self) -> FieldExpr:
-        """Access the z component (third f32 in Quat)"""
-        proxy = FieldExpr(
-            self.component_id, f"{self.base_field_name}.z", self.base_offset + 8
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+        return self._lane("z", 2)
 
     @z.setter
     def z(self, value: Expr | float | int) -> None:
-        """Set the z component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.z", value)
+        self._assign(f"{self.base_field_name}.z", value)
+
+    def set(self, vec3_expr: Vec3Expr | Vec3Expression | Vec3) -> None:
+        """Assign after evaluating all coordinates, like whole-field assignment."""
+        self._assign(self.base_field_name, vec3_expr)
+
+    def __repr__(self) -> str:
+        return f"Vec3Field({self.base_field_name})"
+
+
+class Vec4Expression(_VectorArithmetic["Vec4Expression"]):
+    """A 4-coordinate vector expression evaluated before assignment."""
+
+    __slots__ = ('w', 'x', 'y', 'z')
+
+    def __init__(self, x_expr: Expr | float | int, y_expr: Expr | float | int, z_expr: Expr | float | int, w_expr: Expr | float | int) -> None:
+        self.x = _ensure_expr(x_expr)
+        self.y = _ensure_expr(y_expr)
+        self.z = _ensure_expr(z_expr)
+        self.w = _ensure_expr(w_expr)
+
+    def _coordinates(self) -> tuple[Expr, ...]:
+        return (self.x, self.y, self.z, self.w)
+
+    def _build(self, coordinates: tuple[Expr, ...]) -> Vec4Expression:
+        return Vec4Expression(coordinates[0], coordinates[1], coordinates[2], coordinates[3])
+
+    def __repr__(self) -> str:
+        return f"Vec4({self.x}, {self.y}, {self.z}, {self.w})"
+
+
+class Vec4Expr(_CompositeField, _VectorArithmetic[Vec4Expression]):
+    """A View Vec4 field with whole-value assignment and vector arithmetic."""
+
+    __slots__ = ()
+
+    def _coordinates(self) -> tuple[Expr, ...]:
+        return (self.x, self.y, self.z, self.w)
+
+    def _build(self, coordinates: tuple[Expr, ...]) -> Vec4Expression:
+        return Vec4Expression(coordinates[0], coordinates[1], coordinates[2], coordinates[3])
+
+    @property
+    def x(self) -> FieldExpr:
+        return self._lane("x", 0)
+
+    @x.setter
+    def x(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.x", value)
+
+    @property
+    def y(self) -> FieldExpr:
+        return self._lane("y", 1)
+
+    @y.setter
+    def y(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.y", value)
+
+    @property
+    def z(self) -> FieldExpr:
+        return self._lane("z", 2)
+
+    @z.setter
+    def z(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.z", value)
 
     @property
     def w(self) -> FieldExpr:
-        """Access the w component (fourth f32 in Quat)"""
-        proxy = FieldExpr(
-            self.component_id, f"{self.base_field_name}.w", self.base_offset + 12
-        )
-        proxy._set_parent(self._parent_proxy)
-        return proxy
+        return self._lane("w", 3)
 
     @w.setter
     def w(self, value: Expr | float | int) -> None:
-        """Set the w component using an expression or constant."""
-        parent = _assignment_parent(self._parent_proxy)
-        parent._trigger_assignment(f"{self.base_field_name}.w", value)
+        self._assign(f"{self.base_field_name}.w", value)
+
+    def set(self, value: Vec4Expr | Vec4Expression | Vec4) -> None:
+        """Assign after evaluating all coordinates, like whole-field assignment."""
+        self._assign(self.base_field_name, value)
+
+    def __repr__(self) -> str:
+        return f"Vec4Field({self.base_field_name})"
+
+
+class QuatExpr(_CompositeField):
+    """A View quaternion field with lane access and whole-value copying."""
+
+    __slots__ = ()
+
+    @property
+    def x(self) -> FieldExpr:
+        return self._lane("x", 0)
+
+    @x.setter
+    def x(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.x", value)
+
+    @property
+    def y(self) -> FieldExpr:
+        return self._lane("y", 1)
+
+    @y.setter
+    def y(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.y", value)
+
+    @property
+    def z(self) -> FieldExpr:
+        return self._lane("z", 2)
+
+    @z.setter
+    def z(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.z", value)
+
+    @property
+    def w(self) -> FieldExpr:
+        return self._lane("w", 3)
+
+    @w.setter
+    def w(self, value: Expr | float | int) -> None:
+        self._assign(f"{self.base_field_name}.w", value)
+
+    def set(self, value: QuatExpr | Quat) -> None:
+        """Copy all quaternion coordinates in one assignment."""
+        self._assign(self.base_field_name, value)
 
     def __repr__(self) -> str:
         return f"QuatField({self.base_field_name})"
 
 
-class Vec4Expr(QuatExpr):
-    """
-    Proxy for Vec4 fields that provides x/y/z/w access.
-
-    `vec4.x` returns a FieldExpr for the x component.
-    """
+class Mat2Expr(_CompositeField):
+    """A View Mat2 field with column axes and whole-value copying."""
 
     __slots__ = ()
 
+    @property
+    def x_axis(self) -> Vec2Expr:
+        proxy = Vec2Expr(self.component_id, f"{self.base_field_name}.x_axis", self.base_offset + 0)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @x_axis.setter
+    def x_axis(self, value: Vec2Expr | Vec2Expression | Vec2) -> None:
+        self._assign(f"{self.base_field_name}.x_axis", value)
+
+    @property
+    def y_axis(self) -> Vec2Expr:
+        proxy = Vec2Expr(self.component_id, f"{self.base_field_name}.y_axis", self.base_offset + 8)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @y_axis.setter
+    def y_axis(self, value: Vec2Expr | Vec2Expression | Vec2) -> None:
+        self._assign(f"{self.base_field_name}.y_axis", value)
+
+    def set(self, value: Mat2Expr | Mat2) -> None:
+        """Copy all matrix coordinates in one assignment."""
+        self._assign(self.base_field_name, value)
+
     def __repr__(self) -> str:
-        return f"Vec4Field({self.base_field_name})"
+        return f"Mat2Field({self.base_field_name})"
+
+
+class Mat3Expr(_CompositeField):
+    """A View Mat3 field with column axes and whole-value copying."""
+
+    __slots__ = ()
+
+    @property
+    def x_axis(self) -> Vec3Expr:
+        proxy = Vec3Expr(self.component_id, f"{self.base_field_name}.x_axis", self.base_offset + 0)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @x_axis.setter
+    def x_axis(self, value: Vec3Expr | Vec3Expression | Vec3) -> None:
+        self._assign(f"{self.base_field_name}.x_axis", value)
+
+    @property
+    def y_axis(self) -> Vec3Expr:
+        proxy = Vec3Expr(self.component_id, f"{self.base_field_name}.y_axis", self.base_offset + 12)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @y_axis.setter
+    def y_axis(self, value: Vec3Expr | Vec3Expression | Vec3) -> None:
+        self._assign(f"{self.base_field_name}.y_axis", value)
+
+    @property
+    def z_axis(self) -> Vec3Expr:
+        proxy = Vec3Expr(self.component_id, f"{self.base_field_name}.z_axis", self.base_offset + 24)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @z_axis.setter
+    def z_axis(self, value: Vec3Expr | Vec3Expression | Vec3) -> None:
+        self._assign(f"{self.base_field_name}.z_axis", value)
+
+    def set(self, value: Mat3Expr | Mat3) -> None:
+        """Copy all matrix coordinates in one assignment."""
+        self._assign(self.base_field_name, value)
+
+    def __repr__(self) -> str:
+        return f"Mat3Field({self.base_field_name})"
+
+
+class Mat4Expr(_CompositeField):
+    """A View Mat4 field with column axes and whole-value copying."""
+
+    __slots__ = ()
+
+    @property
+    def x_axis(self) -> Vec4Expr:
+        proxy = Vec4Expr(self.component_id, f"{self.base_field_name}.x_axis", self.base_offset + 0)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @x_axis.setter
+    def x_axis(self, value: Vec4Expr | Vec4Expression | Vec4) -> None:
+        self._assign(f"{self.base_field_name}.x_axis", value)
+
+    @property
+    def y_axis(self) -> Vec4Expr:
+        proxy = Vec4Expr(self.component_id, f"{self.base_field_name}.y_axis", self.base_offset + 16)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @y_axis.setter
+    def y_axis(self, value: Vec4Expr | Vec4Expression | Vec4) -> None:
+        self._assign(f"{self.base_field_name}.y_axis", value)
+
+    @property
+    def z_axis(self) -> Vec4Expr:
+        proxy = Vec4Expr(self.component_id, f"{self.base_field_name}.z_axis", self.base_offset + 32)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @z_axis.setter
+    def z_axis(self, value: Vec4Expr | Vec4Expression | Vec4) -> None:
+        self._assign(f"{self.base_field_name}.z_axis", value)
+
+    @property
+    def w_axis(self) -> Vec4Expr:
+        proxy = Vec4Expr(self.component_id, f"{self.base_field_name}.w_axis", self.base_offset + 48)
+        proxy._set_parent(self._parent_proxy)
+        return proxy
+
+    @w_axis.setter
+    def w_axis(self, value: Vec4Expr | Vec4Expression | Vec4) -> None:
+        self._assign(f"{self.base_field_name}.w_axis", value)
+
+    def set(self, value: Mat4Expr | Mat4) -> None:
+        """Copy all matrix coordinates in one assignment."""
+        self._assign(self.base_field_name, value)
+
+    def __repr__(self) -> str:
+        return f"Mat4Field({self.base_field_name})"
+
 
 
 def const(value: float) -> Expr:

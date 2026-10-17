@@ -261,14 +261,24 @@ def batch_update(
     light.intensity = 500.0 + expr.cos(t) * 200.0
 ```
 
-For View Vec3 expressions, scalar multiplication accepts either operand order:
-`column.scale.set(column.translation.x * column.translation)` evaluates the
+For View Vec2, Vec3 and Vec4 expressions, scalar multiplication accepts either operand order:
+`column.scale = column.translation.x * column.translation` evaluates the
 factor separately for each entity. Compound scalar and vector expressions also
-work; assign the vector through `.set()`.
+work. Whole-value assignment accepts a matching field proxy, native math value
+or vector expression; `.set()` remains equivalent. Both evaluate all coordinates
+before writing, so `column.translation = column.translation.x * column.translation`
+uses the original x value for every coordinate.
+
+Quat and Mat2/Mat3/Mat4 fields support whole-value copying, including native
+constants. Matrix proxies expose column-major `x_axis`/`y_axis`/`z_axis`/`w_axis`
+vectors up to their dimension. These axes support scalar lane writes and whole
+vector assignment, for example `column.model.x_axis = 2 * column.model.x_axis`.
+Quaternion composition and matrix multiplication are not View expression
+operations. Matrix fields do not expose Numba batch buffers.
 
 Key View rules:
 - Vector subfields accept only their declared coordinates (`x`/`y` for Vec2,
-  `x`/`y`/`z` for Vec3, and `x`/`y`/`z`/`w` for Quat); a typo raises
+  `x`/`y`/`z` for Vec3, and `x`/`y`/`z`/`w` for Vec4 or Quat); a typo raises
   `AttributeError` instead of silently skipping the update.
 - `column_mut(T)` for mutable, `column(T)` for read-only
 - Read-only `column(T)` rejects writes: `col.a = value` and `col.a.set(value)`
