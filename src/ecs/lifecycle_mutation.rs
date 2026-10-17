@@ -176,6 +176,7 @@ impl<F: FnOnce(&mut World) -> bool> LifecycleMutationAdapter for MainLifecycleAd
                 PyOn {
                     event_data,
                     entity: Some(entity),
+                    propagation: None,
                 },
             )
             .expect("lifecycle On allocation failed");

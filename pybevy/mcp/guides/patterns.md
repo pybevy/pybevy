@@ -1074,6 +1074,11 @@ app.add_message(DamageEvent)
 
 > **Note:** `@message` validates the `Message` base; register the channel with `app.add_message(...)` in `@entrypoint`. Adding a message type requires editing and reloading the scene; world/MCP calls cannot register channels.
 
+Native message wrappers can also be registered with `app.add_message(T)` when
+their owning plugin is absent. Registration preserves an existing buffer and
+registers new buffers for Bevy message maintenance. Full and partial reload use
+the same native channel dispatch.
+
 #### Sending and Receiving
 
 ```python
@@ -1200,6 +1205,36 @@ parameters are invalidated and before the next observer. An immediate
 the caller, and aborts later observers. Lifecycle and deferred
 `Commands.trigger()` callbacks report errors and continue with later
 still-applicable observers.
+
+#### Event propagation
+
+An entity event declared with `@event(propagate=True)` travels up the
+`ChildOf` hierarchy, like Bevy's `#[entity_event(propagate)]`. Once the
+observers for one entity have run, the event moves to that entity's parent
+while its propagation flag is set. `trigger.propagate(True)` sets the flag and
+`trigger.propagate(False)` clears it; the current entity's remaining observers
+still run. `@event(auto_propagate=True)` starts with the flag set.
+`trigger.entity()` and the event's `entity` field name the current entity, and
+`trigger.original_event_target()` names the entity the event was triggered on.
+PyBevy rewrites the `entity` field at each hop, frozen dataclasses included,
+and puts the caller's value back once the dispatch ends. To keep a stable
+value across hops, store `trigger.event().entity` or a copy of the event.
+
+```python
+from dataclasses import dataclass
+from pybevy.decorators import event
+from pybevy.ecs import Entity, Event, On, observer
+
+@event(propagate=True)
+@dataclass
+class Click(Event):
+    entity: Entity
+
+@observer
+def on_click(trigger: On[Click]) -> None:
+    if trigger.entity() == trigger.original_event_target():
+        trigger.propagate(True)
+```
 
 ## Data-carrying enum variants
 

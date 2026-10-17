@@ -925,8 +925,13 @@ class SkinnedMesh(Component):
     def inverse_bindposes(self, value: Handle[SkinnedMeshInverseBindposes]) -> None: ...
 
     @property
-    def joints(self) -> list[Entity]:
-        """Get the list of joint (bone) entities."""
+    def joints(self) -> LiveList[Entity]:
+        """The joint (bone) entities.
+
+        Through `Query[Mut[SkinnedMesh]]` list edits write the component; through
+        `Query[SkinnedMesh]` and on an owned value the list is read-only, so assign a
+        whole list there. The list expires with its system.
+        """
 
     @joints.setter
     def joints(self, value: list[Entity]) -> None: ...

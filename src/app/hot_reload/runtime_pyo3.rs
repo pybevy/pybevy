@@ -37,10 +37,9 @@ use crate::{
     ecs::{
         conditional_system::PyConditionalSystem,
         dynamic_system::{DynamicSystemHandle, LastErrorBuffer, SystemErrorBuffer},
+        messages::register_message_channel,
         observer_registry::{ObserverRegistry, PreparedObserverRegistration},
-        python_message::{
-            clear_python_messages, prune_python_message_aliases, register_python_message,
-        },
+        python_message::{clear_python_messages, prune_python_message_aliases},
         resource_type::register_custom_resource,
         state::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
@@ -976,13 +975,9 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         Python::attach(|py| -> PyResult<()> {
             for msg_type in &defs.messages {
                 let bound = msg_type.bind(py);
-                let outcome = register_python_message(py, world, bound, generation)?;
+                register_message_channel(py, world, bound, generation)?;
                 if is_verbose() {
-                    eprintln!(
-                        "   → Registered message '{}' as {:?}",
-                        bound.name()?,
-                        outcome
-                    );
+                    eprintln!("   → Registered message '{}'", bound.name()?);
                 }
             }
             Ok(())

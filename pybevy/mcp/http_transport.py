@@ -11,6 +11,8 @@ Endpoint: POST/GET/DELETE /mcp
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import json
 import logging
 import signal
@@ -22,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
-from .bridge import McpBridge
+from .bridge import McpBridge, _valid_rpc_header
 
 type JsonDict = dict[str, Any]
 
@@ -112,6 +114,23 @@ def _origin_allowed(origin: str, bind_host: str) -> bool:
     return bound not in _UNSPECIFIED_HOSTS and host == bound
 
 
+def is_loopback_host(host: str) -> bool:
+    """Whether binding ``host`` keeps the server reachable from this machine only."""
+    bound = host.strip("[]").lower()
+    if bound in _LOOPBACK_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(bound).is_loopback
+    except ValueError:
+        return False
+
+
+def _bearer_matches(header: str | None, token: str) -> bool:
+    if header is None or not header.startswith("Bearer "):
+        return False
+    return hmac.compare_digest(header.removeprefix("Bearer ").encode(), token.encode())
+
+
 def _format_sse_event(data: JsonDict) -> str:
     """Format a JSON-RPC message as an SSE event."""
     payload = json.dumps(data, separators=(",", ":"))
@@ -131,6 +150,7 @@ class McpHttpHandler(BaseHTTPRequestHandler):
 
     store: SessionStore
     bind_host: str = "127.0.0.1"
+    token: str | None = None
 
     def log_message(self, format: str, *args: object) -> None:
         logger.debug(format, *args)
@@ -143,8 +163,20 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         self._error(403, f"Origin '{origin}' is not allowed")
         return True
 
-    def do_POST(self) -> None:
+    def _reject_request(self) -> bool:
         if self._reject_foreign_origin():
+            return True
+        if self.token is None or _bearer_matches(
+            self.headers.get("Authorization"), self.token
+        ):
+            return False
+        self._error(
+            401, "this MCP server requires its token as `Authorization: Bearer <token>`"
+        )
+        return True
+
+    def do_POST(self) -> None:
+        if self._reject_request():
             return
         if self.path != "/mcp":
             self._error(404, "Not found")
@@ -195,6 +227,14 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         session: McpSession | None = None
 
         first = messages[0]
+        if (
+            len(messages) == 1
+            and isinstance(first, dict)
+            and first.get("method") == "initialize"
+            and not _valid_rpc_header(first)
+        ):
+            self._json_response(200, _invalid_request())
+            return
         is_initialize = (
             len(messages) == 1
             and isinstance(first, dict)
@@ -221,9 +261,8 @@ class McpHttpHandler(BaseHTTPRequestHandler):
                 if not isinstance(msg, dict):
                     responses.append(_invalid_request())
                     continue
-                is_notification = "id" not in msg and "method" in msg
                 result = session.bridge._dispatch(msg)
-                if result is not None and not is_notification:
+                if result is not None:
                     responses.append(result)
                 notifications.extend(session.bridge.drain_notifications())
 
@@ -257,7 +296,7 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def do_GET(self) -> None:
-        if self._reject_foreign_origin():
+        if self._reject_request():
             return
         if self.path == "/mcp":
             self._error(405, "GET not supported; use POST")
@@ -265,7 +304,7 @@ class McpHttpHandler(BaseHTTPRequestHandler):
             self._error(404, "Not found")
 
     def do_DELETE(self) -> None:
-        if self._reject_foreign_origin():
+        if self._reject_request():
             return
         if self.path != "/mcp":
             self._error(404, "Not found")
@@ -303,8 +342,21 @@ class McpHttpHandler(BaseHTTPRequestHandler):
         self._json_response(status, {"error": message})
 
 
-def run_mcp_http(host: str = "127.0.0.1", port: int = 8080, *, record: bool = False) -> None:
-    """Start the MCP Streamable HTTP transport server."""
+def run_mcp_http(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    *,
+    record: bool = False,
+    token: str | None = None,
+) -> None:
+    """Start the MCP Streamable HTTP transport server.
+
+    A non-loopback ``host`` requires ``token``: sessions can run Python code.
+    """
+    if not token and not is_loopback_host(host):
+        raise ValueError(
+            f"binding the MCP HTTP server to {host!r} requires a bearer token"
+        )
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -314,6 +366,7 @@ def run_mcp_http(host: str = "127.0.0.1", port: int = 8080, *, record: bool = Fa
     store = SessionStore(record=record)
     McpHttpHandler.store = store
     McpHttpHandler.bind_host = host
+    McpHttpHandler.token = token or None
 
     stop_event = threading.Event()
 

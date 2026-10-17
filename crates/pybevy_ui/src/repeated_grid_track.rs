@@ -3,10 +3,11 @@ use bevy::{
     ui::{GridTrack, GridTrackRepetition, RepeatedGridTrack},
 };
 use pybevy_core::{
+    FieldStorage,
     domain::{FINITE, check_for},
     public_error::grid_template_track_type,
 };
-use pyo3::{exceptions::PyTypeError, prelude::*};
+use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
 
 use crate::{
     grid_track::{PyGridTrack, grid_track_factory},
@@ -82,6 +83,25 @@ pub fn extract_repeated_grid_track_from_any(
         &type_name.to_string_lossy(),
     )))
 }
+
+#[pyclass(
+    name = "_RepeatedGridTracks",
+    module = "pybevy.ui",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyRepeatedGridTracks {
+    storage: FieldStorage<Vec<RepeatedGridTrack>>,
+}
+
+pybevy_core::impl_live_value_list!(
+    PyRepeatedGridTracks,
+    "_RepeatedGridTracks",
+    Vec<RepeatedGridTrack>,
+    RepeatedGridTrack,
+    PyRepeatedGridTrack,
+    extract = extract_repeated_grid_track_from_any
+);
 
 impl From<RepeatedGridTrack> for PyRepeatedGridTrack {
     fn from(track: RepeatedGridTrack) -> Self {

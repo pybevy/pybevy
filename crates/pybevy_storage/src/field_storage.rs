@@ -273,6 +273,22 @@ impl<T: Clone> FieldStorage<T> {
         }
     }
 
+    /// Check write authority and path validity without borrowing mutable data
+    /// or advancing Bevy's change tick.
+    pub fn check_write_access(&self) -> Result<(), StorageError> {
+        match &self.inner {
+            FieldStorageInner::Owned { .. } => Ok(()),
+            FieldStorageInner::OwnedReadOnly { .. } => Err(StorageError::OwnedFieldReadOnly),
+            FieldStorageInner::BorrowedRef(borrow) => {
+                borrow.validity().check_read()?;
+                Err(StorageError::ReadOnly)
+            }
+            FieldStorageInner::BorrowedMut(borrow) => borrow.validity().check_write(),
+            FieldStorageInner::Revalidating(field) => field.check_write_access(),
+            FieldStorageInner::Source(source) => source.check_write_access(),
+        }
+    }
+
     /// Get mutable reference to the value, checking validity and write permission
     #[inline(always)]
     pub fn as_mut(&mut self) -> Result<StorageMut<'_, T>, StorageError> {
@@ -494,6 +510,10 @@ impl<T: Clone> FieldStorage<T> {
     }
 
     /// Resolve an indexed child, checking that the index still exists on every access.
+    ///
+    /// Borrowed storage yields a checked path rooted at the live collection, so a
+    /// child escaped before the collection shrinks errors instead of reading or
+    /// writing another element. Owned storage yields a read-only snapshot.
     pub fn borrow_resolved_index_as<F: Clone + 'static, S, W>(
         &self,
         index: usize,
@@ -501,7 +521,7 @@ impl<T: Clone> FieldStorage<T> {
         write: WriteIndex<T, F>,
     ) -> Result<W, StorageError>
     where
-        T: 'static,
+        T: Send + Sync + 'static,
         S: BorrowableStorage<F>,
         W: FromBorrowedStorage<S>,
     {
@@ -515,7 +535,10 @@ impl<T: Clone> FieldStorage<T> {
             _ => {
                 let current = self.as_ref()?;
                 let value = read(&current, index).ok_or(StorageError::IndexOutOfRange)?;
-                S::snapshot(value)
+                match RevalidatingSource::from_borrowed_field(self) {
+                    Some(source) => S::revalidating_source(source.index(index, read, write)),
+                    None => S::snapshot(value),
+                }
             }
         };
         Ok(W::from_borrowed(storage))
@@ -1062,5 +1085,76 @@ mod tests {
         };
         assert!(storage.as_ref().is_ok());
         assert!(matches!(storage.as_mut(), Err(StorageError::ReadOnly)));
+    }
+
+    struct IndexedChild(FieldStorage<i32>);
+
+    impl FromBorrowedStorage<FieldStorage<i32>> for IndexedChild {
+        fn from_borrowed(storage: FieldStorage<i32>) -> Self {
+            Self(storage)
+        }
+    }
+
+    fn indexed_child(list: &FieldStorage<Vec<i32>>, index: usize) -> IndexedChild {
+        list.borrow_resolved_index_as::<i32, FieldStorage<i32>, IndexedChild>(
+            index,
+            |values, index| values.get(index),
+            |values, index| values.get_mut(index),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn indexed_child_of_mutable_borrow_writes_through_and_rechecks_its_index() {
+        let mut values = vec![10, 20];
+        let validity = ValidityFlag::new_write().with_access_mode(AccessMode::Write);
+        let _guard = ValidityGuard::new(validity.flag.clone());
+        // SAFETY: `values` outlives `list` and is written only through it.
+        let mut list = unsafe { FieldStorage::borrowed(&mut values as *mut Vec<i32>, validity) };
+
+        let mut child = indexed_child(&list, 1);
+        *child.0.as_mut().unwrap() = 25;
+        assert_eq!(*list.as_ref().unwrap(), vec![10, 25]);
+
+        list.as_mut().unwrap().truncate(1);
+        assert!(matches!(
+            child.0.as_ref(),
+            Err(StorageError::IndexOutOfRange)
+        ));
+        assert!(matches!(
+            child.0.as_mut(),
+            Err(StorageError::IndexOutOfRange)
+        ));
+        assert_eq!(values, vec![10]);
+    }
+
+    #[test]
+    fn indexed_child_of_read_only_borrow_rejects_writes() {
+        let mut values = vec![10, 20];
+        let validity = ValidityFlag::new_read().with_access_mode(AccessMode::Read);
+        let guard = ValidityGuard::new(validity.flag.clone());
+        // SAFETY: `values` outlives `list`, and a read borrow never writes.
+        let list = unsafe { FieldStorage::borrowed(&mut values as *mut Vec<i32>, validity) };
+
+        let mut child = indexed_child(&list, 0);
+        assert_eq!(*child.0.as_ref().unwrap(), 10);
+        assert!(matches!(child.0.as_mut(), Err(StorageError::ReadOnly)));
+        drop(guard);
+        assert!(child.0.as_ref().is_err());
+        assert_eq!(values, vec![10, 20]);
+    }
+
+    #[test]
+    fn indexed_child_of_snapshot_is_read_only() {
+        let list = <FieldStorage<Vec<i32>> as BorrowableStorage<_>>::snapshot(&vec![10]);
+        let mut child = indexed_child(&list, 0);
+        assert!(matches!(
+            child.0.as_mut(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
+        assert!(matches!(
+            list.check_write_access(),
+            Err(StorageError::OwnedFieldReadOnly)
+        ));
     }
 }

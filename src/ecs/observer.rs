@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use bevy::ecs::entity::Entity;
+use pybevy_core::public_error::event_propagation_method_requires_declaration;
+use pybevy_ecs::shared::observer_registry::{ObserverPropagationControl, ObserverPropagationState};
 use pyo3::{
     PyTraverseError, PyTypeInfo, PyVisit, exceptions::PyTypeError, prelude::*, types::PyType,
 };
@@ -45,6 +48,19 @@ impl PyEvent {
         _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
     ) -> Self {
         PyEvent
+    }
+
+    /// Events propagate only when `@event(propagate=True)` overrides this.
+    #[classattr]
+    #[pyo3(name = "__event_propagate__")]
+    fn event_propagate_default() -> bool {
+        false
+    }
+
+    #[classattr]
+    #[pyo3(name = "__event_auto_propagate__")]
+    fn event_auto_propagate_default() -> bool {
+        false
     }
 }
 
@@ -108,6 +124,54 @@ pub struct PyDespawn;
 pub struct PyOn {
     pub(crate) event_data: Py<PyAny>,
     pub(crate) entity: Option<bevy::ecs::entity::Entity>,
+    pub(crate) propagation: Option<PyObserverPropagation>,
+}
+
+/// The propagation state an `@event(propagate=True)` dispatch shares with
+/// each observer it runs.
+#[derive(Clone, Debug)]
+pub(crate) struct PyObserverPropagation {
+    original_target: Entity,
+    control: ObserverPropagationControl,
+}
+
+impl From<&ObserverPropagationState> for PyObserverPropagation {
+    fn from(state: &ObserverPropagationState) -> Self {
+        Self {
+            original_target: state.original_target(),
+            control: state.control(),
+        }
+    }
+}
+
+/// Class attributes `@event` sets from its `propagate` and `auto_propagate`
+/// arguments.
+pub(crate) const EVENT_PROPAGATE_ATTR: &str = "__event_propagate__";
+pub(crate) const EVENT_AUTO_PROPAGATE_ATTR: &str = "__event_auto_propagate__";
+
+/// The initial propagation flag of an `@event(propagate=True)` event, or
+/// `None` for an event that runs observers on its target only.
+pub(crate) fn event_auto_propagate(event: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
+    let event_type = event.get_type();
+    let Some(propagate) = event_type.getattr_opt(EVENT_PROPAGATE_ATTR)? else {
+        return Ok(None);
+    };
+    if !propagate.extract::<bool>()? {
+        return Ok(None);
+    }
+    Ok(Some(
+        event_type
+            .getattr(EVENT_AUTO_PROPAGATE_ATTR)?
+            .extract::<bool>()?,
+    ))
+}
+
+impl PyOn {
+    fn propagation(&self, method: &str) -> PyResult<&PyObserverPropagation> {
+        self.propagation.as_ref().ok_or_else(|| {
+            PyTypeError::new_err(event_propagation_method_requires_declaration(method))
+        })
+    }
 }
 
 #[pymethods]
@@ -323,6 +387,25 @@ impl PyOn {
     /// Get the entity this event targets (for EntityEvents with 'entity' field).
     pub fn entity(&self) -> Option<PyEntity> {
         self.entity.map(PyEntity)
+    }
+
+    /// Continue to the target's `ChildOf` parent once this entity's observers
+    /// have run, or stop there.
+    pub fn propagate(&self, should_propagate: bool) -> PyResult<()> {
+        self.propagation("propagate")?.control.set(should_propagate);
+        Ok(())
+    }
+
+    /// Whether the event continues to the next entity.
+    pub fn get_propagate(&self) -> PyResult<bool> {
+        Ok(self.propagation("get_propagate")?.control.get())
+    }
+
+    /// The entity the event targeted when it was first triggered.
+    pub fn original_event_target(&self) -> PyResult<PyEntity> {
+        Ok(PyEntity(
+            self.propagation("original_event_target")?.original_target,
+        ))
     }
 }
 

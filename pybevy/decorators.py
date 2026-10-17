@@ -85,27 +85,46 @@ def message(cls: type[MT]) -> type[MT]:
     return cls
 
 
-def event(cls: type[ET]) -> type[ET]:
+def event(
+    cls: type[ET] | None = None,
+    *,
+    propagate: bool = False,
+    auto_propagate: bool = False,
+) -> type[ET] | Callable[[type[ET]], type[ET]]:
     """Validate and mark a custom observer-event class.
 
     The class must still inherit from :class:`Event`. Observers remain
     explicitly registered with ``app.add_observer(...)``.
-    """
-    if not issubclass(cls, Event):
-        raise TypeError(f"{cls.__name__} must inherit from Event.")
-    key = f"{cls.__module__}.{cls.__qualname__}"
-    if _component_cache_enabled and key in _event_cache:
-        from ._internal.reload_modules import stage_class_body
 
-        # Runtime observers are keyed by the event class, so it keeps its identity.
-        cached = _event_cache[key]
-        stage_class_body(cached, cls)
-        return cached  # type: ignore[return-value]
-    _guard_missing_constructor(cls, "@event")
-    cls.__pybevy_event_decorated__ = True
-    if _component_cache_enabled:
-        _event_cache[key] = cls
-    return cls
+    ``propagate=True`` lets an entity-targeted event continue up the
+    ``ChildOf`` hierarchy after an observer calls ``trigger.propagate(True)``,
+    like Bevy's ``#[entity_event(propagate)]``. ``auto_propagate=True`` starts
+    with propagation enabled and implies ``propagate=True``.
+    """
+
+    def decorate(event_cls: type[ET]) -> type[ET]:
+        if not issubclass(event_cls, Event):
+            raise TypeError(f"{event_cls.__name__} must inherit from Event.")
+        # Set before caching so a partial reload adopts changed arguments.
+        event_cls.__event_propagate__ = propagate or auto_propagate
+        event_cls.__event_auto_propagate__ = auto_propagate
+        key = f"{event_cls.__module__}.{event_cls.__qualname__}"
+        if _component_cache_enabled and key in _event_cache:
+            from ._internal.reload_modules import stage_class_body
+
+            # Runtime observers are keyed by the event class, so it keeps its identity.
+            cached = _event_cache[key]
+            stage_class_body(cached, event_cls)
+            return cached  # type: ignore[return-value]
+        _guard_missing_constructor(event_cls, "@event")
+        event_cls.__pybevy_event_decorated__ = True
+        if _component_cache_enabled:
+            _event_cache[key] = event_cls
+        return event_cls
+
+    if cls is None:
+        return decorate
+    return decorate(cls)
 
 
 def _annotation_name(annotation: object) -> str:

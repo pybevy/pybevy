@@ -1,6 +1,7 @@
 use bevy::{asset::Handle, mesh::skinning::SkinnedMesh};
 use pybevy_core::{
-    ComponentStorage, Omittable, PyComponent, PyEntity, PyHandle, repr::object_repr,
+    ComponentStorage, Omittable, PyComponent, PyEntity, PyEntityLiveList, PyHandle,
+    repr::object_repr,
 };
 use pybevy_macros::pycomponent;
 use pyo3::{exceptions::PyTypeError, prelude::*, types::PyList};
@@ -88,8 +89,8 @@ impl PySkinnedMesh {
     }
 
     #[getter]
-    pub fn joints(&self) -> PyResult<Vec<PyEntity>> {
-        Ok(self.as_ref()?.joints.iter().map(|&e| PyEntity(e)).collect())
+    pub fn joints(&self) -> PyResult<PyEntityLiveList> {
+        Ok(self.storage.borrow_field_as(|mesh| &mesh.joints)?)
     }
 
     #[setter]

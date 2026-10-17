@@ -1008,6 +1008,10 @@ mod tests {
     }
 
     impl MessageBridge for FakeMessage {
+        fn register_messages(&self, _world: &mut World) {
+            unreachable!("identity-only fake bridge")
+        }
+
         fn bevy_type_id(&self) -> TypeId {
             self.type_id
         }

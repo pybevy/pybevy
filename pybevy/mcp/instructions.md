@@ -1,5 +1,10 @@
 # PyBevy MCP - Python bindings for the Bevy game engine
 
+Both transports validate JSON-RPC 2.0 request envelopes before dispatch:
+use `jsonrpc: "2.0"`, a string method and a string, number or null ID.
+Boolean, array and object IDs are rejected with Invalid Request (-32600).
+Omit the ID for a notification; valid notifications receive no reply.
+
 ## Workflow
 
 **Guide URIs are MCP resources, not files.** Call `get_guide("patterns")` (or another name returned by `get_guide("index")`) in every client. You may instead read `guide://...` through the client's MCP resource capability. Some clients also generate resource aliases such as `get_guide_patterns`, but those aliases are optional. Never pass a `guide://` URI to a filesystem `read`, `open`, or shell command.

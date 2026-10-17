@@ -1,5 +1,9 @@
-use pybevy_storage::StorageError;
-use pyo3::{IntoPyObjectExt, prelude::*, pyclass::CompareOp, types::PyList};
+use pybevy_storage::{FieldStorage, StorageError};
+use pyo3::{
+    IntoPyObjectExt, exceptions::PyValueError, prelude::*, pyclass::CompareOp, types::PyList,
+};
+
+use crate::public_error;
 
 pub fn compare_live_sequence(
     py: Python<'_>,
@@ -52,6 +56,24 @@ pub fn normalize_insert_index(index: isize, len: usize) -> usize {
     }
 }
 
+/// The error for a length change on a fixed-length live collection.
+///
+/// Expired and read-only storage report their access error first, checked
+/// without resolving mutable storage, so a rejected edit never marks the
+/// owner changed.
+pub fn resize_error<C: Clone>(storage: &FieldStorage<C>, name: &str) -> PyErr {
+    match storage
+        .as_ref()
+        .map(drop)
+        .and_then(|()| storage.check_write_access())
+    {
+        Err(error) => error.into(),
+        Ok(()) => PyValueError::new_err(public_error::fixed_length_collection(name)),
+    }
+}
+
+/// Live list over a `Vec` of copy scalars, with `from_storage` and
+/// `validate_resize` hooks on the wrapper.
 #[macro_export]
 macro_rules! impl_live_scalar_list {
     ($py_name:ident, $py_class_name:literal, $collection:ty, $elem:ty) => {
@@ -61,53 +83,166 @@ macro_rules! impl_live_scalar_list {
             }
         }
 
+        $crate::__live_sequence!(@convert $py_name, $elem, $elem);
+        $crate::__live_sequence!(@value_item $py_name, $elem);
+        $crate::__live_sequence!(@read $py_name, $py_class_name, $elem);
+        $crate::__live_sequence!(@resizable $py_name, $elem, $elem, validate_resize);
+    };
+}
+
+/// Live list over a `Vec` of immutable values, returned by value on every read.
+///
+/// `extract = path` converts an incoming element with
+/// `fn(&Bound<'_, PyAny>) -> PyResult<Native>` for unions such as `impl Into<T>`.
+#[macro_export]
+macro_rules! impl_live_value_list {
+    (
+        $py_name:ident,
+        $py_class_name:literal,
+        $collection:ty,
+        $native_elem:ty,
+        $py_elem:ty
+    ) => {
+        $crate::__live_sequence!(@from_borrowed $py_name, $collection);
+        $crate::__live_sequence!(@convert $py_name, $native_elem, $py_elem);
+        $crate::__live_sequence!(@value_item $py_name, $py_elem);
+        $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
+        $crate::__live_sequence!(@resizable $py_name, $py_elem, $py_elem);
+    };
+    (
+        $py_name:ident,
+        $py_class_name:literal,
+        $collection:ty,
+        $native_elem:ty,
+        $py_elem:ty,
+        extract = $extract:path
+    ) => {
+        $crate::__live_sequence!(@from_borrowed $py_name, $collection);
+        $crate::__live_sequence!(@extract $py_name, $native_elem, $extract);
+        $crate::__live_sequence!(@value_item $py_name, $py_elem);
+        $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
+        $crate::__live_sequence!(
+            @resizable $py_name, $py_elem, pyo3::Bound<'_, pyo3::PyAny>
+        );
+    };
+}
+
+/// Live fixed-length array of immutable values, such as `[HalfSpace; 6]`.
+///
+/// Items are assignable by index; every resize raises `ValueError` naming
+/// `$field`.
+#[macro_export]
+macro_rules! impl_live_value_array {
+    (
+        $py_name:ident,
+        $py_class_name:literal,
+        $collection:ty,
+        $native_elem:ty,
+        $py_elem:ty,
+        fixed = $field:literal
+    ) => {
+        $crate::__live_sequence!(@from_borrowed $py_name, $collection);
+        $crate::__live_sequence!(@convert $py_name, $native_elem, $py_elem);
+        $crate::__live_sequence!(@value_item $py_name, $py_elem);
+        $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
+        $crate::__live_sequence!(@fixed $py_name, $py_elem, $field);
+    };
+}
+
+/// Live list over a `Vec` of nested value or field wrappers; each item borrows
+/// its element through a checked index path.
+#[macro_export]
+macro_rules! impl_live_field_list {
+    (
+        $py_name:ident,
+        $py_class_name:literal,
+        $collection:ty,
+        $native_elem:ty,
+        $py_elem:ty,
+        $elem_storage:ty
+    ) => {
+        $crate::__live_sequence!(@from_borrowed $py_name, $collection);
+        $crate::__live_sequence!(@convert $py_name, $native_elem, $py_elem);
+        $crate::__live_sequence!(@field_item $py_name, $native_elem, $py_elem, $elem_storage);
+        $crate::__live_sequence!(@read $py_name, $py_class_name, $py_elem);
+        $crate::__live_sequence!(@resizable $py_name, $py_elem, $py_elem);
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __live_sequence {
+    (@from_borrowed $py_name:ident, $collection:ty) => {
+        impl $crate::FromBorrowedStorage<$crate::FieldStorage<$collection>> for $py_name {
+            fn from_borrowed(storage: $crate::FieldStorage<$collection>) -> Self {
+                Self { storage }
+            }
+        }
+    };
+
+    (@convert $py_name:ident, $native_elem:ty, $py_elem:ty) => {
+        impl $py_name {
+            // The `?` converts an infallible `From` as well as a fallible `TryFrom`.
+            #[allow(clippy::needless_question_mark)]
+            fn live_element(value: $py_elem) -> PyResult<$native_elem> {
+                Ok(<$native_elem>::try_from(value)?)
+            }
+        }
+    };
+
+    (@extract $py_name:ident, $native_elem:ty, $extract:path) => {
+        impl $py_name {
+            fn live_element(value: pyo3::Bound<'_, pyo3::PyAny>) -> PyResult<$native_elem> {
+                $extract(&value)
+            }
+        }
+    };
+
+    (@value_item $py_name:ident, $py_elem:ty) => {
+        impl $py_name {
+            #[allow(clippy::clone_on_copy)]
+            fn item(&self, index: isize) -> PyResult<$py_elem> {
+                let values = self.storage.as_ref()?;
+                let index = $crate::live_sequence::normalize_index(index, values.len())?;
+                Ok(<$py_elem>::from(values[index].clone()))
+            }
+        }
+    };
+
+    (@field_item $py_name:ident, $native_elem:ty, $py_elem:ty, $elem_storage:ty) => {
+        impl $py_name {
+            fn item(&self, index: isize) -> PyResult<$py_elem> {
+                let index =
+                    $crate::live_sequence::normalize_index(index, self.storage.as_ref()?.len())?;
+                Ok(self
+                    .storage
+                    .borrow_resolved_index_as::<$native_elem, $elem_storage, $py_elem>(
+                        index,
+                        |values, index| values.get(index),
+                        |values, index| values.get_mut(index),
+                    )?)
+            }
+        }
+    };
+
+    (@read $py_name:ident, $py_class_name:literal, $py_elem:ty) => {
         #[pyo3::pymethods]
         impl $py_name {
             fn __len__(&self) -> PyResult<usize> {
                 Ok(self.storage.as_ref()?.len())
             }
 
-            fn __getitem__(&self, index: isize) -> PyResult<$elem> {
-                let values = self.storage.as_ref()?;
-                let index = $crate::live_sequence::normalize_index(index, values.len())?;
-                Ok(values[index])
-            }
-
-            fn __setitem__(&mut self, index: isize, value: $elem) -> PyResult<()> {
-                let index =
-                    $crate::live_sequence::normalize_index(index, self.storage.as_ref()?.len())?;
-                self.storage.as_mut()?[index] = value;
-                Ok(())
-            }
-
-            fn __delitem__(&mut self, index: isize) -> PyResult<()> {
-                let len = self.storage.as_ref()?.len();
-                let index = $crate::live_sequence::normalize_index(index, len)?;
-                self.validate_resize(len - 1)?;
-                self.storage.as_mut()?.remove(index);
-                Ok(())
+            fn __getitem__(&self, index: isize) -> PyResult<$py_elem> {
+                self.item(index)
             }
 
             fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-                let items = self.to_list()?;
-                Ok(PyList::new(py, items)?.call_method0("__iter__")?.unbind())
-            }
-
-            fn append(&mut self, value: $elem) -> PyResult<()> {
-                self.validate_resize(self.storage.as_ref()?.len() + 1)?;
-                self.storage.as_mut()?.push(value);
-                Ok(())
-            }
-
-            fn extend(slf: &Bound<'_, Self>, values: &Bound<'_, PyAny>) -> PyResult<()> {
-                let values = values
-                    .try_iter()?
-                    .map(|item| item?.extract::<$elem>())
+                let items = (0..self.__len__()?)
+                    .map(|index| {
+                        pyo3::IntoPyObjectExt::into_py_any(self.item(index as isize)?, py)
+                    })
                     .collect::<PyResult<Vec<_>>>()?;
-                let mut list = slf.borrow_mut();
-                list.validate_resize(list.storage.as_ref()?.len() + values.len())?;
-                list.storage.as_mut()?.extend(values);
-                Ok(())
+                Ok(PyList::new(py, items)?.call_method0("__iter__")?.unbind())
             }
 
             fn __richcmp__(
@@ -126,34 +261,15 @@ macro_rules! impl_live_scalar_list {
                 )
             }
 
-            fn insert(&mut self, index: isize, value: $elem) -> PyResult<()> {
-                let len = self.storage.as_ref()?.len();
-                self.validate_resize(len + 1)?;
-                let index = $crate::live_sequence::normalize_insert_index(index, len);
-                self.storage.as_mut()?.insert(index, value);
-                Ok(())
-            }
-
-            #[pyo3(signature = (index = -1))]
-            fn pop(&mut self, index: isize) -> PyResult<$elem> {
-                let len = self.storage.as_ref()?.len();
-                if len == 0 {
-                    return Err($crate::StorageError::EmptyList.into());
-                }
-                let index = $crate::live_sequence::normalize_index(index, len)?;
-                self.validate_resize(len - 1)?;
-                Ok(self.storage.as_mut()?.remove(index))
-            }
-
-            fn clear(&mut self) -> PyResult<()> {
-                self.storage.as_ref()?;
-                self.validate_resize(0)?;
-                self.storage.as_mut()?.clear();
-                Ok(())
-            }
-
-            fn to_list(&self) -> PyResult<Vec<$elem>> {
-                Ok(self.storage.as_ref()?.iter().copied().collect())
+            /// Detached owned copies of the current elements.
+            fn to_list(&self) -> PyResult<Vec<$py_elem>> {
+                Ok(self
+                    .storage
+                    .as_ref()?
+                    .iter()
+                    .cloned()
+                    .map(<$py_elem>::from)
+                    .collect())
             }
 
             fn __repr__(&self) -> PyResult<String> {
@@ -164,72 +280,44 @@ macro_rules! impl_live_scalar_list {
             }
         }
     };
-}
 
-#[macro_export]
-macro_rules! impl_live_field_list {
-    (
-        $py_name:ident,
-        $py_class_name:literal,
-        $collection:ty,
-        $native_elem:ty,
-        $py_elem:ty,
-        $elem_storage:ty
-    ) => {
-        impl $crate::FromBorrowedStorage<$crate::FieldStorage<$collection>> for $py_name {
-            fn from_borrowed(storage: $crate::FieldStorage<$collection>) -> Self {
-                Self { storage }
-            }
-        }
-
-        impl $py_name {
-            fn item(&self, index: isize) -> PyResult<$py_elem> {
-                let index =
-                    $crate::live_sequence::normalize_index(index, self.storage.as_ref()?.len())?;
-                Ok(self
-                    .storage
-                    .borrow_resolved_index_as::<$native_elem, $elem_storage, $py_elem>(
-                        index,
-                        |values, index| values.get(index),
-                        |values, index| values.get_mut(index),
-                    )?)
-            }
-        }
-
+    (@setitem $py_name:ident, $arg:ty) => {
         #[pyo3::pymethods]
         impl $py_name {
-            fn __len__(&self) -> PyResult<usize> {
-                Ok(self.storage.as_ref()?.len())
-            }
-
-            fn __getitem__(&self, index: isize) -> PyResult<$py_elem> {
-                self.item(index)
-            }
-
-            fn __setitem__(&mut self, index: isize, value: $py_elem) -> PyResult<()> {
-                let value = <$native_elem>::try_from(value)?;
+            fn __setitem__(&mut self, index: isize, value: $arg) -> PyResult<()> {
+                let value = Self::live_element(value)?;
                 let index =
                     $crate::live_sequence::normalize_index(index, self.storage.as_ref()?.len())?;
                 self.storage.as_mut()?[index] = value;
                 Ok(())
             }
+        }
+    };
 
+    (@resizable $py_name:ident, $py_elem:ty, $arg:ty $(, $validate:ident)?) => {
+        $crate::__live_sequence!(@setitem $py_name, $arg);
+
+        impl $py_name {
+            #[allow(unreachable_code)]
+            fn live_resize(&self, _length: usize) -> PyResult<()> {
+                $(return self.$validate(_length);)?
+                Ok(())
+            }
+        }
+
+        #[pyo3::pymethods]
+        impl $py_name {
             fn __delitem__(&mut self, index: isize) -> PyResult<()> {
-                let index =
-                    $crate::live_sequence::normalize_index(index, self.storage.as_ref()?.len())?;
+                let len = self.storage.as_ref()?.len();
+                let index = $crate::live_sequence::normalize_index(index, len)?;
+                self.live_resize(len - 1)?;
                 self.storage.as_mut()?.remove(index);
                 Ok(())
             }
 
-            fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-                let items = (0..self.__len__()?)
-                    .map(|index| Py::new(py, self.item(index as isize)?))
-                    .collect::<PyResult<Vec<_>>>()?;
-                Ok(PyList::new(py, items)?.call_method0("__iter__")?.unbind())
-            }
-
-            fn append(&mut self, value: $py_elem) -> PyResult<()> {
-                let value = <$native_elem>::try_from(value)?;
+            fn append(&mut self, value: $arg) -> PyResult<()> {
+                let value = Self::live_element(value)?;
+                self.live_resize(self.storage.as_ref()?.len() + 1)?;
                 self.storage.as_mut()?.push(value);
                 Ok(())
             }
@@ -237,39 +325,19 @@ macro_rules! impl_live_field_list {
             fn extend(slf: &Bound<'_, Self>, values: &Bound<'_, PyAny>) -> PyResult<()> {
                 let values = values
                     .try_iter()?
-                    .map(|item| <$native_elem>::try_from(item?.extract::<$py_elem>()?))
+                    .map(|item| Self::live_element(item?.extract::<$arg>()?))
                     .collect::<PyResult<Vec<_>>>()?;
-                slf.borrow_mut().storage.as_mut()?.extend(values);
+                let mut list = slf.borrow_mut();
+                list.live_resize(list.storage.as_ref()?.len() + values.len())?;
+                list.storage.as_mut()?.extend(values);
                 Ok(())
             }
 
-            fn __richcmp__(
-                &self,
-                other: &Bound<'_, PyAny>,
-                op: pyo3::pyclass::CompareOp,
-            ) -> PyResult<Py<PyAny>> {
-                let py = other.py();
-                let items = self
-                    .to_list()?
-                    .into_iter()
-                    .map(|item| Py::new(py, item))
-                    .collect::<PyResult<Vec<_>>>()?;
-                let items = PyList::new(py, items)?;
-                $crate::live_sequence::compare_live_sequence(
-                    py,
-                    &items,
-                    other,
-                    op,
-                    other.is_instance_of::<Self>(),
-                )
-            }
-
-            fn insert(&mut self, index: isize, value: $py_elem) -> PyResult<()> {
-                let value = <$native_elem>::try_from(value)?;
-                let index = $crate::live_sequence::normalize_insert_index(
-                    index,
-                    self.storage.as_ref()?.len(),
-                );
+            fn insert(&mut self, index: isize, value: $arg) -> PyResult<()> {
+                let value = Self::live_element(value)?;
+                let len = self.storage.as_ref()?.len();
+                self.live_resize(len + 1)?;
+                let index = $crate::live_sequence::normalize_insert_index(index, len);
                 self.storage.as_mut()?.insert(index, value);
                 Ok(())
             }
@@ -281,29 +349,51 @@ macro_rules! impl_live_field_list {
                     return Err($crate::StorageError::EmptyList.into());
                 }
                 let index = $crate::live_sequence::normalize_index(index, len)?;
-                Ok(self.storage.as_mut()?.remove(index).into())
+                self.live_resize(len - 1)?;
+                Ok(<$py_elem>::from(self.storage.as_mut()?.remove(index)))
             }
 
             fn clear(&mut self) -> PyResult<()> {
+                self.storage.as_ref()?;
+                self.live_resize(0)?;
                 self.storage.as_mut()?.clear();
                 Ok(())
             }
+        }
+    };
 
-            fn to_list(&self) -> PyResult<Vec<$py_elem>> {
-                Ok(self
-                    .storage
-                    .as_ref()?
-                    .iter()
-                    .cloned()
-                    .map(Into::into)
-                    .collect())
+    (@fixed $py_name:ident, $py_elem:ty, $field:literal) => {
+        $crate::__live_sequence!(@setitem $py_name, $py_elem);
+        #[pyo3::pymethods]
+        impl $py_name {
+            fn __delitem__(&self, index: isize) -> PyResult<()> {
+                let _ = index;
+                Err($crate::live_sequence::resize_error(&self.storage, $field))
             }
 
-            fn __repr__(&self) -> PyResult<String> {
-                Ok(format!(
-                    concat!($py_class_name, "(len={})"),
-                    self.__len__()?
-                ))
+            fn append(&self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+                let _ = value;
+                Err($crate::live_sequence::resize_error(&self.storage, $field))
+            }
+
+            fn extend(&self, values: &Bound<'_, PyAny>) -> PyResult<()> {
+                let _ = values;
+                Err($crate::live_sequence::resize_error(&self.storage, $field))
+            }
+
+            fn insert(&self, index: isize, value: &Bound<'_, PyAny>) -> PyResult<()> {
+                let _ = (index, value);
+                Err($crate::live_sequence::resize_error(&self.storage, $field))
+            }
+
+            #[pyo3(signature = (index = -1))]
+            fn pop(&self, index: isize) -> PyResult<$py_elem> {
+                let _ = index;
+                Err($crate::live_sequence::resize_error(&self.storage, $field))
+            }
+
+            fn clear(&self) -> PyResult<()> {
+                Err($crate::live_sequence::resize_error(&self.storage, $field))
             }
         }
     };

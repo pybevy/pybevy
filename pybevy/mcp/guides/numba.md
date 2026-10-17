@@ -106,6 +106,12 @@ Numba stores write raw memory and skip PyBevy's value-domain checks, such as
 Keep written values valid yourself, or use a validated View assignment,
 `ViewColumn.set()`, or `write_from_buffer()` when you want the check.
 
+Inside compiled kernels, `i4` and `i8` column reads return integers, and
+integer stores convert directly to the destination integer width. Valid int64
+values retain all bits, including values above `2**53`. Floating column reads
+still promote to float64. Python-side debug reads retain their existing
+float-valued behavior; use World component fields for exact integer inspection.
+
 **Do NOT:**
 - `np.asarray(col)` - raises RuntimeError
 - `col.to_numpy()` - does not exist on ViewColumn

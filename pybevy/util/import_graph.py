@@ -64,9 +64,15 @@ class ImportGraph:
         # reverse: file → set of files that import it
         self._reverse: dict[str, set[str]] = defaultdict(set)
         self._dynamic_importers: set[str] = set()
+        # missing: file → paths that would satisfy its unresolved imports
+        self._missing: dict[str, set[str]] = defaultdict(set)
+        # missing_reverse: candidate path → files waiting for it to exist
+        self._missing_reverse: dict[str, set[str]] = defaultdict(set)
         # all known .py files under watch_root
         self._all_files: set[str] = set()
         self._excluded_directories: dict[str, bool] = {}
+        self._failed_candidate: ImportGraph | None = None
+        self._candidate_changes: set[str] = set()
 
     def _is_excluded_directory(self, directory: str) -> bool:
         """Whether modules in a directory are installed code or hidden state."""
@@ -90,9 +96,13 @@ class ImportGraph:
             self._build_locked()
 
     def _build_locked(self) -> None:
+        self._failed_candidate = None
+        self._candidate_changes.clear()
         self._forward.clear()
         self._reverse.clear()
         self._dynamic_importers.clear()
+        self._missing.clear()
+        self._missing_reverse.clear()
         self._all_files.clear()
 
         for dirpath, dirnames, filenames in os.walk(self._watch_root):
@@ -138,12 +148,17 @@ class ImportGraph:
         self._all_files.update(
             filepath for filepath in normalized if os.path.exists(filepath)
         )
+        for filepath in list(normalized):
+            if os.path.exists(filepath):
+                normalized |= self._missing_reverse.get(filepath, set())
 
         for filepath in normalized:
             old_imports = self._forward.pop(filepath, set())
             for imported in old_imports:
                 self._reverse.get(imported, set()).discard(filepath)
             self._dynamic_importers.discard(filepath)
+            for candidate in self._missing.pop(filepath, set()):
+                self._missing_reverse.get(candidate, set()).discard(filepath)
 
             if not os.path.exists(filepath):
                 # Keep inbound edges so importers of a deleted file are flushed.
@@ -166,6 +181,11 @@ class ImportGraph:
         """Build a candidate graph without publishing it to concurrent readers."""
         with self._lock:
             candidate = ImportGraph(self._watch_root, self._entry_file)
+            candidate._candidate_changes = set(filepaths)
+            if self._failed_candidate is not None:
+                candidate._candidate_changes.update(
+                    self._failed_candidate._candidate_changes
+                )
             candidate._forward = defaultdict(
                 set, {path: set(edges) for path, edges in self._forward.items()}
             )
@@ -173,9 +193,26 @@ class ImportGraph:
                 set, {path: set(edges) for path, edges in self._reverse.items()}
             )
             candidate._dynamic_importers = set(self._dynamic_importers)
+            candidate._missing = defaultdict(
+                set, {path: set(paths) for path, paths in self._missing.items()}
+            )
+            candidate._missing_reverse = defaultdict(
+                set,
+                {path: set(paths) for path, paths in self._missing_reverse.items()},
+            )
             candidate._all_files = set(self._all_files)
-        candidate.update_files(filepaths)
+        candidate.update_files(candidate._candidate_changes)
         return candidate
+
+    def remember_failed_candidate(self, candidate: ImportGraph) -> None:
+        """Keep failed source dependencies visible only to retry planning."""
+        if (
+            candidate._watch_root != self._watch_root
+            or candidate._entry_file != self._entry_file
+        ):
+            raise ValueError("cannot retain an unrelated import graph")
+        with self._lock:
+            self._failed_candidate = candidate
 
     def publish(self, candidate: ImportGraph) -> None:
         """Atomically replace this graph with a successfully loaded candidate."""
@@ -189,12 +226,19 @@ class ImportGraph:
                 self._forward = candidate._forward
                 self._reverse = candidate._reverse
                 self._dynamic_importers = candidate._dynamic_importers
+                self._missing = candidate._missing
+                self._missing_reverse = candidate._missing_reverse
                 self._all_files = candidate._all_files
+                self._failed_candidate = None
+                self._candidate_changes.clear()
 
     def relevant_changed_files(self, changed_files: set[str]) -> set[str]:
         """Return the batch only when it can affect the configured entry file."""
         with self._lock:
-            return self._relevant_changed_files_locked(changed_files)
+            relevant = self._relevant_changed_files_locked(changed_files)
+            if not relevant and self._failed_candidate is not None:
+                relevant = self._failed_candidate.relevant_changed_files(changed_files)
+            return relevant
 
     def _relevant_changed_files_locked(self, changed_files: set[str]) -> set[str]:
         normalized = {
@@ -254,8 +298,11 @@ class ImportGraph:
             visited.add(current)
             expanded.add(current)
 
-            # Add all files that import this one
-            for dependent in self._reverse.get(current, set()):
+            # Add all files that import this one, or would once it exists
+            dependents = self._reverse.get(current, set()) | self._missing_reverse.get(
+                current, set()
+            )
+            for dependent in dependents:
                 if dependent not in visited:
                     queue.append(dependent)
 
@@ -276,6 +323,7 @@ class ImportGraph:
 
         file_dir = os.path.dirname(filepath)
         imports: set[str] = set()
+        missing: set[str] = set()
 
         package_dir = file_dir
         while package_dir.startswith(self._watch_root + os.sep):
@@ -287,7 +335,7 @@ class ImportGraph:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    resolved = self._resolve_module(alias.name, file_dir)
+                    resolved = self._resolve_module(alias.name, file_dir, missing)
                     if resolved:
                         imports.add(resolved)
 
@@ -295,7 +343,7 @@ class ImportGraph:
                 if node.module is not None:
                     level = node.level or 0
                     resolved = self._resolve_import_from(
-                        node.module, level, file_dir, filepath
+                        node.module, level, file_dir, filepath, missing
                     )
                     if resolved:
                         imports.add(resolved)
@@ -303,7 +351,11 @@ class ImportGraph:
                     # attribute of pkg/__init__.py. Both edges are real.
                     for alias in node.names:
                         resolved = self._resolve_import_from(
-                            f"{node.module}.{alias.name}", level, file_dir, filepath
+                            f"{node.module}.{alias.name}",
+                            level,
+                            file_dir,
+                            filepath,
+                            missing,
                         )
                         if resolved:
                             imports.add(resolved)
@@ -311,7 +363,7 @@ class ImportGraph:
                     # Relative import like "from . import foo"
                     for alias in node.names:
                         resolved = self._resolve_import_from(
-                            alias.name, node.level, file_dir, filepath
+                            alias.name, node.level, file_dir, filepath, missing
                         )
                         if resolved:
                             imports.add(resolved)
@@ -322,14 +374,24 @@ class ImportGraph:
         self._forward[filepath] = imports
         for imp in imports:
             self._reverse[imp].add(filepath)
+        if missing:
+            self._missing[filepath] = missing
+            for candidate in missing:
+                self._missing_reverse[candidate].add(filepath)
 
-    def _resolve_module(self, module_name: str, from_dir: str) -> str | None:
-        """Resolve a dotted module name to a file path under watch_root."""
+    def _resolve_module(
+        self, module_name: str, from_dir: str, missing: set[str] | None = None
+    ) -> str | None:
+        """Resolve a dotted module name to a file path under watch_root.
+
+        Unresolved candidate paths inside the project are added to ``missing``.
+        """
         parts = module_name.split(".")
         search_roots = [os.path.realpath(path or os.curdir) for path in sys.path]
         search_roots.extend((self._watch_root, from_dir))
         root_prefix = self._watch_root + os.sep
         seen: set[str] = set()
+        candidates: list[str] = []
         for root in search_roots:
             if (
                 root in seen
@@ -344,8 +406,19 @@ class ImportGraph:
             ):
                 if resolved := self._resolve_candidate(candidate):
                     return resolved
+                candidates.append(candidate)
 
+        self._record_missing(candidates, missing)
         return None  # External module (stdlib, site-packages)
+
+    def _record_missing(self, candidates: list[str], missing: set[str] | None) -> None:
+        if missing is None:
+            return
+        root_prefix = self._watch_root + os.sep
+        for candidate in candidates:
+            path = os.path.realpath(candidate)
+            if path.startswith(root_prefix) and not self._is_excluded_path(path):
+                missing.add(path)
 
     def _resolve_candidate(self, candidate: str) -> str | None:
         path = os.path.realpath(candidate)
@@ -375,6 +448,7 @@ class ImportGraph:
         level: int,
         file_dir: str,
         filepath: str,
+        missing: set[str] | None = None,
     ) -> str | None:
         """Resolve a 'from X import Y' statement."""
         if level > 0:
@@ -384,18 +458,18 @@ class ImportGraph:
                 base_dir = os.path.dirname(base_dir)
 
             parts = module_name.split(".") if module_name else []
-            candidate = os.path.join(base_dir, *parts) + ".py"
-            if resolved := self._resolve_candidate(candidate):
+            module_file = os.path.join(base_dir, *parts) + ".py"
+            if resolved := self._resolve_candidate(module_file):
                 return resolved
 
-            # Package __init__.py
-            candidate = os.path.join(base_dir, *parts, "__init__.py")
-            if resolved := self._resolve_candidate(candidate):
+            package_init = os.path.join(base_dir, *parts, "__init__.py")
+            if resolved := self._resolve_candidate(package_init):
                 return resolved
 
+            self._record_missing([module_file, package_init], missing)
             return None
         # Absolute import
-        return self._resolve_module(module_name, file_dir)
+        return self._resolve_module(module_name, file_dir, missing)
 
     @property
     def file_count(self) -> int:

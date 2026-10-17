@@ -261,6 +261,10 @@ pub(crate) fn generate_message_bridge_tokens(
                 world.components().component_id::<Messages<#bevy_type>>()
             }
 
+            fn register_messages(&self, world: &mut bevy::ecs::world::World) {
+                pybevy_core::registry::register_native_message::<#bevy_type>(world);
+            }
+
             fn register_resource_id(&self, world: &mut bevy::ecs::world::World) -> bevy::ecs::component::ComponentId {
                 use bevy::ecs::message::Messages;
 

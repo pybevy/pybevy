@@ -936,6 +936,15 @@ impl<T: Send + Sync + 'static> BorrowedRootSource<T> {
     ) -> RevalidatingSource<Field> {
         self.extend(&[read_only_accessor_step(accessor, setter, read)])
     }
+
+    pub(crate) fn index<Field: 'static>(
+        &self,
+        index: usize,
+        read: ReadIndex<T, Field>,
+        write: WriteIndex<T, Field>,
+    ) -> RevalidatingSource<Field> {
+        self.extend(&[index_step(index, read, write)])
+    }
 }
 
 fn field_step<Parent: 'static, Field: 'static>(

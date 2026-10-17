@@ -651,6 +651,10 @@ instead report `pixel: [x, y]` with
 a fixed 800x800 scale, not pixels in the returned image. Rays use the selected
 `Camera3d`'s projection and pose; an explicit `position` and `look_at` override
 the pose while retaining that projection. `[400, 400]` is the projection center.
+Depth rays consider visible AABBs on the selected camera's render layers.
+An absent `RenderLayers` component means layer 0. Hidden entities and children
+with hidden inherited visibility are excluded; other cameras' layers are not merged.
+The samples remain AABB approximations rather than GPU depth-buffer values.
 Large orthographic view areas are supported; a small nonzero projection
 determinant is not treated as a singular matrix.
 

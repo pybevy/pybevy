@@ -1,7 +1,8 @@
 use bevy::ui::{ConicGradient, Gradient, LinearGradient, RadialGradient};
 use pybevy_color::color::PyColor;
+use pybevy_core::FieldStorage;
 use pybevy_macros::pyenum;
-use pyo3::prelude::*;
+use pyo3::{prelude::*, types::PyList};
 
 use crate::gradient_snapshot::Snapshot;
 
@@ -25,6 +26,21 @@ pub enum PyGradient {
         value: ConicGradient,
     },
 }
+
+/// The gradients of a `BackgroundGradient` or `BorderGradient`.
+#[pyclass(name = "_Gradients", module = "pybevy.ui", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyGradients {
+    storage: FieldStorage<Vec<Gradient>>,
+}
+
+pybevy_core::impl_live_value_list!(
+    PyGradients,
+    "_Gradients",
+    Vec<Gradient>,
+    Gradient,
+    PyGradient
+);
 
 #[pymethods]
 impl PyGradient {

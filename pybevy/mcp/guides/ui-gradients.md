@@ -150,9 +150,11 @@ Standalone gradients and stops support whole-field assignment. Child values
 returned by `stops`, `position`, `color`, and `anchor_value` are read-only
 snapshots: replace the parent's field instead of mutating a returned child.
 For example, assign `linear.stops = [ColorStop.auto(Color.WHITE)]` or
-`radial.position = UiPosition.TOP_LEFT`. Replace a component's entire
-`gradients` list through `Query[Mut[BackgroundGradient]]` or
-`Query[Mut[BorderGradient]]`; a plain `Query` remains read-only.
+`radial.position = UiPosition.TOP_LEFT`. A component's `gradients` is a live
+list: through `Query[Mut[BackgroundGradient]]` or `Query[Mut[BorderGradient]]`,
+`append`, item assignment, or a whole-list assignment update the component. A
+plain `Query` and an owned component give a read-only list; assign the whole
+list on an owned component.
 
 ```python
 ColorStop.auto(color)              # Evenly distributed

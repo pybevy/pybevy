@@ -379,6 +379,23 @@ class On(Generic[Unpack[OnTypes]]):
         """
     def entity(self) -> Entity | None:
         """Get the entity this event targets (for entity-targeted events)."""
+    def propagate(self, should_propagate: bool) -> None:
+        """Continue to the target's ``ChildOf`` parent after this entity's observers run.
+
+        Available for events declared with ``@event(propagate=True)``.
+        ``propagate(False)`` stops at the current entity; its remaining
+        observers still run.
+        """
+    def get_propagate(self) -> bool:
+        """Whether the event continues to the next entity.
+
+        Available for events declared with ``@event(propagate=True)``.
+        """
+    def original_event_target(self) -> Entity:
+        """The entity the event targeted when it was first triggered.
+
+        Available for events declared with ``@event(propagate=True)``.
+        """
 
 class OnTypeParam:
     """Internal type parameter for On[...] subscript expressions.

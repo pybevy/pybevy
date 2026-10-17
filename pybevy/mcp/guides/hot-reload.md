@@ -187,6 +187,11 @@ on initial load and subsequent reloads. Keep PyBevy options before `--`.
 
 ## Keyboard Shortcuts (CLI hot-reload mode)
 
+If a reload fails while importing a new project dependency, repairing that
+dependency triggers a retry without touching the importing scene. Failed
+module/class changes remain rolled back; only dependency paths are retained
+for retry planning until a reload succeeds.
+
 | Key | Action |
 |-----|--------|
 | **F5** | Trigger Full reload |

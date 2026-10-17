@@ -7,12 +7,12 @@ use bevy::{
     ecs::{component::ComponentId, entity::Entity, world::World},
     prelude::Resource,
 };
-use pybevy_core::registry::global_registry;
+use pybevy_core::{public_error::EVENT_PROPAGATION_REQUIRES_TARGET, registry::global_registry};
 use pybevy_ecs::shared::{
     observer_registry::{
         LifecycleKind, ObserverEntry as CoreObserverEntry, ObserverEventKey, ObserverFilter,
-        ObserverOrigin, ObserverRegistryCore, ObserverTypeKey, PythonObserver,
-        ResolvedObserverComponent,
+        ObserverOrigin, ObserverPropagationState, ObserverRegistryCore, ObserverTypeKey,
+        PythonObserver, ResolvedObserverComponent,
     },
     system_runtime::{ErrorPolicy, execute_observer},
 };
@@ -24,8 +24,9 @@ use pyo3::{
 };
 
 use super::{
+    PyEntity,
     component_type::{ComponentRegistry, PyComponentType},
-    observer::EventType,
+    observer::{EventType, PyObserverPropagation, PyOn, event_auto_propagate},
     resource_type::ResourceRegistry,
     system::{SystemFunction, SystemParamType},
     system_interpreter::{MainPreparedObserver, ObserverRuntimeSinks, new_main_observer},
@@ -244,6 +245,84 @@ impl ObserverRegistry {
         crate::ecs::dynamic_system::validate_system_params(&system_func.params, "observer", py)?;
 
         Ok(event)
+    }
+
+    /// Run a user event's observers on its target. An `@event(propagate=True)`
+    /// event then moves to each `ChildOf` parent while its propagation flag is
+    /// set, as Bevy's `PropagateEntityTrigger` does. The event's `entity`
+    /// field follows the current target and gets its original value back
+    /// afterwards, also when an observer raises.
+    pub(crate) fn dispatch_user_event(
+        py: Python,
+        event: &Bound<'_, PyAny>,
+        target: Option<Entity>,
+        world: &mut World,
+        policy: ErrorPolicy,
+    ) -> PyResult<()> {
+        let mut propagation = match (event_auto_propagate(event)?, target) {
+            (None, _) => None,
+            (Some(auto_propagate), Some(target)) => {
+                Some(ObserverPropagationState::new(target, auto_propagate))
+            }
+            (Some(_), None) => {
+                return Err(PyTypeError::new_err(EVENT_PROPAGATION_REQUIRES_TARGET));
+            }
+        };
+        let original_entity = match (&propagation, target) {
+            (Some(_), Some(target)) if event.hasattr("entity")? => {
+                let original = event.getattr("entity")?;
+                set_event_target(py, event, target)?;
+                Some(original)
+            }
+            _ => None,
+        };
+        let result = Self::run_user_event(py, event, target, world, policy, &mut propagation);
+        let restored =
+            original_entity.map_or(Ok(()), |original| set_event_entity(py, event, &original));
+        result.and(restored)
+    }
+
+    fn run_user_event(
+        py: Python,
+        event: &Bound<'_, PyAny>,
+        target: Option<Entity>,
+        world: &mut World,
+        policy: ErrorPolicy,
+        propagation: &mut Option<ObserverPropagationState>,
+    ) -> PyResult<()> {
+        let mut current = target;
+        loop {
+            let observers = world
+                .get_resource::<ObserverRegistry>()
+                .map(|registry| registry.snapshot_user_event(event, current))
+                .unwrap_or_default();
+            for observer_entry in observers {
+                if !Self::matches_user_filter(&observer_entry, world, current) {
+                    continue;
+                }
+                let on_param = Py::new(
+                    py,
+                    PyOn {
+                        event_data: event.clone().unbind(),
+                        entity: current,
+                        propagation: propagation.as_ref().map(PyObserverPropagation::from),
+                    },
+                )?;
+                let result = Self::invoke(&observer_entry, world, &on_param, current, policy);
+                if policy == ErrorPolicy::PropagateToCaller {
+                    result?;
+                }
+            }
+
+            let Some(state) = propagation.as_mut() else {
+                return Ok(());
+            };
+            if !state.advance_to_parent(world) {
+                return Ok(());
+            }
+            current = Some(state.current_target());
+            set_event_target(py, event, state.current_target())?;
+        }
     }
 
     /// Invoke one owned registry snapshot through the neutral observer shell.
@@ -483,4 +562,25 @@ fn retain_component_type(py: Python, component: &PyComponentType) -> PyResult<Py
     // observer payload until the registry entry is removed.
     let type_object = unsafe { Bound::from_borrowed_ptr(py, type_ptr as *mut ffi::PyObject) };
     Ok(type_object.cast::<PyType>()?.clone().unbind())
+}
+
+/// Point the event's `entity` field at `target`, as Bevy's
+/// `SetEntityEventTarget` does; frozen dataclass events are updated too.
+fn set_event_target(py: Python, event: &Bound<'_, PyAny>, target: Entity) -> PyResult<()> {
+    if !event.hasattr("entity")? {
+        return Ok(());
+    }
+    set_event_entity(py, event, PyEntity(target).into_pyobject(py)?.as_any())
+}
+
+/// Write the event's `entity` field even on a frozen dataclass.
+fn set_event_entity(
+    py: Python,
+    event: &Bound<'_, PyAny>,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<()> {
+    py.get_type::<PyAny>()
+        .getattr("__setattr__")?
+        .call1((event, "entity", value))?;
+    Ok(())
 }

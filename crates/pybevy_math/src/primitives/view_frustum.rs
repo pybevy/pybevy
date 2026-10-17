@@ -3,7 +3,7 @@ use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
-use super::half_space::PyHalfSpace;
+use super::{half_space::PyHalfSpace, half_spaces::PyHalfSpaces};
 use crate::{mat4::PyMat4, vec3::PyVec3};
 
 #[pyvalue]
@@ -93,13 +93,10 @@ impl PyViewFrustum {
     }
 
     #[getter]
-    pub fn half_spaces(&self) -> PyResult<Vec<PyHalfSpace>> {
+    pub fn half_spaces(&self) -> PyResult<PyHalfSpaces> {
         Ok(self
-            .as_ref()?
-            .half_spaces
-            .iter()
-            .map(|&hs| hs.into())
-            .collect())
+            .storage
+            .borrow_field_as(|frustum| &frustum.half_spaces)?)
     }
 
     #[setter]

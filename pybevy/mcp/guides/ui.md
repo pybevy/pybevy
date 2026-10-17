@@ -82,6 +82,11 @@ Use `BorderColor(top=..., right=..., bottom=..., left=...)` when sides need
 different colors. `border.set_all(color)` mutates all sides and returns that same
 border; a queried border still requires `Mut[BorderColor]` and expires with its system.
 Use `BoxShadow([ShadowStyle(color=color), ...])` for layered shadows.
+`BoxShadow.shadows` is a live list: through `Query[Mut[BoxShadow]]`,
+`shadow.shadows.append(ShadowStyle(color=Color.BLACK))` and element writes such as
+`shadow.shadows[0].x_offset = Val.Px(4.0)` update the component. Through a
+plain `Query` and on an owned value it is read-only; assign
+`shadow.shadows = [...]` there.
 
 ## Resolved Geometry
 
@@ -117,7 +122,9 @@ also writable, but the UI stacking system normally recomputes it.
 
 `grid_template_rows` and `grid_template_columns` accept both `GridTrack` and
 `RepeatedGridTrack`; a bare track means one repetition. `grid_auto_rows` and
-`grid_auto_columns` accept only `GridTrack`.
+`grid_auto_columns` accept only `GridTrack`. All four are live lists with the
+`BoxShadow.shadows` access rules: edit them in place through `Query[Mut[Node]]`,
+for example `node.grid_template_columns.append(GridTrack.fr(1.0))`.
 
 ```python
 from pybevy.ui import Display, GridTrack, Node, RepeatedGridTrack

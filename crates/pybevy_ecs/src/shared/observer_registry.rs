@@ -1,16 +1,26 @@
 //! Interpreter-neutral observer identity, indexing, filtering, and cleanup.
 //!
-//! This module deliberately does not invoke Python or inspect a [`World`].
-//! Backend adapters resolve interpreter type objects and component ids before
+//! This module deliberately does not invoke Python. It reads a [`World`] only
+//! to follow `ChildOf` during entity-event propagation. Backend adapters resolve interpreter type objects and component ids before
 //! registration, snapshot entries while the registry is borrowed, and perform
 //! per-callback World checks only after releasing that borrow.
 
-use std::{collections::HashMap, error::Error, fmt, sync::Arc};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use bevy::ecs::{
     component::{Component, ComponentId},
     entity::Entity,
+    hierarchy::ChildOf,
     prelude::Resource,
+    world::World,
 };
 
 /// Stable identity of an interpreter type object for one interpreter lifetime.
@@ -58,6 +68,89 @@ pub enum LifecycleKind {
 pub enum ObserverEventKey {
     User(ObserverTypeKey),
     Lifecycle(LifecycleKind),
+}
+
+/// The propagation flag every observer of one event dispatch shares.
+///
+/// Bevy keeps this flag on `PropagateEntityTrigger`. Observer parameters can
+/// escape their callback and run on free-threaded interpreters, so the flag
+/// is atomic; a write after the dispatch ends has no reader.
+#[derive(Clone, Debug)]
+pub struct ObserverPropagationControl(Arc<AtomicBool>);
+
+impl ObserverPropagationControl {
+    #[must_use]
+    pub fn new(propagate: bool) -> Self {
+        Self(Arc::new(AtomicBool::new(propagate)))
+    }
+
+    pub fn set(&self, propagate: bool) {
+        self.0.store(propagate, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn get(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// Original and current targets of one propagating entity-event dispatch.
+#[derive(Clone, Debug)]
+pub struct ObserverPropagationState {
+    original_target: Entity,
+    current_target: Entity,
+    control: ObserverPropagationControl,
+}
+
+impl ObserverPropagationState {
+    /// Start at `target` with Bevy's `AUTO_PROPAGATE` initial flag.
+    #[must_use]
+    pub fn new(target: Entity, auto_propagate: bool) -> Self {
+        Self {
+            original_target: target,
+            current_target: target,
+            control: ObserverPropagationControl::new(auto_propagate),
+        }
+    }
+
+    #[must_use]
+    pub fn original_target(&self) -> Entity {
+        self.original_target
+    }
+
+    #[must_use]
+    pub fn current_target(&self) -> Entity {
+        self.current_target
+    }
+
+    #[must_use]
+    pub fn control(&self) -> ObserverPropagationControl {
+        self.control.clone()
+    }
+
+    /// Move to `next_target` when the flag is still set, as Bevy's
+    /// `PropagateEntityTrigger` does; the flag carries over to the next entity.
+    pub fn advance(&mut self, next_target: Option<Entity>) -> bool {
+        if !self.control.get() {
+            return false;
+        }
+        let Some(next_target) = next_target else {
+            return false;
+        };
+        self.current_target = next_target;
+        true
+    }
+
+    /// Move to the current target's `ChildOf` parent while the flag is set,
+    /// the traversal Bevy's `#[entity_event(propagate)]` uses by default.
+    pub fn advance_to_parent(&mut self, world: &World) -> bool {
+        let parent = world
+            .get_entity(self.current_target)
+            .ok()
+            .and_then(|entity| entity.get::<ChildOf>())
+            .map(ChildOf::parent);
+        self.advance(parent)
+    }
 }
 
 /// How an observer entered the registry.
@@ -433,6 +526,52 @@ mod tests {
             type_key: ObserverTypeKey::new(index + 100),
             component_id: ComponentId::new(index),
         }
+    }
+
+    #[test]
+    fn propagation_waits_for_opt_in_and_keeps_the_flag_between_entities() {
+        let (child, parent, root) = (entity(1), entity(2), entity(3));
+        let mut state = ObserverPropagationState::new(child, false);
+        let control = state.control();
+
+        assert!(!state.advance(Some(parent)));
+        assert_eq!(state.current_target(), child);
+
+        control.set(true);
+        assert!(state.advance(Some(parent)));
+        assert!(state.advance(Some(root)));
+        assert_eq!(state.current_target(), root);
+        assert_eq!(state.original_target(), child);
+
+        control.set(false);
+        assert!(!state.advance(Some(child)));
+        assert_eq!(state.current_target(), root);
+    }
+
+    #[test]
+    fn advance_to_parent_follows_child_of_and_stops_at_a_missing_parent() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let leaf = world.spawn(ChildOf(root)).id();
+        let mut state = ObserverPropagationState::new(leaf, true);
+
+        assert!(state.advance_to_parent(&world));
+        assert_eq!(state.current_target(), root);
+        assert!(!state.advance_to_parent(&world));
+
+        let mut orphaned = ObserverPropagationState::new(leaf, true);
+        world.despawn(root);
+        assert!(!orphaned.advance_to_parent(&world));
+        assert_eq!(orphaned.current_target(), leaf);
+    }
+
+    #[test]
+    fn auto_propagation_stops_at_the_last_ancestor() {
+        let mut state = ObserverPropagationState::new(entity(1), true);
+
+        assert!(state.control().get());
+        assert!(!state.advance(None));
+        assert_eq!(state.current_target(), entity(1));
     }
 
     fn entry(

@@ -16,8 +16,25 @@ def message(cls: type[MT]) -> type[MT]:
     The message channel must still be registered with ``app.add_message(cls)``.
     """
 
-def event(cls: type[ET]) -> type[ET]:
-    """Validate and mark a custom Event subclass used by observers."""
+@overload
+def event(cls: type[ET]) -> type[ET]: ...
+@overload
+def event(
+    *, propagate: bool = False, auto_propagate: bool = False
+) -> Callable[[type[ET]], type[ET]]: ...
+def event(  # type: ignore[misc]
+    cls: type[ET] | None = None,
+    *,
+    propagate: bool = False,
+    auto_propagate: bool = False,
+) -> type[ET] | Callable[[type[ET]], type[ET]]:
+    """Validate and mark a custom Event subclass used by observers.
+
+    ``propagate=True`` lets an entity-targeted event continue to each
+    ``ChildOf`` parent after an observer calls ``trigger.propagate(True)``,
+    like Bevy's ``#[entity_event(propagate)]``. ``auto_propagate=True`` starts
+    with propagation enabled and implies ``propagate=True``.
+    """
 
 @overload
 def component(cls: type[CT]) -> type[CT]: ...

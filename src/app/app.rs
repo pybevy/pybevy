@@ -79,9 +79,9 @@ use crate::{
         dynamic_system::{
             LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache, lock_or_recover,
         },
-        messages::ensure_builtin_message_resources,
+        messages::{ensure_builtin_message_resources, register_message_channel},
         observer_registry::ObserverRegistry,
-        python_message::{install_python_message_store, register_python_message},
+        python_message::install_python_message_store,
         resource_type::PyResourceType,
         state::{
             PyNextState, PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule, PyState,
@@ -1543,7 +1543,7 @@ impl PyApp {
         Ok(pyself.into())
     }
 
-    /// Register a custom message type
+    /// Register a native or custom message type
     pub fn add_message(
         pyself: PyRef<'_, Self>,
         py: Python,
@@ -1561,7 +1561,7 @@ impl PyApp {
         }
 
         pyself.with_bevy_app(|app| {
-            register_python_message(py, app.world_mut(), &message_type, 0)?;
+            register_message_channel(py, app.world_mut(), &message_type, 0)?;
 
             Ok(())
         })?;

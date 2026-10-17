@@ -1,5 +1,5 @@
 use bevy::{
-    camera::{Projection, RenderTarget, primitives::Aabb},
+    camera::{Projection, RenderTarget, primitives::Aabb, visibility::RenderLayers},
     ecs::{entity::Entity, name::Name, world::World},
     math::{Ray3d, UVec2, Vec3},
     prelude::*,
@@ -124,7 +124,7 @@ pub fn validate_depth_sampling(
 }
 
 /// Compute depth samples by casting rays from a camera position through sample points
-/// against all entity world AABBs.
+/// against visible entity world AABBs on the selected camera layers.
 ///
 /// If position/look_at are None, tries to use the active scene camera.
 /// If sample_points is None, generates an NxN grid based on grid_density.
@@ -272,9 +272,28 @@ pub fn compute_depth_samples_for_camera(
         pts
     };
 
-    // Collect all entity AABBs
-    let mut aabb_query = world.query::<(Entity, &Aabb, &GlobalTransform)>();
-    let entities: Vec<Entity> = aabb_query.iter(world).map(|(e, _, _)| e).collect();
+    let camera_layers = world
+        .get::<RenderLayers>(camera_entity)
+        .cloned()
+        .unwrap_or_default();
+    let mut aabb_query = world.query::<(
+        Entity,
+        &Aabb,
+        &GlobalTransform,
+        Option<&RenderLayers>,
+        Option<&Visibility>,
+        Option<&InheritedVisibility>,
+    )>();
+    let default_layers = RenderLayers::default();
+    let entities: Vec<Entity> = aabb_query
+        .iter(world)
+        .filter(|(_, _, _, layers, visibility, inherited)| {
+            camera_layers.intersects(layers.unwrap_or(&default_layers))
+                && !matches!(visibility, Some(Visibility::Hidden))
+                && inherited.is_none_or(|value| value.get())
+        })
+        .map(|(entity, _, _, _, _, _)| entity)
+        .collect();
 
     let mut aabbs = Vec::new();
     for entity in &entities {

@@ -90,6 +90,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<border_color::PyBorderColor>()?;
     m.add_class::<border_gradient::PyBorderGradient>()?;
     m.add_class::<box_shadow::PyBoxShadow>()?;
+    m.add_class::<box_shadow::PyShadowStyles>()?;
     m.add_class::<computed_node::PyComputedNode>()?;
     m.add_class::<computed_stack_index::PyComputedStackIndex>()?;
     m.add_class::<image_node::PyImageNode>()?;
@@ -137,6 +138,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<node_image_mode::PyNodeImageMode>()?;
     m.add_class::<grid_placement::PyGridPlacement>()?;
     m.add_class::<repeated_grid_track::PyRepeatedGridTrack>()?;
+    m.add_class::<repeated_grid_track::PyRepeatedGridTracks>()?;
     m.add_class::<grid_track_repetition::PyGridTrackRepetition>()?;
     m.add_class::<auto_directional_navigation::PyAutoDirectionalNavigation>()?;
     m.add_class::<ignore_scroll::PyIgnoreScroll>()?;
@@ -144,6 +146,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<border_radius::PyBorderRadius>()?;
     m.add_class::<angular_color_stop::PyAngularColorStop>()?;
     m.add_class::<grid_track::PyGridTrack>()?;
+    m.add_class::<grid_track::PyGridTracks>()?;
     m.add_class::<val::PyVal>()?;
     m.add_function(wrap_pyfunction!(val::py_px, &m)?)?;
     m.add_function(wrap_pyfunction!(val::py_percent, &m)?)?;
@@ -161,6 +164,7 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<conic_gradient::PyConicGradient>()?;
     m.add_class::<linear_gradient::PyLinearGradient>()?;
     m.add_class::<gradient::PyGradient>()?;
+    m.add_class::<gradient::PyGradients>()?;
 
     m.add_class::<ui_scale::PyUiScale>()?;
     parent.add_submodule(&m)

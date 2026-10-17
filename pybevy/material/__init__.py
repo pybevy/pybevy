@@ -14,11 +14,14 @@ Example:
 
 from __future__ import annotations
 
+import math
+import struct
 import sys
 from collections.abc import Callable
 from copy import copy
 from dataclasses import InitVar
 from inspect import signature as _signature
+from numbers import Real
 from threading import Lock
 from typing import Any, Protocol, TypeVar, cast, dataclass_transform, get_type_hints
 
@@ -127,7 +130,16 @@ def _pack_value(
 ) -> None:
     """Pack a Python value into the flat uniform values at the given index."""
     if typ is float:
-        data[float_index] = float(value)
+        if isinstance(value, bool) or not isinstance(value, Real):
+            raise TypeError(f"must be a float or int; got {type(value).__name__}")
+        try:
+            result = float(value)
+            struct.pack("<f", result)
+        except OverflowError as error:
+            raise ValueError("must be finite and fit f32") from error
+        if not math.isfinite(result):
+            raise ValueError("must be finite and fit f32")
+        data[float_index] = result
     elif typ is int:
         if type(value) is not int:
             raise TypeError(f"must be an int; got {type(value).__name__}")
