@@ -103,7 +103,7 @@ pub trait ReloadRuntime {
         false
     }
 
-    /// Reject definitions whose schedules would fail to build once registered.
+    /// Reject invalid schedule graphs and incompatible persistent conditions.
     /// Called BEFORE generation increment, like `load_definitions`.
     fn check_schedules(
         &mut self,
@@ -144,8 +144,8 @@ pub trait ReloadRuntime {
         generation: u32,
     ) -> Result<Vec<Self::SystemHandle>, ReloadError>;
 
-    /// Commit schedule-graph configuration prepared while registering the
-    /// candidate generation. Called only after its Startup systems succeed.
+    /// Commit schedule-graph configuration and condition replacements prepared
+    /// while checking or registering the candidate generation. Called only after its Startup systems succeed.
     fn commit_schedule_configs(&mut self, _world: &mut World) {}
 
     /// Insert resources into the world (Full reload only).

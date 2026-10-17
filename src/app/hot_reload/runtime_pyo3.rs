@@ -15,6 +15,7 @@ use pybevy_core::{
     PluginIdentity, ReloadRequestMode, ReloadResult, public_error::reload_schedule_rejected,
 };
 use pybevy_ecs::shared::{
+    condition_reload::{ConditionHandle, ConditionReplacement},
     schedule::{ScheduleDisplayNameRegistry, StateScheduleLabel, TransitionScheduleLabel},
     schedule_check::{PlannedNode, check_schedule_extension},
 };
@@ -49,8 +50,9 @@ use crate::{
         },
         system::SystemGcRegistry,
         system_config::{
-            InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity, build_set_config,
-            build_system_unit, planned_set_node, planned_system_node, system_set_config_identity,
+            InstalledSystemSetConfigs, PySystemConfig, SystemSetConfigIdentity,
+            build_set_conditions, build_set_config, build_system_unit, planned_set_node,
+            planned_system_node, system_set_config_identity,
         },
         system_interpreter::retire_main_handle,
         world::PyWorld,
@@ -78,6 +80,7 @@ struct PreparedSystemSetConfig {
     config: ScheduleConfigs<InternedSystemSet>,
     identities: Vec<SystemSetConfigIdentity>,
     handles: Vec<DynamicSystemHandle>,
+    conditions: Vec<Vec<ConditionHandle>>,
 }
 
 pub(crate) fn collect_system_names(system: &Bound<'_, PyAny>, names: &mut HashSet<String>) {
@@ -378,6 +381,9 @@ pub(crate) struct Pyo3ReloadRuntime {
     pub loader_func: Py<PyAny>,
     pub error_state: Arc<Mutex<Vec<PyErr>>>,
     pending_set_configs: Vec<PreparedSystemSetConfig>,
+    pending_condition_replacements: Vec<ConditionReplacement>,
+    pending_condition_handles: Vec<DynamicSystemHandle>,
+    set_configs_prepared: bool,
     component_layout_reload_pending: bool,
     resource_layout_reload_pending: bool,
     pending_observers: Vec<PreparedObserverRegistration>,
@@ -390,6 +396,9 @@ impl Pyo3ReloadRuntime {
             loader_func,
             error_state,
             pending_set_configs: Vec::new(),
+            pending_condition_replacements: Vec::new(),
+            pending_condition_handles: Vec::new(),
+            set_configs_prepared: false,
             component_layout_reload_pending: false,
             resource_layout_reload_pending: false,
             pending_observers: Vec::new(),
@@ -417,7 +426,7 @@ impl Pyo3ReloadRuntime {
 
     fn prepare_set_configs(
         &mut self,
-        world: &World,
+        world: &mut World,
         pending: Vec<(PyStage, Vec<Py<PyAny>>)>,
         generation: u32,
     ) -> Result<(), ReloadError> {
@@ -440,17 +449,20 @@ impl Pyo3ReloadRuntime {
                         let mut identities = Vec::new();
                         let mut existing = 0usize;
                         let mut handles = Vec::new();
+                        let mut conditions = Vec::new();
                         for member in members.iter() {
                             let identity = system_set_config_identity(&member)?;
                             if let Some(installed) =
-                                self.installed_set_config(world, schedule, &identity)
+                                self.installed_set_config(world, schedule, &identity).cloned()
                             {
-                                if installed != &identity {
+                                if installed != identity {
                                     return Err(changed_set_config_error(&identity));
                                 }
                                 existing += 1;
+                                self.prepare_condition_replacements(world, schedule, &member, &identity, generation, error_buffer.clone(), system_stage)?;
+                                continue;
                             }
-                            let (config, condition_handles) = build_set_config(
+                            let (config, condition_handles, slots) = build_set_config(
                                 &member,
                                 generation,
                                 self.error_state.clone(),
@@ -459,9 +471,10 @@ impl Pyo3ReloadRuntime {
                             )?;
                             configs.push(config);
                             handles.extend(condition_handles);
+                            conditions.push(slots);
                             identities.push(identity);
                         }
-                        if existing == identities.len() {
+                        if existing == members.len() {
                             continue;
                         }
                         if existing != 0 {
@@ -478,18 +491,20 @@ impl Pyo3ReloadRuntime {
                             },
                             identities,
                             handles,
+                            conditions,
                         });
                     } else {
                         let identity = system_set_config_identity(value)?;
                         if let Some(installed) =
-                            self.installed_set_config(world, schedule, &identity)
+                            self.installed_set_config(world, schedule, &identity).cloned()
                         {
-                            if installed != &identity {
+                            if installed != identity {
                                 return Err(changed_set_config_error(&identity));
                             }
+                            self.prepare_condition_replacements(world, schedule, value, &identity, generation, error_buffer.clone(), system_stage)?;
                             continue;
                         }
-                        let (config, handles) = build_set_config(
+                        let (config, handles, conditions) = build_set_config(
                             value,
                             generation,
                             self.error_state.clone(),
@@ -501,6 +516,7 @@ impl Pyo3ReloadRuntime {
                             config,
                             identities: vec![identity],
                             handles,
+                            conditions: vec![conditions],
                         });
                     }
                 }
@@ -508,6 +524,59 @@ impl Pyo3ReloadRuntime {
             Ok(())
         })
         .map_err(|error| reload_error_from_py(&error, "", false))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_condition_replacements(
+        &mut self,
+        world: &mut World,
+        schedule: PyStage,
+        value: &Bound<'_, PyAny>,
+        identity: &SystemSetConfigIdentity,
+        generation: u32,
+        error_buffer: SystemErrorBuffer,
+        stage: SystemStage,
+    ) -> PyResult<()> {
+        let installed = self
+            .pending_set_configs
+            .iter()
+            .find_map(|prepared| {
+                (prepared.schedule == schedule)
+                    .then(|| {
+                        prepared
+                            .identities
+                            .iter()
+                            .zip(&prepared.conditions)
+                            .find(|(existing, _)| existing.set() == identity.set())
+                            .map(|(_, conditions)| conditions.clone())
+                    })
+                    .flatten()
+            })
+            .unwrap_or_else(|| {
+                world
+                    .get_resource::<InstalledSystemSetConfigs>()
+                    .map_or_else(Vec::new, |installed| {
+                        installed.condition_handles(schedule, identity.set())
+                    })
+            });
+        let (conditions, handles) = build_set_conditions(
+            value,
+            generation,
+            self.error_state.clone(),
+            error_buffer,
+            stage,
+        )?;
+        if conditions.len() != installed.len() {
+            return Err(changed_set_config_error(identity));
+        }
+        for (current, replacement) in installed.into_iter().zip(conditions) {
+            let replacement = current
+                .prepare_replacement(world, replacement)
+                .map_err(|_| changed_set_config_error(identity))?;
+            self.pending_condition_replacements.push(replacement);
+        }
+        self.pending_condition_handles.extend(handles);
+        Ok(())
     }
 }
 
@@ -587,6 +656,23 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         defs: &PendingDefinitions,
         generation: u32,
     ) -> Result<(), ReloadError> {
+        self.set_configs_prepared = false;
+        self.pending_set_configs.clear();
+        self.pending_condition_replacements.clear();
+        self.pending_condition_handles.clear();
+        let set_configs = Python::attach(|py| {
+            defs.set_configs
+                .iter()
+                .map(|(stage, values)| {
+                    (
+                        *stage,
+                        values.iter().map(|value| value.clone_ref(py)).collect(),
+                    )
+                })
+                .collect()
+        });
+        self.prepare_set_configs(world, set_configs, generation)?;
+        self.set_configs_prepared = true;
         let Ok(plans) = schedule_plans(world, defs, generation) else {
             return Ok(());
         };
@@ -685,9 +771,10 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         world
             .get_resource_or_insert_with(DynamicSystemRegistry::default)
             .begin_tick_reload(generation);
-        self.pending_set_configs.clear();
         self.pending_schedule_display_names.clear();
-        self.prepare_set_configs(world, defs.set_configs, generation)?;
+        if !self.set_configs_prepared {
+            self.prepare_set_configs(world, defs.set_configs, generation)?;
+        }
 
         // Drain any errors left over from a previous reload attempt. The error
         // queue is shared across reloads, and a later error check would otherwise
@@ -849,6 +936,18 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     }
 
     fn commit_schedule_configs(&mut self, world: &mut World) {
+        let preserve_ticks = world
+            .get_resource::<ReloadResult>()
+            .is_some_and(|result| result.actual_mode == Some(ReloadRequestMode::Partial));
+        Python::attach(|_| {
+            world
+                .get_resource_or_insert_with(SystemGcRegistry::default)
+                .register_handles(&self.pending_condition_handles);
+            self.pending_condition_handles.clear();
+            for replacement in self.pending_condition_replacements.drain(..) {
+                drop(replacement.commit(world, preserve_ticks));
+            }
+        });
         if !self.pending_schedule_display_names.is_empty() {
             let mut registry =
                 world.get_resource_or_insert_with(ScheduleDisplayNameRegistry::default);
@@ -871,8 +970,8 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 .register_handles(&prepared.handles);
             let mut installed =
                 world.get_resource_or_insert_with(InstalledSystemSetConfigs::default);
-            for identity in prepared.identities {
-                installed.insert(prepared.schedule, identity);
+            for (identity, conditions) in prepared.identities.into_iter().zip(prepared.conditions) {
+                installed.insert(prepared.schedule, identity, conditions);
             }
         }
         if self.component_layout_reload_pending {
@@ -1184,9 +1283,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         }
     }
 
-    fn clear_param_cache(&mut self) {
-        crate::ecs::dynamic_system::clear_system_param_cache();
-    }
+    fn clear_param_cache(&mut self) {}
 
     fn trigger_gc(&mut self) {
         Python::attach(|py| {

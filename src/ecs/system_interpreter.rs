@@ -5,6 +5,7 @@
 
 use std::{
     collections::HashMap,
+    mem::take,
     sync::{Arc, Mutex},
 };
 
@@ -19,10 +20,11 @@ use bevy::{
 use pybevy_core::public_error::{
     CONDITION_COMMANDS, CONDITION_GIZMOS, CONDITION_INPUT, CONDITION_MESSAGE_MUTATOR,
     CONDITION_MESSAGE_READER, CONDITION_MESSAGE_WRITER, CONDITION_MUTABLE_ASSETS,
-    CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OPAQUE_MESSAGE_READER,
-    CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE, CONDITION_OPAQUE_VIEW,
-    CONDITION_REMOVED_COMPONENTS, CONDITION_RES_MUT, CONDITION_RETURNED_CALLABLE, CONDITION_WORLD,
-    REQUIRED_SINGLE_MULTIPLE_MATCHES, REQUIRED_SINGLE_NO_MATCHES, pipe_input_type_mismatch,
+    CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OBSERVER,
+    CONDITION_OPAQUE_MESSAGE_READER, CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE,
+    CONDITION_OPAQUE_VIEW, CONDITION_REMOVED_COMPONENTS, CONDITION_RES_MUT,
+    CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, REQUIRED_SINGLE_MULTIPLE_MATCHES,
+    REQUIRED_SINGLE_NO_MATCHES, observer_parameter_outside_observer, pipe_input_type_mismatch,
     resolved_access_conflict,
 };
 #[cfg(debug_assertions)]
@@ -32,7 +34,8 @@ use pybevy_ecs::shared::{
     command_queue_helpers::create_commands_from_queue,
     param_spec::{
         ConditionRejection, build_declared_access, condition_param_rejection,
-        condition_rejection_message, conflict_error_message, to_param_accesses,
+        condition_rejection_message, conflict_error_message, observer_parameter_index,
+        to_param_accesses,
     },
     run_ticks::RunTicks,
     system_runtime::{
@@ -42,6 +45,7 @@ use pybevy_ecs::shared::{
         StoredErrorPolicy, SystemFlags, SystemHandle, SystemInterpreter, UnitOutput,
     },
 };
+use pybevy_reload::{HotReloadGeneration, SystemStage};
 use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     ffi::PyTypeObject,
@@ -52,6 +56,7 @@ use smallvec::SmallVec;
 
 use super::{
     commands::CommandErrorSink,
+    component_type::PyComponentType,
     dynamic_system::{
         BufferedSystemError, DynamicSystemHandle, DynamicSystemInner, MainResolver,
         SystemErrorBuffer, SystemErrorReport, SystemErrorReportState, asset_validation_identity,
@@ -61,6 +66,7 @@ use super::{
         validate_registered_state_topology, validate_system_params,
     },
     helpers::validity_guard::ValidityFlag,
+    kwarg_hint,
     messages::{CursorStorage, MessageType},
     observer::PyOn,
     query::{
@@ -74,6 +80,7 @@ use super::{
 
 fn condition_rejection_reason(rejection: ConditionRejection) -> &'static str {
     match rejection {
+        ConditionRejection::Observer => CONDITION_OBSERVER,
         ConditionRejection::Input => CONDITION_INPUT,
         ConditionRejection::World => CONDITION_WORLD,
         ConditionRejection::Commands => CONDITION_COMMANDS,
@@ -129,6 +136,7 @@ pub(crate) struct MainFailureSink {
 pub(crate) struct MainInterpreter {
     module_name: String,
     function_name: String,
+    refresh_from_module: bool,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     error_report: SystemErrorReport,
@@ -165,7 +173,7 @@ pub(crate) struct ObserverRuntimeSinks {
 fn prepare_callable(
     func: Py<PyAny>,
     generation: u32,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     kind: InvocationKind,
@@ -196,6 +204,12 @@ fn prepare_callable(
     })?;
 
     Python::attach(|py| {
+        if let Some(index) = observer_parameter_index(&lower_params(&system_func.params, py)) {
+            return Err(PyTypeError::new_err(observer_parameter_outside_observer(
+                &function_name,
+                index,
+            )));
+        }
         if pipe_target {
             validate_pipe_target_params(&system_func.params, &function_name, py)
         } else {
@@ -256,7 +270,7 @@ pub(crate) fn new_main_system(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicSystem> {
     Ok(MainDynamicSystem::new(prepare_callable(
@@ -277,7 +291,7 @@ pub(crate) fn new_main_value_source(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicValueSource> {
     Ok(MainDynamicValueSource::new(prepare_callable(
@@ -298,7 +312,7 @@ pub(crate) fn new_main_value_target(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicValueTarget> {
     Ok(MainDynamicValueTarget::new(prepare_callable(
@@ -319,7 +333,7 @@ pub(crate) fn new_main_unit_target(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicUnitTarget> {
     Ok(MainDynamicUnitTarget::new(prepare_callable(
@@ -340,7 +354,7 @@ pub(crate) fn new_main_one_shot_system(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
 ) -> PyResult<MainDynamicSystem> {
     Ok(MainDynamicSystem::new(prepare_callable(
         func,
@@ -360,7 +374,7 @@ pub(crate) fn new_main_condition(
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicCondition> {
     let prepared = prepare_callable(
@@ -379,16 +393,13 @@ pub(crate) fn new_main_condition(
 
 /// Prepare a condition whose schedule node survives hot-reload generations.
 ///
-/// Set configuration is structural and remains in Bevy's schedule graph while
-/// generation-scoped systems are replaced. The interpreter still refreshes a
-/// module-level callable when the generation changes, but the condition itself
-/// must not be skipped merely because it was configured in generation zero.
+/// Reload stages a complete replacement through the owning condition handle.
 pub(crate) fn new_main_persistent_condition(
     func: Py<PyAny>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
-    stage: pybevy_reload::SystemStage,
+    stage: SystemStage,
     state_machine_count: Option<usize>,
 ) -> PyResult<MainDynamicCondition> {
     let mut prepared = prepare_callable(
@@ -403,6 +414,7 @@ pub(crate) fn new_main_persistent_condition(
         state_machine_count,
     )?;
     prepared.expected_generation = None;
+    prepared.interpreter.refresh_from_module = false;
     MainDynamicCondition::new(prepared).map_err(PyRuntimeError::new_err)
 }
 
@@ -464,7 +476,7 @@ pub(crate) fn new_main_observer(
             module_name,
             function_name,
             generation,
-            pybevy_reload::SystemStage::UpdateOrLast,
+            SystemStage::UpdateOrLast,
             error_state,
             error_buffer,
             InvocationKind::Observer,
@@ -500,7 +512,7 @@ pub(crate) fn retire_main_handle(retained: &DynamicSystemHandle) {
             (
                 retained.system_func.take(),
                 retained.cached_func.take(),
-                std::mem::take(&mut retained.message_cursor_storage),
+                take(&mut retained.message_cursor_storage),
             )
         };
         drop(system_func);
@@ -542,7 +554,7 @@ impl MainInterpreter {
         module_name: String,
         function_name: String,
         generation: u32,
-        stage: pybevy_reload::SystemStage,
+        stage: SystemStage,
         error_state: Arc<Mutex<Vec<PyErr>>>,
         error_buffer: SystemErrorBuffer,
         kind: InvocationKind,
@@ -567,6 +579,7 @@ impl MainInterpreter {
             interpreter: Self {
                 module_name,
                 function_name,
+                refresh_from_module: true,
                 error_state,
                 error_buffer,
                 error_report: Arc::new(Mutex::new(SystemErrorReportState::default())),
@@ -591,7 +604,7 @@ impl MainInterpreter {
     fn failure(py: Python<'_>, error: PyErr) -> InterpreterFailure<PyErr> {
         // Every system failure funnels through here, so enriching once reaches
         // stderr, the re-raise from app.run(), LastSystemError and MCP alike.
-        crate::ecs::kwarg_hint::enrich(py, &error);
+        kwarg_hint::enrich(py, &error);
         let message = error.to_string();
         let traceback = error.traceback(py).map(|traceback| {
             traceback
@@ -683,7 +696,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
             let declared = build_declared_access(world, &specs, &mut resolver);
             let accesses = to_param_accesses(
                 &specs,
-                super::component_type::PyComponentType::validation_identity,
+                PyComponentType::validation_identity,
                 resource_validation_identity,
                 asset_validation_identity,
                 resource_marker_validation_identity(),
@@ -792,9 +805,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                 error_buffer: self.error_buffer.clone(),
                 error_report: self.error_report.clone(),
                 retain_exception: self.retain_exception
-                    || world
-                        .get_resource::<pybevy_reload::HotReloadGeneration>()
-                        .is_none(),
+                    || world.get_resource::<HotReloadGeneration>().is_none(),
             },
             access: declared.set,
             validation,
@@ -891,7 +902,8 @@ unsafe impl SystemInterpreter for MainInterpreter {
                 if retained.gutted {
                     return CallablePreflight::Retired;
                 }
-                if self.module_name == "__main__"
+                if !self.refresh_from_module
+                    || self.module_name == "__main__"
                     || (retained.cached_generation == generation && retained.cached_func.is_some())
                 {
                     retained.cached_func.as_ref().and_then(|callable| {
@@ -1074,10 +1086,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                         self.error_buffer.clone(),
                         self.error_report.clone(),
                         self.retain_exception
-                            || ctx
-                                .world
-                                .get_resource::<pybevy_reload::HotReloadGeneration>()
-                                .is_none(),
+                            || ctx.world.get_resource::<HotReloadGeneration>().is_none(),
                         &plan.name,
                     ),
                     ctx.parity_trace.cloned(),

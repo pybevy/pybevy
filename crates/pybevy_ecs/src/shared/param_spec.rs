@@ -793,6 +793,7 @@ fn disjoint_marker(hint: &MarkerHint) -> DisjointMarker<'_> {
 /// Interpreter-neutral reason a parameter is rejected in a run condition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConditionRejection {
+    Observer,
     Input,
     World,
     Commands,
@@ -819,6 +820,7 @@ pub fn condition_param_rejection<K: BackendKeys>(
     param: &ParamSpec<K>,
 ) -> Option<ConditionRejection> {
     match param {
+        ParamSpec::Observer => Some(ConditionRejection::Observer),
         ParamSpec::ParamSet(members) => members.iter().find_map(condition_param_rejection),
         ParamSpec::Input => Some(ConditionRejection::Input),
         ParamSpec::World => Some(ConditionRejection::World),
@@ -865,6 +867,15 @@ pub fn condition_param_rejection<K: BackendKeys>(
         }
         _ => None,
     }
+}
+
+/// Locate a trigger parameter that requires the observer invocation context.
+pub fn observer_parameter_index<K: BackendKeys>(params: &[ParamSpec<K>]) -> Option<usize> {
+    params.iter().position(|param| match param {
+        ParamSpec::Observer => true,
+        ParamSpec::ParamSet(members) => observer_parameter_index(members).is_some(),
+        _ => false,
+    })
 }
 
 /// The user-facing run-condition rejection message, identical on both backends.
@@ -2126,7 +2137,8 @@ mod tests {
 
     #[test]
     fn condition_rejects_world_commands_messages_and_mut_access() {
-        let rejected: [ParamSpec<MockKeys>; 9] = [
+        let rejected: [ParamSpec<MockKeys>; 10] = [
+            ParamSpec::Observer,
             ParamSpec::World,
             ParamSpec::Commands,
             ParamSpec::Gizmos {

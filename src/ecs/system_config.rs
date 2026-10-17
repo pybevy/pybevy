@@ -15,8 +15,9 @@ use bevy::{
     },
     prelude::DebugName,
 };
-use pybevy_core::{public_error, repr::str_repr};
+use pybevy_core::{NativeSystemSetRegistration, inventory, public_error, repr::str_repr};
 use pybevy_ecs::shared::{
+    condition_reload::{ConditionHandle, ReloadableCondition},
     schedule::{ConditionExpr, DynamicSetLabel, ScheduleOrdering, SystemSetTarget},
     schedule_check::PlannedNode,
     system_runtime::{ErasedConditionSystem, ErasedSystem},
@@ -48,7 +49,7 @@ use crate::{
 pub(crate) struct SystemSetConfigIdentity {
     set: SystemSetTarget,
     ordering: ScheduleOrdering,
-    conditions: Vec<DynamicSetLabel>,
+    conditions: Vec<ConditionExpr<String>>,
 }
 
 impl SystemSetConfigIdentity {
@@ -59,7 +60,7 @@ impl SystemSetConfigIdentity {
 
 #[derive(Resource, Default)]
 pub(crate) struct InstalledSystemSetConfigs {
-    configs: HashMap<(PyStage, SystemSetTarget), SystemSetConfigIdentity>,
+    configs: HashMap<(PyStage, SystemSetTarget), (SystemSetConfigIdentity, Vec<ConditionHandle>)>,
 }
 
 impl InstalledSystemSetConfigs {
@@ -68,12 +69,29 @@ impl InstalledSystemSetConfigs {
         schedule: PyStage,
         set: &SystemSetTarget,
     ) -> Option<&SystemSetConfigIdentity> {
-        self.configs.get(&(schedule, set.clone()))
+        self.configs
+            .get(&(schedule, set.clone()))
+            .map(|(identity, _)| identity)
     }
 
-    pub(crate) fn insert(&mut self, schedule: PyStage, identity: SystemSetConfigIdentity) {
+    pub(crate) fn condition_handles(
+        &self,
+        schedule: PyStage,
+        set: &SystemSetTarget,
+    ) -> Vec<ConditionHandle> {
         self.configs
-            .insert((schedule, identity.set.clone()), identity);
+            .get(&(schedule, set.clone()))
+            .map_or_else(Vec::new, |(_, handles)| handles.clone())
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        schedule: PyStage,
+        identity: SystemSetConfigIdentity,
+        conditions: Vec<ConditionHandle>,
+    ) {
+        self.configs
+            .insert((schedule, identity.set.clone()), (identity, conditions));
     }
 }
 
@@ -398,7 +416,7 @@ pub fn system_set(cls: &Bound<'_, PyType>) -> PyResult<PySystemSet> {
 }
 
 pub(crate) fn register_native_system_sets(root: &Bound<'_, PyModule>) -> PyResult<()> {
-    for registration in pybevy_core::inventory::iter::<pybevy_core::NativeSystemSetRegistration> {
+    for registration in inventory::iter::<NativeSystemSetRegistration> {
         let module = root.getattr(registration.module)?.cast_into::<PyModule>()?;
         let qualified_name = format!("pybevy.{}.{}", registration.module, registration.name);
         module.add(
@@ -963,23 +981,47 @@ pub(crate) fn build_set_config(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
-) -> PyResult<(ScheduleConfigs<InternedSystemSet>, Vec<DynamicSystemHandle>)> {
-    let (set, ordering, conditions) = system_set_config_parts(value)?;
-
-    let mut handles = Vec::new();
+) -> PyResult<(
+    ScheduleConfigs<InternedSystemSet>,
+    Vec<DynamicSystemHandle>,
+    Vec<ConditionHandle>,
+)> {
+    let (set, ordering, _) = system_set_config_parts(value)?;
+    let (conditions, handles) =
+        build_set_conditions(value, generation, error_state, error_buffer, system_stage)?;
+    let mut condition_handles = Vec::new();
     let mut config = apply_set_ordering(set.label.intern().into_configs(), &ordering);
     for condition in conditions {
-        let condition = build_persistent_condition_expr(
-            extract_condition_expr(condition)?,
-            generation,
-            error_state.clone(),
-            error_buffer.clone(),
-            system_stage,
-            &mut handles,
-        )?;
-        config.run_if_dyn(condition);
+        let (condition, handle) = ReloadableCondition::new(condition);
+        config.run_if_dyn(Box::new(condition));
+        condition_handles.push(handle);
     }
-    Ok((config, handles))
+    Ok((config, handles, condition_handles))
+}
+
+pub(crate) fn build_set_conditions(
+    value: &Bound<'_, PyAny>,
+    generation: u32,
+    error_state: Arc<Mutex<Vec<PyErr>>>,
+    error_buffer: SystemErrorBuffer,
+    system_stage: SystemStage,
+) -> PyResult<(Vec<BoxedCondition>, Vec<DynamicSystemHandle>)> {
+    let (_, _, conditions) = system_set_config_parts(value)?;
+    let mut handles = Vec::new();
+    let conditions = conditions
+        .into_iter()
+        .map(|condition| {
+            build_persistent_condition_expr(
+                extract_condition_expr(condition)?,
+                generation,
+                error_state.clone(),
+                error_buffer.clone(),
+                system_stage,
+                &mut handles,
+            )
+        })
+        .collect::<PyResult<_>>()?;
+    Ok((conditions, handles))
 }
 
 pub(crate) fn system_set_config_identity(
@@ -987,8 +1029,8 @@ pub(crate) fn system_set_config_identity(
 ) -> PyResult<SystemSetConfigIdentity> {
     let (set, ordering, conditions) = system_set_config_parts(value)?;
     let conditions = conditions
-        .iter()
-        .map(|condition| callable_set(condition.bind(value.py())))
+        .into_iter()
+        .map(|condition| condition_identity(&extract_condition_expr(condition)?))
         .collect::<PyResult<Vec<_>>>()?;
     Ok(SystemSetConfigIdentity {
         set: set.label,

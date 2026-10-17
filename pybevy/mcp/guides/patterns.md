@@ -451,8 +451,8 @@ def drive_viewer(_main_thread: NonSendMarker) -> None:
 ```
 
 On Python 3.14, dynamically generated systems can resolve annotations lazily.
-Use a factory to capture each component type separately. Each new callable
-resolves its own parameters, even when it shares a factory's code object.
+Use a factory to capture each component type separately. Every registration resolves its current annotations, including a second
+registration of the same live callable after its annotations change.
 
 #### Schedule Stages
 
@@ -519,6 +519,9 @@ def count_frames(counter: Local[int]) -> None:
 Every hot reload, partial included, rebuilds the system, so the local is
 constructed again and this counter restarts at zero. Keep state that must
 survive iteration in a `@resource`. See `guide://hot-reload`.
+
+`On[...]` is valid only in `@observer` callbacks registered with `add_observer()`.
+Systems, conditions, pipe stages and one-shot systems reject it at registration.
 
 #### Conditional Systems
 
@@ -639,6 +642,12 @@ Set-level conditions are evaluated once for the whole set:
 ```python
 app.configure_sets(Update, MovementSystems.run_if(is_game_active))
 ```
+
+Hot reload refreshes set conditions from the newly registered configuration,
+including factory functions and nested closures. Compatible conditions receive
+fresh parameter plans and caches. Their expression structure, declared access
+and thread requirements must stay the same; incompatible changes reject reload
+before scene cleanup. Use `run_scene` to rebuild the schedule for those changes.
 
 Use `chain(first, second, third)` when the systems form one simple sequential
 pipeline. Use sets when multiple systems share a phase or other code needs a

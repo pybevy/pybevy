@@ -74,6 +74,14 @@ declared access, and full reloads start with fresh history. Changing a function'
 body alone preserves history. A rejected candidate does not consume the previous
 generation's history. `Local[T]` and message-reader cursors are not transferred.
 
+Conditions attached to system sets refresh their callable, parameter plan and
+caches together from the new configuration, including factory and nested
+functions. Partial reload preserves their change-detection history and resets
+`Local[T]`. The expression's operators and leaf identities, declared access and
+thread requirements must remain unchanged. Incompatible changes reject the
+candidate before cleanup in either mode and keep the previous scene running;
+use `run_scene` to rebuild that schedule configuration.
+
 Partial mode does not reconstruct retained Startup-owned state. These
 consequences matter during iteration:
 

@@ -6,6 +6,7 @@ pub mod bundle_validation;
 pub mod cached_query;
 pub mod change_tracking;
 pub mod command_queue_helpers;
+pub mod condition_reload;
 pub mod lifecycle_mutation;
 pub mod message_resources;
 pub mod message_store;

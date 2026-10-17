@@ -79,9 +79,7 @@ use crate::{
     ecs::{
         decorated_callable::{CallableKind, unwrap_decorated},
         deferred_drop::flush_deferred_py_drops,
-        dynamic_system::{
-            LastErrorBuffer, SystemErrorBuffer, clear_system_param_cache, lock_or_recover,
-        },
+        dynamic_system::{LastErrorBuffer, SystemErrorBuffer, lock_or_recover},
         messages::{ensure_builtin_message_resources, register_message_channel},
         observer_registry::ObserverRegistry,
         python_message::install_python_message_store,
@@ -279,17 +277,6 @@ pub(crate) fn drain_last_system_error(world: &mut World) {
         .map(|t| t.elapsed_secs_f64())
         .unwrap_or(0.0);
     publish_last_system_error(world, err.error, err.traceback, timestamp);
-}
-
-#[cfg(feature = "native-plugin")]
-#[derive(Default, Resource)]
-struct NativePythonRuntime;
-
-#[cfg(feature = "native-plugin")]
-impl Drop for NativePythonRuntime {
-    fn drop(&mut self) {
-        clear_system_param_cache();
-    }
 }
 
 #[cfg(feature = "native-plugin")]
@@ -571,7 +558,6 @@ impl PyApp {
         if needs_error_drain {
             native.add_systems(Last, report_native_system_errors);
         }
-        native.init_resource::<NativePythonRuntime>();
         let app_id = BEVY_APPS
             .with(|apps| apps.borrow_mut().insert_with_id(allocated, App::empty()))
             .map_err(app_store_error)?;
@@ -1995,9 +1981,6 @@ impl PyApp {
             };
             guard.finish_consumed();
 
-            // Clear the system parameter cache after the app finishes
-            // to prevent stale entries when function objects are recycled
-            clear_system_param_cache();
             Ok::<AppExit, PyErr>(exit)
         });
 
@@ -2198,9 +2181,10 @@ impl PyApp {
                 if let Ok(chained) = set.extract::<PyChainedSystemSets>() {
                     let mut configs = Vec::new();
                     let mut identities = Vec::new();
+                    let mut condition_handles = Vec::new();
                     for member in chained.sets.bind(set.py()).iter() {
                         identities.push(system_set_config_identity(&member)?);
-                        let (config, handles) = build_set_config(
+                        let (config, handles, conditions) = build_set_config(
                             &member,
                             generation,
                             error_state.clone(),
@@ -2211,6 +2195,7 @@ impl PyApp {
                             .get_resource_or_insert_with(SystemGcRegistry::default)
                             .register_handles(&handles);
                         configs.push(config);
+                        condition_handles.push(conditions);
                     }
                     if configs.is_empty() {
                         return Err(PyValueError::new_err(
@@ -2228,12 +2213,12 @@ impl PyApp {
                     let mut installed = app
                         .world_mut()
                         .get_resource_or_insert_with(InstalledSystemSetConfigs::default);
-                    for identity in identities {
-                        installed.insert(schedule, identity);
+                    for (identity, conditions) in identities.into_iter().zip(condition_handles) {
+                        installed.insert(schedule, identity, conditions);
                     }
                 } else {
                     let identity = system_set_config_identity(&set)?;
-                    let (config, handles) = build_set_config(
+                    let (config, handles, conditions) = build_set_config(
                         &set,
                         generation,
                         error_state.clone(),
@@ -2246,7 +2231,7 @@ impl PyApp {
                         .register_handles(&handles);
                     app.world_mut()
                         .get_resource_or_insert_with(InstalledSystemSetConfigs::default)
-                        .insert(schedule, identity);
+                        .insert(schedule, identity, conditions);
                 }
             }
             Ok(())
@@ -2328,10 +2313,6 @@ impl Drop for PyApp {
                 // across GC and defeat scene-namespace collection.
                 flush_deferred_py_drops();
             }
-
-            // Clear the system parameter cache to prevent stale entries
-            // when function objects are recycled (e.g., across tests)
-            clear_system_param_cache();
         }
     }
 }

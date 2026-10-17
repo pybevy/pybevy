@@ -5022,9 +5022,14 @@ name = "pybevy_gltf"
 version = "0.3.0-rc.1"
 dependencies = [
  "bevy",
+ "pybevy_color",
  "pybevy_core",
  "pybevy_image",
  "pybevy_macros",
+ "pybevy_material",
+ "pybevy_math",
+ "pybevy_mesh",
+ "pybevy_render",
  "pybevy_transform",
  "pyo3",
 ]

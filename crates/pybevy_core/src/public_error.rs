@@ -209,6 +209,13 @@ pub const CHAIN_GROUP_MEMBER: &str =
     "chain() members must be systems or chains; put a tuple of systems outside chain() instead";
 pub const EMPTY_CHAINED_SYSTEMS: &str = "Empty chained systems";
 pub const SYSTEM_CALLABLE_ROUTINE_REQUIRED: &str = "functools.partial and callable objects are not supported as systems, conditions, or observers; use a regular function, bound method, or closure";
+pub const CONDITION_OBSERVER: &str = "an observer-only On parameter";
+
+pub fn observer_parameter_outside_observer(system: &str, parameter: usize) -> String {
+    format!(
+        "System `{system}` parameter {parameter} uses On[...] outside an observer; use @observer with add_observer()"
+    )
+}
 pub const ENTITY_ARGUMENT_INT: &str = "expected an Entity, not an int. Convert a packed ID from an MCP response or Entity.to_bits() with Entity.from_bits(id). The integer shown in Entity(<index>v<generation>) is an EntityIndex value, not a packed identity.";
 
 pub fn one_shot_parameter_validation_skip(reason: impl Display) -> String {
