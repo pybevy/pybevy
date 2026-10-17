@@ -4,7 +4,8 @@ from pybevy.app import App, Plugin
 from pybevy.camera import RenderLayers
 from pybevy.color import Color
 from pybevy.ecs import Component, Resource
-from pybevy.math import Aabb3d, Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3
+from pybevy.math import Affine3A, Isometry2d, Isometry3d, Mat4, Vec2, Vec3
+from pybevy.shape import Aabb3d
 from pybevy.transform import GlobalTransform, Transform
 
 class GizmoLineJoint:

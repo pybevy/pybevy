@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircleMeshBuilder};
 
 #[pyvalue(domains = [radius => [finite, non_negative]])]
-#[pyclass(name = "Circle", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Circle", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyCircle {
     pub(crate) storage: ValueStorage<Circle>,

@@ -1,5 +1,7 @@
-use bevy::curve::{Curve, cubic_splines::RationalSegment};
-use bevy::math::Vec2;
+use bevy::{
+    curve::{Curve, cubic_splines::RationalSegment},
+    math::Vec2,
+};
 use pybevy_core::{
     FromBorrowedStorage, ValueStorage,
     public_error::UNSUPPORTED_COMPARISON,
@@ -13,7 +15,7 @@ use crate::{interval::PyInterval, richcmp::comparison_result, vec2::PyVec2};
 #[pyvalue]
 #[pyclass(
     name = "RationalSegment2d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     skip_from_py_object
 )]
 #[derive(Debug, Clone)]

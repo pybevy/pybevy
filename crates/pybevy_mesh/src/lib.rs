@@ -30,18 +30,18 @@ pub mod prelude {
     };
 }
 
-/// Register meshable primitives into the `math` Python module.
+/// Register meshable primitives into the `shape` Python module.
 ///
-/// These types (Circle, Sphere, CircularSector, etc.) are Bevy math primitives
-/// that also implement `Meshable`. In Bevy, the type lives in `bevy_math` and
+/// These types (Circle, Sphere, CircularSector, etc.) are Bevy shape primitives
+/// that also implement `Meshable`. In Bevy, the type lives in `bevy_shape` and
 /// the `impl Meshable` is in `bevy_mesh`. PyO3 can't do this - the base class
 /// (`extends = PyMeshable`) must be on the struct definition, so the wrapper
 /// structs live here in `pybevy_mesh`. This function injects them into the
-/// `math` module so users can `from pybevy.math import Circle`.
+/// `shape` module so users can `from pybevy.shape import Circle`.
 ///
 /// Called from `src/lib.rs` after `pybevy_math::add_module()` creates the
-/// `math` submodule.
-pub fn add_math_primitives(m: &Bound<'_, PyModule>) -> PyResult<()> {
+/// `shape` submodule.
+pub fn add_shape_primitives(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<primitives::PyAnnulus>()?;
     m.add_class::<primitives::PyCapsule2d>()?;
     m.add_class::<primitives::PyCircle>()?;

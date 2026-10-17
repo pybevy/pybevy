@@ -1,5 +1,7 @@
-use bevy::curve::{Curve, cubic_splines::CubicCurve};
-use bevy::math::Vec3;
+use bevy::{
+    curve::{Curve, cubic_splines::CubicCurve},
+    math::Vec3,
+};
 use pyo3::prelude::*;
 
 use super::cubic_segment3d::PyCubicSegment3d;
@@ -7,7 +9,7 @@ use crate::{interval::PyInterval, vec3::PyVec3};
 
 #[pyclass(
     name = "CubicCurve3d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     frozen,
     skip_from_py_object
 )]

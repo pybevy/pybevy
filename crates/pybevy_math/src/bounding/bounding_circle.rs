@@ -1,5 +1,7 @@
-use bevy::math::{Isometry2d, Vec2};
-use bevy::shape::{BoundingCircle, BoundingVolume};
+use bevy::{
+    math::{Isometry2d, Vec2},
+    shape::{BoundingCircle, BoundingVolume},
+};
 use pybevy_core::{
     FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
@@ -15,7 +17,7 @@ use crate::{
     vec2::{PyVec2, extract_vec2_from_any},
 };
 
-#[pyclass(name = "BoundingCircle", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "BoundingCircle", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyBoundingCircle {
     storage: ValueStorage<BoundingCircle>,

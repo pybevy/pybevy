@@ -1,5 +1,7 @@
-use bevy::math::{Mat4, Vec3};
-use bevy::shape::ViewFrustum;
+use bevy::{
+    math::{Mat4, Vec3},
+    shape::ViewFrustum,
+};
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pybevy_macros::pyvalue;
 use pyo3::{exceptions::PyValueError, prelude::*};
@@ -8,7 +10,7 @@ use super::{half_space::PyHalfSpace, half_spaces::PyHalfSpaces};
 use crate::{mat4::PyMat4, vec3::PyVec3};
 
 #[pyvalue]
-#[pyclass(name = "ViewFrustum", module = "pybevy.math", eq, from_py_object)]
+#[pyclass(name = "ViewFrustum", module = "pybevy.shape", eq, from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyViewFrustum {
     pub(crate) storage: ValueStorage<ViewFrustum>,

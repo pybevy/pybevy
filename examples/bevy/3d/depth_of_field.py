@@ -9,11 +9,11 @@ Controls:
 import math
 
 from pybevy.camera import PhysicalCameraParameters
-from pybevy.core_pipeline import Tonemapping
 from pybevy.gltf import GltfMeshName
 from pybevy.pbr import Lightmap
 from pybevy.post_process import Bloom, DepthOfField, DepthOfFieldMode
 from pybevy.prelude import *
+from pybevy.render import Tonemapping
 
 SCENE_PATH = "bevy/models/DepthOfFieldExample/DepthOfFieldExample.glb"
 LIGHTMAP_PATH = "bevy/models/DepthOfFieldExample/CircuitBoardLightmap.hdr"

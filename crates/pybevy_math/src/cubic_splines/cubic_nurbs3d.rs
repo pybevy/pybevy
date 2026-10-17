@@ -1,5 +1,7 @@
-use bevy::curve::cubic_splines::{CubicNurbs, RationalGenerator};
-use bevy::math::Vec3;
+use bevy::{
+    curve::cubic_splines::{CubicNurbs, RationalGenerator},
+    math::Vec3,
+};
 use pybevy_core::{FromBorrowedStorage, ValueStorage};
 use pyo3::{exceptions::PyValueError, prelude::*};
 
@@ -8,7 +10,7 @@ use crate::vec3::PyVec3;
 
 #[pyclass(
     name = "CubicNurbs3d",
-    module = "pybevy.math",
+    module = "pybevy.curve",
     frozen,
     skip_from_py_object
 )]

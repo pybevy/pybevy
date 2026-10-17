@@ -1,10 +1,10 @@
-use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::render::view::Tonemapping;
 use pybevy_core::PyComponent;
 use pybevy_macros::pywrap;
 use pyo3::prelude::*;
 
 #[pywrap(Tonemapping, bridge)]
-#[pyclass(name = "Tonemapping", module = "pybevy.core_pipeline", extends = PyComponent, eq, hash, frozen, skip_from_py_object)]
+#[pyclass(name = "Tonemapping", module = "pybevy.render", extends = PyComponent, eq, hash, frozen, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PyTonemapping(pub(crate) Tonemapping);
 

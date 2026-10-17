@@ -1,11 +1,10 @@
-use bevy::math::Vec4;
-use bevy::shape::HalfSpace;
+use bevy::{math::Vec4, shape::HalfSpace};
 use pybevy_core::{Omittable, repr::ReprLiteral};
 use pyo3::prelude::*;
 
 use crate::{vec3::PyVec3, vec3a::PyVec3A, vec4::PyVec4};
 
-#[pyclass(name = "HalfSpace", module = "pybevy.math", frozen, from_py_object)]
+#[pyclass(name = "HalfSpace", module = "pybevy.shape", frozen, from_py_object)]
 #[derive(Debug, Clone, Copy)]
 pub struct PyHalfSpace {
     pub(crate) inner: HalfSpace,

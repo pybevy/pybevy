@@ -12,7 +12,7 @@ use crate::{
     primitives::{PyPolyline2dMeshBuilder, validation::vertex_budget},
 };
 
-#[pyclass(name = "Polyline2d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Polyline2d", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PyPolyline2d(pub(crate) Polyline2d);
 

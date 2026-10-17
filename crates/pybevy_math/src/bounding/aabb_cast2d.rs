@@ -10,7 +10,7 @@ use super::{aabb2d::PyAabb2d, raycast::PyRayCast2d};
 use crate::{dir2::PyDir2, ray::PyRay2d, vec2::PyVec2};
 
 #[pyfield]
-#[pyclass(name = "AabbCast2d", module = "pybevy.math", from_py_object)]
+#[pyclass(name = "AabbCast2d", module = "pybevy.shape", from_py_object)]
 #[derive(Debug)]
 pub struct PyAabbCast2d {
     storage: FieldStorage<AabbCast2d>,

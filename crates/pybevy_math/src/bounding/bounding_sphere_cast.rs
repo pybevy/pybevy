@@ -1,5 +1,7 @@
-use bevy::math::Dir3;
-use bevy::shape::{BoundingSphereCast, IntersectsVolume};
+use bevy::{
+    math::Dir3,
+    shape::{BoundingSphereCast, IntersectsVolume},
+};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
     repr::{ReprLiteral, float_repr, object_repr},
@@ -11,7 +13,7 @@ use super::{bounding_sphere::PyBoundingSphere, raycast::PyRayCast3d};
 use crate::{dir3::PyDir3, ray::PyRay3d, vec3a::extract_vec3a_from_any};
 
 #[pyfield]
-#[pyclass(name = "BoundingSphereCast", module = "pybevy.math", from_py_object)]
+#[pyclass(name = "BoundingSphereCast", module = "pybevy.shape", from_py_object)]
 #[derive(Debug)]
 pub struct PyBoundingSphereCast {
     storage: FieldStorage<BoundingSphereCast>,

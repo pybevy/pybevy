@@ -42,7 +42,7 @@ def _apply() -> None:
         Srgba,
         Xyza,
     )
-    from .core_pipeline import Tonemapping
+    from .curve import Interval
     from .light import ShadowFilteringMethod, SunDisk
     from .math import (
         Affine2,
@@ -50,7 +50,6 @@ def _apply() -> None:
         BVec2,
         Dir2,
         Dir3,
-        Interval,
         IRect,
         Isometry2d,
         Isometry3d,
@@ -71,7 +70,7 @@ def _apply() -> None:
         Vec4,
     )
     from .post_process import Bloom
-    from .render import Backends, TextureUsages
+    from .render import Backends, TextureUsages, Tonemapping
     from .sprite import Anchor
     from .text import TextBackgroundColor, TextBounds, TextColor
     from .transform import GlobalTransform, Transform
@@ -102,7 +101,7 @@ def _apply() -> None:
         (Visibility, ["Inherited", "Visible", "Hidden"]),
         (Bloom, ["NATURAL", "ANAMORPHIC", "OLD_SCHOOL", "SCREEN_BLUR"]),
         (Exposure, ["SUNLIGHT", "OVERCAST", "INDOOR", "BLENDER"]),
-        # core_pipeline
+        # render
         (
             Tonemapping,
             [
@@ -290,6 +289,7 @@ def _apply() -> None:
         (Rect, ["EMPTY"]),
         (URect, ["EMPTY"]),
         (IRect, ["EMPTY"]),
+        # curve
         (Interval, ["UNIT", "EVERYWHERE"]),
         # sprite
         (

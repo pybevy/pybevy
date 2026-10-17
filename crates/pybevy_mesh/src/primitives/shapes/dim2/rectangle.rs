@@ -16,7 +16,7 @@ use crate::{
 };
 
 #[pyvalue(domains = [half_size => [finite, non_negative]])]
-#[pyclass(name = "Rectangle", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Rectangle", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyRectangle {
     pub(crate) storage: ValueStorage<Rectangle>,

@@ -9,11 +9,9 @@ from pybevy.ecs import Batchable, Component, Entity, Resource
 from pybevy.image import Image as ImageAsset
 from pybevy.math import (
     Affine3A,
-    HalfSpace,
     Mat3A,
     Mat4,
     Range,
-    Ray3d,
     Rect,
     URect,
     UVec2,
@@ -21,9 +19,9 @@ from pybevy.math import (
     Vec3,
     Vec3A,
     Vec4,
-    ViewFrustum,
 )
 from pybevy.render import TextureUsages
+from pybevy.shape import HalfSpace, Ray3d, ViewFrustum
 from pybevy.transform import GlobalTransform
 from pybevy.window import NormalizedWindowRef, WindowRef
 

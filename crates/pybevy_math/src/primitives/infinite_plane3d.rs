@@ -1,5 +1,7 @@
-use bevy::math::{Dir3, Isometry3d, Quat, Vec3, Vec3A};
-use bevy::shape::InfinitePlane3d;
+use bevy::{
+    math::{Dir3, Isometry3d, Quat, Vec3, Vec3A},
+    shape::InfinitePlane3d,
+};
 use pybevy_core::{
     FromBorrowedStorage, Omittable, ValueStorage,
     public_error::{INFINITE_PLANE_POINTS, UNSUPPORTED_COMPARISON},
@@ -55,7 +57,7 @@ fn extract_isometry3d_from_any(obj: &Bound<'_, PyAny>) -> PyResult<Isometry3d> {
 }
 
 #[pyvalue]
-#[pyclass(name = "InfinitePlane3d", module = "pybevy.math", skip_from_py_object)]
+#[pyclass(name = "InfinitePlane3d", module = "pybevy.shape", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyInfinitePlane3d {
     pub(crate) storage: ValueStorage<InfinitePlane3d>,

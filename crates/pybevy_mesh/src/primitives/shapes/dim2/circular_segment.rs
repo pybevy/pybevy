@@ -21,7 +21,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCircularSegmentMeshBuilder,
 };
 
-#[pyclass(name = "CircularSegment", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "CircularSegment", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Clone, PartialEq)]
 pub struct PyCircularSegment(pub(crate) CircularSegment);
 

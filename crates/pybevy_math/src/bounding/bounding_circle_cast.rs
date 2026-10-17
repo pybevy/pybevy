@@ -10,7 +10,7 @@ use super::{bounding_circle::PyBoundingCircle, raycast::PyRayCast2d};
 use crate::{dir2::PyDir2, ray::PyRay2d, vec2::PyVec2};
 
 #[pyfield]
-#[pyclass(name = "BoundingCircleCast", module = "pybevy.math", from_py_object)]
+#[pyclass(name = "BoundingCircleCast", module = "pybevy.shape", from_py_object)]
 #[derive(Debug)]
 pub struct PyBoundingCircleCast {
     storage: FieldStorage<BoundingCircleCast>,

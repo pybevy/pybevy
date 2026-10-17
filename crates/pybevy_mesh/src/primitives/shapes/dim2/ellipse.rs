@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyEllipseMeshBuilder};
 
 #[pyvalue(domains = [half_size => [finite, non_negative]])]
-#[pyclass(name = "Ellipse", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Ellipse", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyEllipse {
     pub(crate) storage: ValueStorage<Ellipse>,

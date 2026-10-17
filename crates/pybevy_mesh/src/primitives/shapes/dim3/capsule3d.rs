@@ -12,7 +12,7 @@ use crate::{
     mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyCapsule3dMeshBuilder,
 };
 
-#[pyclass(name = "Capsule3d", module = "pybevy.math", extends = PyMeshable, eq, skip_from_py_object)]
+#[pyclass(name = "Capsule3d", module = "pybevy.shape", extends = PyMeshable, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PyCapsule3d(pub(crate) Capsule3d);
 
