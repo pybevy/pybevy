@@ -3,7 +3,8 @@ use bevy::{
     shape::{Measured3d, Sphere},
 };
 use pybevy_core::repr::float_repr;
-use pybevy_math::{primitives::dimension::dimension, vec3::PyVec3};
+use pybevy_math::vec3::PyVec3;
+use pybevy_shape::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PySphereMeshBuilder};

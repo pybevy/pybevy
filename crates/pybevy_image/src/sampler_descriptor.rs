@@ -1,6 +1,7 @@
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage,
+    domain::IntegerInput,
     repr::{float_repr, str_repr},
 };
 use pybevy_macros::pyfield;
@@ -44,7 +45,7 @@ impl PyImageSamplerDescriptor {
         lod_min_clamp = 0.0,
         lod_max_clamp = 32.0,
         compare = None,
-        anisotropy_clamp = 1,
+        anisotropy_clamp = IntegerInput::new(1),
         border_color = None
     ))]
     pub fn new(
@@ -58,9 +59,10 @@ impl PyImageSamplerDescriptor {
         lod_min_clamp: f32,
         lod_max_clamp: f32,
         compare: Option<PyImageCompareFunction>,
-        anisotropy_clamp: u16,
+        anisotropy_clamp: IntegerInput<u16>,
         border_color: Option<PyImageSamplerBorderColor>,
     ) -> PyResult<Self> {
+        let anisotropy_clamp = Self::check_anisotropy_clamp(anisotropy_clamp)?.stored();
         let descriptor = ImageSamplerDescriptor {
             address_mode_u: address_mode_u.into(),
             address_mode_v: address_mode_v.into(),
@@ -197,8 +199,8 @@ impl PyImageSamplerDescriptor {
     }
 
     #[setter]
-    pub fn set_anisotropy_clamp(&mut self, value: u16) -> PyResult<()> {
-        let value = Self::check_anisotropy_clamp(value)?;
+    pub fn set_anisotropy_clamp(&mut self, value: IntegerInput<u16>) -> PyResult<()> {
+        let value = Self::check_anisotropy_clamp(value)?.stored();
         self.as_mut()?.anisotropy_clamp = value;
         Ok(())
     }

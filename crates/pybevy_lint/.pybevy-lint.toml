@@ -3193,7 +3193,7 @@ reason = "private generated fixed-length adapter structurally implements the pub
 
 [[validation.exceptions]]
 code = "E006"
-path = "math.ViewFrustum"
+path = "shape.ViewFrustum"
 reason = "private generated fixed-length adapter structurally implements the public LiveArray[HalfSpace] protocol"
 
 [[validation.exceptions]]
@@ -3445,7 +3445,7 @@ reason = "pybevy-pbr material surface; no upstream Bevy declaration for this con
 
 [[validation.exceptions]]
 code = "E014"
-path = "math.InfinitePlane3d"
+path = "shape.InfinitePlane3d"
 reason = "approved FIELD record: keyword-only normal target per audit (upstream new shares the single field)"
 
 # W013: legacy value enums written before the pyenum convention. Each is
@@ -3672,7 +3672,7 @@ reason = "Pending: Isometry3d point transforms and RayCast3d.direction_recip ret
 paths = [
     "math.Isometry3d.inverse_transform_point",
     "math.Isometry3d.transform_point",
-    "math.RayCast3d.direction_recip",
+    "shape.RayCast3d.direction_recip",
 ]
 
 [[validation.exceptions]]
@@ -3735,8 +3735,8 @@ paths = [
 code = "W041"
 reason = "Pending: BoundingVolume::half_size on the bounding circle and sphere, and StableInterpolate::interpolate_stable on Quat, are outside the fix/math-review scope"
 paths = [
-    "math.BoundingCircle.half_size",
-    "math.BoundingSphere.half_size",
+    "shape.BoundingCircle.half_size",
+    "shape.BoundingSphere.half_size",
     "math.Quat.interpolate_stable",
 ]
 
@@ -3744,15 +3744,15 @@ paths = [
 code = "W041"
 reason = "Curve::sample_unchecked is not exposed; Python samples a curve through sample and sample_clamped, which check the domain instead of returning unspecified values outside it"
 paths = [
-    "math.CubicCurve2d.sample_unchecked",
-    "math.CubicCurve3d.sample_unchecked",
-    "math.CubicSegment2d.sample_unchecked",
-    "math.CubicSegment3d.sample_unchecked",
-    "math.EaseFunction.sample_unchecked",
-    "math.RationalCurve2d.sample_unchecked",
-    "math.RationalCurve3d.sample_unchecked",
-    "math.RationalSegment2d.sample_unchecked",
-    "math.RationalSegment3d.sample_unchecked",
+    "curve.CubicCurve2d.sample_unchecked",
+    "curve.CubicCurve3d.sample_unchecked",
+    "curve.CubicSegment2d.sample_unchecked",
+    "curve.CubicSegment3d.sample_unchecked",
+    "curve.EaseFunction.sample_unchecked",
+    "curve.RationalCurve2d.sample_unchecked",
+    "curve.RationalCurve3d.sample_unchecked",
+    "curve.RationalSegment2d.sample_unchecked",
+    "curve.RationalSegment3d.sample_unchecked",
 ]
 
 

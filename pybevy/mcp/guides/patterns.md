@@ -106,6 +106,15 @@ one graphical App.
 
 Native plugin build failures in `app.add_plugins(...)` raise `RuntimeError` with the plugin name and failure detail. After a failed native build, discard the App and construct a fresh one with dependencies ordered first: Bevy retains partial state and its added-plugin marker, so re-adding now raises a duplicate error. Rust panic text is still printed to stderr before the RuntimeError is caught. Python plugin exceptions keep their original type and failed Python plugins remain retryable. Asset loading requires an initialized IoTaskPool; add `TaskPoolPlugin` before loading assets.
 
+Python `Plugin.build(app)` callbacks invoked by `app.add_plugins(...)`
+may configure the World and add nested
+plugins, but `app.run()` and `app.update()` raise `RuntimeError` until the
+callback returns. Plugin installation closes after `app.finish()` or
+`app.cleanup()`; later additions are rejected before Python construction or
+build callbacks run. Direct `ScheduleRunnerPlugin.build(app)` and
+`TaskPoolPlugin.build(app)` calls also reject duplicates and closed
+installation phases with `RuntimeError`.
+
 `PluginGroup.build()` returns a `PluginGroupBuilder`; calling `build()` on a builder
 returns that same builder. Apply groups with `app.add_plugins(group)` or
 `app.add_plugins(builder)`, or call `builder.finish(app)`. Public `finish(app)`
@@ -1270,6 +1279,11 @@ Observers react to events or lifecycle hooks without polling. Decorate them with
 For removable observers, keep `world.add_observer(fn).id()` and despawn that
 entity as Bevy does, with `world.despawn(id)` or `commands.entity(id).despawn()`;
 the observer stops firing and its callable is released.
+
+Observers registered through `world.entity(target).observe(fn)` belong to that
+target. Despawning it retires their identity entities and callbacks, including
+native `WorldInstanceSpawner` despawns. Global observers and observers attached
+to surviving entities remain registered.
 
 ```python
 from dataclasses import dataclass

@@ -147,6 +147,8 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_light::add_module(m)?;
     pybevy_material::add_module(m)?;
     pybevy_math::add_module(m)?;
+    pybevy_shape::add_module(m)?;
+    pybevy_curve::add_module(m)?;
     pybevy_mesh::add_module(m)?;
     pybevy_pbr::add_module(m)?;
     pybevy_post_process::add_module(m)?;

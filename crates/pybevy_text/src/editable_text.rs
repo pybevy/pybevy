@@ -31,6 +31,7 @@ pub struct PyEditableText {
 #[pymethods]
 impl PyEditableText {
     #[new]
+    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         text = "",
         *,

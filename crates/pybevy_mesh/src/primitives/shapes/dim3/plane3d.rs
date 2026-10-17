@@ -8,7 +8,8 @@ use pybevy_core::{
     repr::{ReprLiteral, object_repr},
 };
 use pybevy_macros::pyvalue;
-use pybevy_math::{dir3::PyDir3, primitives::dimension::Dimension, vec2::PyVec2, vec3::PyVec3};
+use pybevy_math::{dir3::PyDir3, vec2::PyVec2, vec3::PyVec3};
+use pybevy_shape::primitives::dimension::Dimension;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
 use crate::{mesh_builder::PyMeshBuilder, meshable::PyMeshable, primitives::PyPlaneMeshBuilder};

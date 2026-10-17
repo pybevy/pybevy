@@ -1627,7 +1627,7 @@ class BackgroundColor(Component):
         """The background color."""
 
     @color.setter
-    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 
@@ -1673,10 +1673,10 @@ class BorderColor(Component):
         self,
         color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...,
         *,
-        top: Color = ...,
-        right: Color = ...,
-        bottom: Color = ...,
-        left: Color = ...,
+        top: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...,
+        right: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...,
+        bottom: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...,
+        left: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = ...,
     ) -> None: ...
 
     @staticmethod
@@ -1688,28 +1688,28 @@ class BorderColor(Component):
         """Top border color."""
 
     @top.setter
-    def top(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def top(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     @property
     def right(self) -> Color:
         """Right border color."""
 
     @right.setter
-    def right(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def right(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     @property
     def bottom(self) -> Color:
         """Bottom border color."""
 
     @bottom.setter
-    def bottom(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def bottom(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     @property
     def left(self) -> Color:
         """Left border color."""
 
     @left.setter
-    def left(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def left(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     def set_all(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> BorderColor:
         """Set all border sides to the same color and return this border.
@@ -2612,6 +2612,9 @@ class GridPlacement:
 
     Specifies where a grid item is placed and how many tracks it spans.
     Lines are 1-indexed, negative values count from the end.
+
+    Lines accept non-zero values from -32768 to 32767 and spans accept 1 to
+    65535; other values raise `ValueError`.
 
     Example:
         ```python

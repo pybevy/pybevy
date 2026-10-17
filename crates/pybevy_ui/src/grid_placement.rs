@@ -1,6 +1,6 @@
 use bevy::ui::GridPlacement;
 use pybevy_core::{
-    domain::{NON_ZERO, POSITIVE, check_for},
+    domain::{IntegerInput, NON_ZERO, POSITIVE, check_for},
     repr::ReprLiteral,
 };
 use pyo3::prelude::*;
@@ -52,43 +52,43 @@ impl PyGridPlacement {
     }
 
     #[staticmethod]
-    pub fn span(span: u16) -> PyResult<Self> {
-        Ok(GridPlacement::span(check_for::<Self, _>("span", span, POSITIVE)?).into())
+    pub fn span(span: IntegerInput<u16>) -> PyResult<Self> {
+        Ok(GridPlacement::span(check_for::<Self, _>("span", span, POSITIVE)?.stored()).into())
     }
 
     #[staticmethod]
-    pub fn start(start: i16) -> PyResult<Self> {
-        Ok(GridPlacement::start(check_for::<Self, _>("start", start, NON_ZERO)?).into())
+    pub fn start(start: IntegerInput<i16>) -> PyResult<Self> {
+        Ok(GridPlacement::start(check_for::<Self, _>("start", start, NON_ZERO)?.stored()).into())
     }
 
     #[staticmethod]
-    pub fn end(end: i16) -> PyResult<Self> {
-        Ok(GridPlacement::end(check_for::<Self, _>("end", end, NON_ZERO)?).into())
+    pub fn end(end: IntegerInput<i16>) -> PyResult<Self> {
+        Ok(GridPlacement::end(check_for::<Self, _>("end", end, NON_ZERO)?.stored()).into())
     }
 
     #[staticmethod]
-    pub fn start_span(start: i16, span: u16) -> PyResult<Self> {
+    pub fn start_span(start: IntegerInput<i16>, span: IntegerInput<u16>) -> PyResult<Self> {
         Ok(GridPlacement::start_span(
-            check_for::<Self, _>("start", start, NON_ZERO)?,
-            check_for::<Self, _>("span", span, POSITIVE)?,
+            check_for::<Self, _>("start", start, NON_ZERO)?.stored(),
+            check_for::<Self, _>("span", span, POSITIVE)?.stored(),
         )
         .into())
     }
 
     #[staticmethod]
-    pub fn start_end(start: i16, end: i16) -> PyResult<Self> {
+    pub fn start_end(start: IntegerInput<i16>, end: IntegerInput<i16>) -> PyResult<Self> {
         Ok(GridPlacement::start_end(
-            check_for::<Self, _>("start", start, NON_ZERO)?,
-            check_for::<Self, _>("end", end, NON_ZERO)?,
+            check_for::<Self, _>("start", start, NON_ZERO)?.stored(),
+            check_for::<Self, _>("end", end, NON_ZERO)?.stored(),
         )
         .into())
     }
 
     #[staticmethod]
-    pub fn end_span(end: i16, span: u16) -> PyResult<Self> {
+    pub fn end_span(end: IntegerInput<i16>, span: IntegerInput<u16>) -> PyResult<Self> {
         Ok(GridPlacement::end_span(
-            check_for::<Self, _>("end", end, NON_ZERO)?,
-            check_for::<Self, _>("span", span, POSITIVE)?,
+            check_for::<Self, _>("end", end, NON_ZERO)?.stored(),
+            check_for::<Self, _>("span", span, POSITIVE)?.stored(),
         )
         .into())
     }
@@ -105,24 +105,24 @@ impl PyGridPlacement {
         self.inner.get_end()
     }
 
-    pub fn set_start(&self, start: i16) -> PyResult<Self> {
+    pub fn set_start(&self, start: IntegerInput<i16>) -> PyResult<Self> {
         Ok(self
             .inner
-            .set_start(check_for::<Self, _>("start", start, NON_ZERO)?)
+            .set_start(check_for::<Self, _>("start", start, NON_ZERO)?.stored())
             .into())
     }
 
-    pub fn set_end(&self, end: i16) -> PyResult<Self> {
+    pub fn set_end(&self, end: IntegerInput<i16>) -> PyResult<Self> {
         Ok(self
             .inner
-            .set_end(check_for::<Self, _>("end", end, NON_ZERO)?)
+            .set_end(check_for::<Self, _>("end", end, NON_ZERO)?.stored())
             .into())
     }
 
-    pub fn set_span(&self, span: u16) -> PyResult<Self> {
+    pub fn set_span(&self, span: IntegerInput<u16>) -> PyResult<Self> {
         Ok(self
             .inner
-            .set_span(check_for::<Self, _>("span", span, POSITIVE)?)
+            .set_span(check_for::<Self, _>("span", span, POSITIVE)?.stored())
             .into())
     }
 

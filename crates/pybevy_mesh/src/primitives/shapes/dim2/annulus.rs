@@ -5,7 +5,8 @@ use bevy::{
 };
 use pybevy_core::repr::float_repr;
 use pybevy_macros::pyconstructor;
-use pybevy_math::{primitives::dimension::dimension, vec2::PyVec2};
+use pybevy_math::vec2::PyVec2;
+use pybevy_shape::primitives::dimension::dimension;
 use pyo3::prelude::*;
 
 use super::circle::PyCircle;

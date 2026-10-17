@@ -344,11 +344,16 @@ pub fn check_known_field(field: &str, valid: &[&str]) -> Result<(), BatchColumnE
     }
 }
 
-/// Integer type of a `batch` column whose inputs must be checked before casting.
+/// Integer type a checked value is stored as. `batch` columns use the 32- and
+/// 64-bit types; scalar domain inputs also use the narrower ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntegerColumn {
+    I8,
+    I16,
     I32,
     I64,
+    U8,
+    U16,
     U32,
     U64,
 }
@@ -367,8 +372,12 @@ impl IntegerColumn {
     /// Inclusive bounds of the column type.
     pub const fn bounds(self) -> (i128, i128) {
         match self {
+            Self::I8 => (i8::MIN as i128, i8::MAX as i128),
+            Self::I16 => (i16::MIN as i128, i16::MAX as i128),
             Self::I32 => (i32::MIN as i128, i32::MAX as i128),
             Self::I64 => (i64::MIN as i128, i64::MAX as i128),
+            Self::U8 => (0, u8::MAX as i128),
+            Self::U16 => (0, u16::MAX as i128),
             Self::U32 => (0, u32::MAX as i128),
             Self::U64 => (0, u64::MAX as i128),
         }
@@ -377,8 +386,12 @@ impl IntegerColumn {
     /// Human name of the type's range, as messages spell it.
     pub fn range_name(self) -> &'static str {
         match self {
+            Self::I8 => "8-bit signed integer",
+            Self::I16 => "16-bit signed integer",
             Self::I32 => "32-bit signed integer",
             Self::I64 => "64-bit signed integer",
+            Self::U8 => "8-bit unsigned integer",
+            Self::U16 => "16-bit unsigned integer",
             Self::U32 => "32-bit unsigned integer",
             Self::U64 => "64-bit unsigned integer",
         }

@@ -1,6 +1,6 @@
 use bevy::math::{Affine2, Mat2, Mat3};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{UNSUPPORTED_COMPARISON, matrix_decomposition_singular},
     repr::{ReprLiteral, object_repr},
 };
@@ -68,11 +68,6 @@ impl PyAffine2 {
     #[inline(always)]
     fn as_ref(&self) -> PyResult<StorageRef<'_, Affine2>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Affine2>> {
-        Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
@@ -199,7 +194,8 @@ impl PyAffine2 {
 
     #[setter]
     pub fn set_matrix2(&mut self, value: PyMat2) -> PyResult<()> {
-        self.as_mut()?.matrix2 = value.try_into()?;
+        let matrix2 = value.try_into()?;
+        self.storage.update(|affine| affine.matrix2 = matrix2)?;
         Ok(())
     }
 
@@ -212,7 +208,9 @@ impl PyAffine2 {
 
     #[setter]
     pub fn set_translation(&mut self, value: PyVec2) -> PyResult<()> {
-        self.as_mut()?.translation = value.try_into()?;
+        let translation = value.try_into()?;
+        self.storage
+            .update(|affine| affine.translation = translation)?;
         Ok(())
     }
 

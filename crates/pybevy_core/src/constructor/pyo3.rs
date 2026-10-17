@@ -72,6 +72,26 @@ where
     }
 }
 
+/// An argument type that a crate downstream of this one takes as
+/// `Omittable<T>`; the orphan rule keeps that crate from implementing the
+/// extraction itself.
+pub trait OmittableArg {
+    /// What explicit `None` is rejected in favour of.
+    const EXPECTED: &'static str;
+}
+
+impl<'a, 'py, T> FromPyObject<'a, 'py> for Omittable<T>
+where
+    T: OmittableArg + FromPyObject<'a, 'py, Error = PyErr>,
+{
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
+        reject_explicit_none(&obj, T::EXPECTED)?;
+        Ok(Self::Supplied(T::extract(obj)?))
+    }
+}
+
 pub enum RawArg<'py> {
     Missing,
     Supplied(Bound<'py, PyAny>),
@@ -175,6 +195,38 @@ mod tests {
             let list = PyList::new(py, [1u32, 2]).unwrap();
             let extracted = Omittable::<Vec<u32>>::extract(list.as_any().as_borrowed()).unwrap();
             assert_eq!(extracted.into_option(), Some(vec![1, 2]));
+        });
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Count(u8);
+
+    impl OmittableArg for Count {
+        const EXPECTED: &'static str = "Count";
+    }
+
+    impl FromPyObject<'_, '_> for Count {
+        type Error = PyErr;
+
+        fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
+            Ok(Self(obj.extract()?))
+        }
+    }
+
+    #[test]
+    fn omittable_arg_rejects_none_by_name_and_extracts_the_value() {
+        Python::attach(|py| {
+            let none = py.None().into_bound(py);
+            let error = Omittable::<Count>::extract(none.as_borrowed()).unwrap_err();
+            assert!(error.is_instance_of::<PyTypeError>(py));
+            assert_eq!(
+                error.value(py).to_string(),
+                public_error::omitted_argument_none("Count")
+            );
+
+            let value = 7u8.into_pyobject(py).unwrap();
+            let extracted = Omittable::<Count>::extract(value.as_any().as_borrowed()).unwrap();
+            assert_eq!(extracted.into_option(), Some(Count(7)));
         });
     }
 }

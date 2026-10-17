@@ -29,8 +29,7 @@ use super::{
 };
 
 /// Retired generations whose Bevy schedule nodes must be physically removed.
-/// This is processed in a dedicated schedule after `Last`, never while a
-/// target schedule is executing.
+/// Processed between Update and PostUpdate, outside the target schedules.
 #[derive(Resource, Default)]
 pub(crate) struct PendingScheduleCompaction(Vec<u32>);
 

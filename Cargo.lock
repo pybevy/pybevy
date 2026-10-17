@@ -5041,6 +5041,7 @@ dependencies = [
  "pybevy_control",
  "pybevy_core",
  "pybevy_core_pipeline",
+ "pybevy_curve",
  "pybevy_ecs",
  "pybevy_gizmos",
  "pybevy_gltf",
@@ -5056,6 +5057,7 @@ dependencies = [
  "pybevy_reload",
  "pybevy_render",
  "pybevy_shader",
+ "pybevy_shape",
  "pybevy_sprite",
  "pybevy_text",
  "pybevy_time",
@@ -5166,6 +5168,7 @@ dependencies = [
  "pybevy_macros",
  "pybevy_math",
  "pybevy_render",
+ "pybevy_shape",
  "pybevy_sprite",
  "pybevy_transform",
  "pybevy_window",
@@ -5237,6 +5240,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pybevy_curve"
+version = "0.3.0-rc.1"
+dependencies = [
+ "bevy",
+ "pybevy_core",
+ "pybevy_macros",
+ "pybevy_math",
+ "pyo3",
+]
+
+[[package]]
 name = "pybevy_ecs"
 version = "0.3.0-rc.1"
 dependencies = [
@@ -5261,6 +5275,7 @@ dependencies = [
  "pybevy_core",
  "pybevy_macros",
  "pybevy_math",
+ "pybevy_shape",
  "pybevy_transform",
  "pyo3",
 ]
@@ -5391,6 +5406,7 @@ dependencies = [
  "pybevy_macros",
  "pybevy_math",
  "pybevy_render",
+ "pybevy_shape",
  "pybevy_transform",
  "pyo3",
 ]
@@ -5478,6 +5494,17 @@ dependencies = [
  "naga",
  "tracing",
  "wgpu",
+]
+
+[[package]]
+name = "pybevy_shape"
+version = "0.3.0-rc.1"
+dependencies = [
+ "bevy",
+ "pybevy_core",
+ "pybevy_macros",
+ "pybevy_math",
+ "pyo3",
 ]
 
 [[package]]

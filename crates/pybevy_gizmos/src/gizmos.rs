@@ -7,12 +7,13 @@ use bevy::{
 use pybevy_color::color::PyColor;
 use pybevy_core::{
     FieldStorage, ValidityFlag,
-    domain::{FieldDomain, check_for},
+    domain::{FieldDomain, IntegerInput, check_for},
 };
 use pybevy_math::{
-    affine3a::PyAffine3A, bounding::PyAabb3d, isometry2d::PyIsometry2d, isometry3d::PyIsometry3d,
-    mat4::PyMat4, vec2::PyVec2, vec3::PyVec3,
+    affine3a::PyAffine3A, isometry2d::PyIsometry2d, isometry3d::PyIsometry3d, mat4::PyMat4,
+    vec2::PyVec2, vec3::PyVec3,
 };
+use pybevy_shape::bounding::PyAabb3d;
 use pybevy_transform::{global_transform::PyGlobalTransform, transform::PyTransform};
 use pyo3::{exceptions::PyTypeError, prelude::*};
 
@@ -52,9 +53,8 @@ fn native_color(value: PyColor) -> PyResult<Color> {
     value.try_into()
 }
 
-fn check_curve_resolution(resolution: u32) -> PyResult<()> {
-    check_for::<PyGizmos, _>("resolution", resolution, RESOLUTION_DOMAIN)?;
-    Ok(())
+fn check_curve_resolution(resolution: IntegerInput<u32>) -> PyResult<u32> {
+    Ok(check_for::<PyGizmos, _>("resolution", resolution, RESOLUTION_DOMAIN)?.stored())
 }
 
 fn isometry2(value: PyIsometry2d) -> Isometry2d {
@@ -347,16 +347,16 @@ impl PyGizmos {
         Ok(())
     }
 
-    #[pyo3(signature = (isometry, half_size, color, resolution = 32))]
+    #[pyo3(signature = (isometry, half_size, color, resolution = IntegerInput::new(32)))]
     pub fn ellipse(
         &self,
         isometry: PyIsometry3d,
         half_size: &PyVec2,
         color: PyColor,
-        resolution: u32,
+        resolution: IntegerInput<u32>,
     ) -> PyResult<()> {
         self.check_valid()?;
-        check_curve_resolution(resolution)?;
+        let resolution = check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -366,16 +366,16 @@ impl PyGizmos {
         Ok(())
     }
 
-    #[pyo3(signature = (isometry, half_size, color, resolution = 32))]
+    #[pyo3(signature = (isometry, half_size, color, resolution = IntegerInput::new(32)))]
     pub fn ellipse_2d(
         &self,
         isometry: PyIsometry2d,
         half_size: &PyVec2,
         color: PyColor,
-        resolution: u32,
+        resolution: IntegerInput<u32>,
     ) -> PyResult<()> {
         self.check_valid()?;
-        check_curve_resolution(resolution)?;
+        let resolution = check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -385,16 +385,16 @@ impl PyGizmos {
         Ok(())
     }
 
-    #[pyo3(signature = (isometry, radius, color, resolution = 32))]
+    #[pyo3(signature = (isometry, radius, color, resolution = IntegerInput::new(32)))]
     pub fn circle(
         &self,
         isometry: PyIsometry3d,
         radius: f32,
         color: PyColor,
-        resolution: u32,
+        resolution: IntegerInput<u32>,
     ) -> PyResult<()> {
         self.check_valid()?;
-        check_curve_resolution(resolution)?;
+        let resolution = check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -404,16 +404,16 @@ impl PyGizmos {
         Ok(())
     }
 
-    #[pyo3(signature = (isometry, radius, color, resolution = 32))]
+    #[pyo3(signature = (isometry, radius, color, resolution = IntegerInput::new(32)))]
     pub fn circle_2d(
         &self,
         isometry: PyIsometry2d,
         radius: f32,
         color: PyColor,
-        resolution: u32,
+        resolution: IntegerInput<u32>,
     ) -> PyResult<()> {
         self.check_valid()?;
-        check_curve_resolution(resolution)?;
+        let resolution = check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }
@@ -423,16 +423,16 @@ impl PyGizmos {
         Ok(())
     }
 
-    #[pyo3(signature = (isometry, radius, color, resolution = 32))]
+    #[pyo3(signature = (isometry, radius, color, resolution = IntegerInput::new(32)))]
     pub fn sphere(
         &self,
         isometry: PyIsometry3d,
         radius: f32,
         color: PyColor,
-        resolution: u32,
+        resolution: IntegerInput<u32>,
     ) -> PyResult<()> {
         self.check_valid()?;
-        check_curve_resolution(resolution)?;
+        let resolution = check_curve_resolution(resolution)?;
         if !self.config.as_ref()?.enabled {
             return Ok(());
         }

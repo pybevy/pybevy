@@ -620,7 +620,7 @@ class TextColor(Component):
     @property
     def color(self) -> Color: ...
     @color.setter
-    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = Color.WHITE) -> None:
         """Create a text color component."""
@@ -1016,7 +1016,7 @@ class TextBackgroundColor(Component):
     def color(self) -> Color:
         """Background color"""
     @color.setter
-    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza) -> None: ...
+    def color(self, value: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba) -> None: ...
 
     def __init__(self, color: Color | Hsla | Hsva | Hwba | Laba | Lcha | LinearRgba | Oklaba | Oklcha | Srgba | Xyza | Okhsla | Okhsva | Okhwba = Color.BLACK) -> None:
         """Create a text background color component.

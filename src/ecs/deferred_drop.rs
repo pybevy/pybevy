@@ -21,10 +21,11 @@ use std::{
 
 use pyo3::{Py, types::PyAny};
 
-use super::world_gc::WorldGcGuard;
+use super::{observer_registry::ObserverEntry, world_gc::WorldGcGuard};
 
 thread_local! {
     static DEFERRED_PY_DROPS: RefCell<Vec<Py<PyAny>>> = const { RefCell::new(Vec::new()) };
+    static DEFERRED_OBSERVER_DROPS: RefCell<Vec<ObserverEntry>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Process-wide count of queued values. A hint only: it lets `flush` skip the
@@ -47,6 +48,18 @@ pub(crate) fn defer_py_drop(value: Py<PyAny>) {
     DEFERRED_DROP_COUNT.fetch_add(1, Ordering::AcqRel);
 }
 
+/// Retire native observer handles without running Python during component hooks.
+pub(crate) fn defer_observer_drop(entry: ObserverEntry) {
+    // SAFETY: attachment detection has no preconditions; detached Python
+    // handle drops use PyO3's reference pool rather than invoking finalizers.
+    if unsafe { pyo3::ffi::PyGILState_Check() } == 0 {
+        drop(entry);
+        return;
+    }
+    DEFERRED_OBSERVER_DROPS.with(|drops| drops.borrow_mut().push(entry));
+    DEFERRED_DROP_COUNT.fetch_add(1, Ordering::AcqRel);
+}
+
 /// Run every deferred decref collected on this thread.
 ///
 /// Safe to call at any boundary where no Bevy storage pointer is in flight,
@@ -59,13 +72,16 @@ pub(crate) fn flush_deferred_py_drops() {
     pyo3::Python::attach(|_| {
         loop {
             let batch = DEFERRED_PY_DROPS.with(|drops| std::mem::take(&mut *drops.borrow_mut()));
-            if batch.is_empty() {
+            let observers =
+                DEFERRED_OBSERVER_DROPS.with(|drops| std::mem::take(&mut *drops.borrow_mut()));
+            if batch.is_empty() && observers.is_empty() {
                 break;
             }
-            DEFERRED_DROP_COUNT.fetch_sub(batch.len(), Ordering::AcqRel);
+            DEFERRED_DROP_COUNT.fetch_sub(batch.len() + observers.len(), Ordering::AcqRel);
             for value in batch {
                 drop(value);
             }
+            drop(observers);
         }
     });
 }

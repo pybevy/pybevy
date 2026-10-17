@@ -10,6 +10,7 @@ use bevy::{
 use pybevy_core::{
     BorrowableStorage, ComponentStorage, PyMaterializable, ResourceStorage, StorageMut, StorageRef,
     ValueStorage,
+    constructor::pyo3::OmittableArg,
     enum_comparison::compare_values,
     public_error::{COLOR_INPUT_TYPES, COLOR_INTERPOLATION_MISMATCH, enum_variant_changed},
     repr::float_repr,
@@ -92,6 +93,10 @@ impl FromPyObject<'_, '_> for IntoColorValue {
     fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
         Ok(Self(extract_color_from_any(&obj)?))
     }
+}
+
+impl OmittableArg for IntoColorValue {
+    const EXPECTED: &'static str = "Color";
 }
 
 impl<'py> IntoPyObject<'py> for IntoColorValue {

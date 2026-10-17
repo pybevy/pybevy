@@ -1,7 +1,7 @@
 use bevy::math::{Affine3A, Mat3A, Mat4, Quat, Vec3, Vec3A};
 use glam::camera::{lh, rh};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     public_error::{UNSUPPORTED_COMPARISON, matrix_decomposition_singular},
     repr::{ReprLiteral, object_repr},
 };
@@ -74,11 +74,6 @@ impl PyAffine3A {
     #[inline(always)]
     fn as_ref(&self) -> PyResult<StorageRef<'_, Affine3A>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Affine3A>> {
-        Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
@@ -222,7 +217,8 @@ impl PyAffine3A {
 
     #[setter]
     pub fn set_matrix3(&mut self, value: &PyMat3A) -> PyResult<()> {
-        self.as_mut()?.matrix3 = value.try_into()?;
+        let matrix3 = value.try_into()?;
+        self.storage.update(|affine| affine.matrix3 = matrix3)?;
         Ok(())
     }
 
@@ -235,7 +231,9 @@ impl PyAffine3A {
 
     #[setter]
     pub fn set_translation(&mut self, value: &PyVec3A) -> PyResult<()> {
-        self.as_mut()?.translation = value.try_into()?;
+        let translation = value.try_into()?;
+        self.storage
+            .update(|affine| affine.translation = translation)?;
         Ok(())
     }
 

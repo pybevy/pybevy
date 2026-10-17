@@ -5,10 +5,8 @@ use bevy::{
 };
 use pybevy_core::{FromBorrowedStorage, ValueStorage, repr::float_list_repr};
 use pybevy_macros::{pyconstructor, pyvalue};
-use pybevy_math::{
-    primitives::dimension::{Dimension, dimension},
-    vec2::PyVec2,
-};
+use pybevy_math::vec2::PyVec2;
+use pybevy_shape::primitives::dimension::{Dimension, dimension};
 use pyo3::prelude::*;
 
 use crate::{

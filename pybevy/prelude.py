@@ -225,8 +225,16 @@ from .post_process import Bloom, BloomCompositeMode, BloomPrefilter
 from .render import Msaa, Tonemapping
 from .shader import Shader
 from .shape import (
+    Aabb2d,
+    Aabb3d,
+    AabbCast2d,
+    AabbCast3d,
     Annulus,
     Arc2d,
+    BoundingCircle,
+    BoundingCircleCast,
+    BoundingSphere,
+    BoundingSphereCast,
     Capsule2d,
     Capsule3d,
     Circle,
@@ -248,6 +256,8 @@ from .shape import (
     Polyline3d,
     Ray2d,
     Ray3d,
+    RayCast2d,
+    RayCast3d,
     Rectangle,
     RegularPolygon,
     Rhombus,
@@ -377,6 +387,7 @@ from .ui import (
     vmin,
     vw,
 )
+from .ui_widgets import Button
 from .window import (
     CursorEntered,
     CursorLeft,
@@ -611,8 +622,16 @@ __all__ = [
     "ShowLightGizmo",
     "SpotLight",
     # Math
+    "Aabb2d",
+    "Aabb3d",
+    "AabbCast2d",
+    "AabbCast3d",
     "Annulus",
     "Arc2d",
+    "BoundingCircle",
+    "BoundingCircleCast",
+    "BoundingSphere",
+    "BoundingSphereCast",
     "BVec2",
     "Capsule2d",
     "Capsule3d",
@@ -650,6 +669,8 @@ __all__ = [
     "Quat",
     "Ray2d",
     "Ray3d",
+    "RayCast2d",
+    "RayCast3d",
     "Rect",
     "Rectangle",
     "RegularPolygon",
@@ -805,6 +826,7 @@ __all__ = [
     "vmin",
     "vw",
     "ZIndex",
+    "Button",
     # Window
     "CursorEntered",
     "CursorLeft",

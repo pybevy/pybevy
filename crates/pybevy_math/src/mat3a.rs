@@ -1,7 +1,7 @@
 use bevy::math::{Mat3A, Vec3, Vec3A};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
-    public_error::UNSUPPORTED_COMPARISON, repr::ReprLiteral,
+    FromBorrowedStorage, StorageRef, ValueStorage, public_error::UNSUPPORTED_COMPARISON,
+    repr::ReprLiteral,
 };
 use pyo3::{basic::CompareOp, exceptions::PyTypeError, prelude::*};
 
@@ -63,11 +63,6 @@ impl PyMat3A {
     #[inline(always)]
     fn as_ref(&self) -> PyResult<StorageRef<'_, Mat3A>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Mat3A>> {
-        Ok(self.storage.as_mut()?)
     }
 
     #[inline(always)]
@@ -157,7 +152,8 @@ impl PyMat3A {
 
     #[setter]
     pub fn set_x_axis(&mut self, value: &PyVec3A) -> PyResult<()> {
-        self.as_mut()?.x_axis = value.try_into()?;
+        let x_axis = value.try_into()?;
+        self.storage.update(|mat| mat.x_axis = x_axis)?;
         Ok(())
     }
 
@@ -170,7 +166,8 @@ impl PyMat3A {
 
     #[setter]
     pub fn set_y_axis(&mut self, value: &PyVec3A) -> PyResult<()> {
-        self.as_mut()?.y_axis = value.try_into()?;
+        let y_axis = value.try_into()?;
+        self.storage.update(|mat| mat.y_axis = y_axis)?;
         Ok(())
     }
 
@@ -183,7 +180,8 @@ impl PyMat3A {
 
     #[setter]
     pub fn set_z_axis(&mut self, value: &PyVec3A) -> PyResult<()> {
-        self.as_mut()?.z_axis = value.try_into()?;
+        let z_axis = value.try_into()?;
+        self.storage.update(|mat| mat.z_axis = z_axis)?;
         Ok(())
     }
 

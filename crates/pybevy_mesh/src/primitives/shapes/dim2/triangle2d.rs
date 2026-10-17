@@ -7,7 +7,8 @@ use pybevy_core::{
     repr::ReprLiteral,
 };
 use pybevy_macros::pyconstructor;
-use pybevy_math::{vec2::PyVec2, winding_order::PyWindingOrder};
+use pybevy_math::vec2::PyVec2;
+use pybevy_shape::winding_order::PyWindingOrder;
 use pyo3::prelude::*;
 
 use super::circle::PyCircle;

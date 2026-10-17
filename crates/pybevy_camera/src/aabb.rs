@@ -4,10 +4,8 @@ use bevy::{
 };
 use pybevy_core::{ComponentStorage, PyComponent, repr::ReprLiteral};
 use pybevy_macros::pycomponent;
-use pybevy_math::{
-    affine3a::PyAffine3A, mat3a::PyMat3A, primitives::half_space::PyHalfSpace, vec3::PyVec3,
-    vec3a::PyVec3A,
-};
+use pybevy_math::{affine3a::PyAffine3A, mat3a::PyMat3A, vec3::PyVec3, vec3a::PyVec3A};
+use pybevy_shape::primitives::half_space::PyHalfSpace;
 use pyo3::prelude::*;
 
 #[pycomponent(Aabb, bridge)]

@@ -499,6 +499,12 @@ pub const PLUGIN_GROUP_REQUIRED: &str = "Argument must be a PluginGroup";
 pub const PLUGIN_GROUP_TARGET_MISSING: &str = "Target plugin does not exist in this PluginGroup";
 pub const PLUGIN_GROUP_LIFECYCLE: &str =
     "App lifecycle operations are unavailable while building a plugin group";
+pub const PLUGIN_INSTALLATION_CLOSED: &str =
+    "Plugins cannot be added after App::cleanup() or App::finish() has been called.";
+
+pub fn python_plugin_execution(operation: impl Display) -> String {
+    format!("App.{operation}() is unavailable while building a Python plugin")
+}
 
 pub const PLUGIN_GROUP_BUILD_MIGRATION: &str = "PluginGroup.build(self, app) is no longer supported; implement build(self) -> PluginGroupBuilder and return PluginGroupBuilder.start(MyGroup).add(...), or use a decorated Plugin to configure App directly";
 

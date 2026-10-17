@@ -1,6 +1,6 @@
 use bevy::math::{BVec4A, Vec4, Vec4Swizzles};
 use pybevy_core::{
-    FromBorrowedStorage, StorageMut, StorageRef, ValueStorage,
+    FromBorrowedStorage, StorageRef, ValueStorage,
     domain::{NON_NEGATIVE, check_for},
     public_error::{
         CLAMP_MIN_EXCEEDS_MAX, NORMAL_NOT_NORMALIZED, RHS_NOT_NORMALIZED, UNSUPPORTED_COMPARISON,
@@ -81,11 +81,6 @@ impl PyVec4 {
     #[inline(always)]
     fn as_ref(&self) -> PyResult<StorageRef<'_, Vec4>> {
         Ok(self.storage.as_ref()?)
-    }
-
-    #[inline(always)]
-    fn as_mut(&mut self) -> PyResult<StorageMut<'_, Vec4>> {
-        Ok(self.storage.as_mut()?)
     }
 
     pub const ZERO: PyVec4 = PyVec4::vec4(Vec4::ZERO);
@@ -218,7 +213,7 @@ impl PyVec4 {
 
     #[setter]
     pub fn set_x(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.x = value;
+        self.storage.update(|vec| vec.x = value)?;
         Ok(())
     }
 
@@ -229,7 +224,7 @@ impl PyVec4 {
 
     #[setter]
     pub fn set_y(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.y = value;
+        self.storage.update(|vec| vec.y = value)?;
         Ok(())
     }
 
@@ -240,7 +235,7 @@ impl PyVec4 {
 
     #[setter]
     pub fn set_z(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.z = value;
+        self.storage.update(|vec| vec.z = value)?;
         Ok(())
     }
 
@@ -251,7 +246,7 @@ impl PyVec4 {
 
     #[setter]
     pub fn set_w(&mut self, value: f32) -> PyResult<()> {
-        self.as_mut()?.w = value;
+        self.storage.update(|vec| vec.w = value)?;
         Ok(())
     }
 

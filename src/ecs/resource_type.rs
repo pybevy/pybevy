@@ -14,6 +14,7 @@ use pybevy_core::{
     custom_resource::{
         ResourceRegisterOutcome, insert_dynamic_resource_value, register_custom_resource_guarded,
     },
+    native_resource_origin::record_native_resource_origin,
     public_error::{
         ASSET_SERVER_MANUAL_INSERT, ASSET_SERVER_MANUAL_REMOVE, BUTTON_INPUT_REQUIRES_BUTTON_TYPE,
         RESOURCE_BRIDGE_NOT_FOUND, component_passed_as_resource, expected_resource_subclass,
@@ -340,7 +341,10 @@ impl PyResourceType {
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
-                bridge.insert(world, resource_instance.bind(py))
+                let was_present = bridge.contains_in_world(world);
+                bridge.insert(world, resource_instance.bind(py))?;
+                record_native_resource_origin(world, bridge.bevy_type_id(), was_present);
+                Ok(())
             }
             PyResourceType::Custom(type_ptr) => {
                 // Get the resource name from the Python type. The neutral
@@ -369,6 +373,9 @@ impl PyResourceType {
             PyResourceType::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
+                if bridge.contains_in_world(world) {
+                    record_native_resource_origin(world, bridge.bevy_type_id(), true);
+                }
                 bridge.remove(world);
                 Ok(())
             }
@@ -394,7 +401,11 @@ impl PyResourceType {
             Self::Dynamic(type_ptr) => {
                 let bridge = global_registry::get_resource_bridge_by_py_type(*type_ptr)
                     .ok_or_else(|| PyTypeError::new_err(RESOURCE_BRIDGE_NOT_FOUND))?;
-                bridge.take(world, py)
+                let value = bridge.take(world, py)?;
+                if value.is_some() {
+                    record_native_resource_origin(world, bridge.bevy_type_id(), true);
+                }
+                Ok(value)
             }
             Self::Custom(type_ptr) => {
                 let Some(component_id) = world

@@ -2,6 +2,7 @@ use bevy::app::{App, TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPo
 use pybevy_core::{
     FieldStorage, FromBorrowedStorage, Omittable, PluginBuild, PyPlugin,
     domain::{F32Input, FieldDomain, IntegerInput, check_for},
+    plugin::add_unique_plugin,
 };
 use pybevy_macros::{pyfield, pyplugin};
 use pyo3::{PyTraverseError, PyVisit, prelude::*};
@@ -305,10 +306,8 @@ impl PyTaskPoolPlugin {
 
     pub fn build(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
         let plugin = self.to_bevy_plugin(app.py())?;
-        app.borrow().with_bevy_app(|bevy_app| {
-            bevy_app.add_plugins(plugin);
-            Ok(())
-        })
+        app.borrow()
+            .with_bevy_app(|bevy_app| add_unique_plugin(bevy_app, plugin, "TaskPoolPlugin"))
     }
 
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {

@@ -307,6 +307,7 @@ impl PyPluginGroupBuilder {
     }
 
     pub fn finish(&self, app: Bound<'_, PyApp>) -> PyResult<()> {
+        app.borrow().ensure_plugins_can_be_added()?;
         if app.borrow().is_reload_collection() || !self.default_seed {
             return app.borrow().with_group_configuration(|| {
                 execute_members(

@@ -4,6 +4,7 @@ use bevy::app::{App, RunMode, ScheduleRunnerPlugin};
 use pybevy_core::{
     PluginBuild, PyPlugin,
     domain::{IntegerInput, NON_NEGATIVE, check_for},
+    plugin::add_unique_plugin,
 };
 use pybevy_macros::{pyenum, pyplugin};
 use pyo3::{prelude::*, types::PyInt};
@@ -101,8 +102,11 @@ impl PyScheduleRunnerPlugin {
         let run_mode: RunMode = self.run_mode.into();
 
         app.borrow().with_bevy_app(|bevy_app| {
-            bevy_app.add_plugins(ScheduleRunnerPlugin { run_mode });
-            Ok(())
+            add_unique_plugin(
+                bevy_app,
+                ScheduleRunnerPlugin { run_mode },
+                "ScheduleRunnerPlugin",
+            )
         })
     }
 }

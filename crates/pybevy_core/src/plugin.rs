@@ -18,17 +18,54 @@
 use std::{
     any::TypeId,
     collections::HashMap,
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{Arc, OnceLock, RwLock},
 };
 
 use bevy::app::{App, Plugin};
-use pybevy_storage::DefaultPluginKind;
+use pybevy_storage::{DefaultPluginKind, plugin_group::plugins_can_be_added};
 use pyo3::{
-    exceptions::PyNotImplementedError,
+    exceptions::{PyNotImplementedError, PyRuntimeError},
     ffi::PyTypeObject,
     prelude::*,
     types::{PyDict, PyTuple, PyType},
 };
+
+use crate::public_error::{
+    PLUGIN_INSTALLATION_CLOSED, duplicate_native_plugin, plugin_build_error,
+};
+
+pub fn ensure_plugin_installation_open(app: &mut App) -> PyResult<()> {
+    if plugins_can_be_added(app) {
+        Ok(())
+    } else {
+        Err(PyRuntimeError::new_err(PLUGIN_INSTALLATION_CLOSED))
+    }
+}
+
+/// Reject duplicate direct builds without exposing a native panic to Python.
+pub fn add_unique_plugin<P: Plugin>(app: &mut App, plugin: P, name: &str) -> PyResult<()> {
+    ensure_plugin_installation_open(app)?;
+    if app.is_plugin_added::<P>() {
+        return Err(PyRuntimeError::new_err(duplicate_native_plugin(name)));
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        app.add_plugins(plugin);
+    }))
+    .map_err(|payload| {
+        let detail = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|message| message.to_string())
+            })
+            .unwrap_or_else(|| "native plugin build panicked".to_string());
+        PyRuntimeError::new_err(plugin_build_error(name, detail))
+    })?;
+    Ok(())
+}
 
 /// Base class for Python-facing plugins.
 ///

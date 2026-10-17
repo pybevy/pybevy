@@ -69,6 +69,8 @@ sha2 = "0.10"
 pybevy_bytecodevm = { path = "./crates/pybevy_bytecodevm", version = "=0.3.0-rc.1" }
 pybevy_core = { path = "./crates/pybevy_core", version = "=0.3.0-rc.1" }
 pybevy_math = { path = "./crates/pybevy_math", version = "=0.3.0-rc.1" }
+pybevy_shape = { path = "./crates/pybevy_shape", version = "=0.3.0-rc.1" }
+pybevy_curve = { path = "./crates/pybevy_curve", version = "=0.3.0-rc.1" }
 pybevy_color = { path = "./crates/pybevy_color", version = "=0.3.0-rc.1" }
 pybevy_audio = { path = "./crates/pybevy_audio", version = "=0.3.0-rc.1" }
 pybevy_transform = { path = "./crates/pybevy_transform", version = "=0.3.0-rc.1" }
@@ -105,6 +107,8 @@ pybevy_array = { path = "./crates/pybevy_array", version = "=0.3.0-rc.1", defaul
 pybevy_bytecodevm = { workspace = true, features = ["parallel"] }
 pybevy_core = { workspace = true }
 pybevy_math = { workspace = true }
+pybevy_shape = { workspace = true }
+pybevy_curve = { workspace = true }
 pybevy_color = { workspace = true }
 pybevy_audio = { workspace = true }
 pybevy_transform = { workspace = true }

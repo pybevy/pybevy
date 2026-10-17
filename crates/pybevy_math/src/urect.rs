@@ -108,7 +108,8 @@ impl PyURect {
 
     #[setter]
     pub fn set_min(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.storage.as_mut()?.min = value.try_into()?;
+        let min = value.try_into()?;
+        self.storage.update(|rect| rect.min = min)?;
         Ok(())
     }
 
@@ -121,7 +122,8 @@ impl PyURect {
 
     #[setter]
     pub fn set_max(&mut self, value: PyUVec2) -> PyResult<()> {
-        self.storage.as_mut()?.max = value.try_into()?;
+        let max = value.try_into()?;
+        self.storage.update(|rect| rect.max = max)?;
         Ok(())
     }
 

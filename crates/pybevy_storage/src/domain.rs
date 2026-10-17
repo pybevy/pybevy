@@ -397,12 +397,28 @@ pub trait StoredInteger: Copy + TryFrom<i128> {
     const COLUMN: IntegerColumn;
 }
 
+impl StoredInteger for i8 {
+    const COLUMN: IntegerColumn = IntegerColumn::I8;
+}
+
+impl StoredInteger for i16 {
+    const COLUMN: IntegerColumn = IntegerColumn::I16;
+}
+
 impl StoredInteger for i32 {
     const COLUMN: IntegerColumn = IntegerColumn::I32;
 }
 
 impl StoredInteger for i64 {
     const COLUMN: IntegerColumn = IntegerColumn::I64;
+}
+
+impl StoredInteger for u8 {
+    const COLUMN: IntegerColumn = IntegerColumn::U8;
+}
+
+impl StoredInteger for u16 {
+    const COLUMN: IntegerColumn = IntegerColumn::U16;
 }
 
 impl StoredInteger for u32 {
@@ -1289,6 +1305,78 @@ mod tests {
         assert_eq!(
             check("W", "latency", None::<IntegerInput<u32>>, AT_LEAST_ONE),
             Ok(None)
+        );
+    }
+
+    #[test]
+    fn narrow_integer_inputs_check_their_stored_range() {
+        assert_eq!(
+            check("G", "span", IntegerInput::<u16>::new(65_535), POSITIVE)
+                .map(IntegerInput::stored),
+            Ok(u16::MAX)
+        );
+        assert_eq!(
+            message(check(
+                "G",
+                "span",
+                IntegerInput::<u16>::new(-1),
+                AT_LEAST_ONE
+            )),
+            "G.span must be at least 1 (got -1)"
+        );
+        assert_eq!(
+            message(check(
+                "G",
+                "span",
+                IntegerInput::<u16>::new(65_536),
+                POSITIVE
+            )),
+            "G.span must be within the 16-bit unsigned integer range (got 65536)"
+        );
+        assert_eq!(
+            check("G", "start", IntegerInput::<i16>::new(-32_768), NON_ZERO)
+                .map(IntegerInput::stored),
+            Ok(i16::MIN)
+        );
+        assert_eq!(
+            message(check(
+                "G",
+                "start",
+                IntegerInput::<i16>::new(32_768),
+                NON_ZERO
+            )),
+            "G.start must be within the 16-bit signed integer range (got 32768)"
+        );
+        assert_eq!(
+            message(check(
+                "G",
+                "start",
+                IntegerInput::<i16>::new(-32_769),
+                NON_ZERO
+            )),
+            "G.start must be within the 16-bit signed integer range (got -32769)"
+        );
+        assert_eq!(
+            check("Q", "quality", IntegerInput::<u8>::new(255), POSITIVE).map(IntegerInput::stored),
+            Ok(u8::MAX)
+        );
+        assert_eq!(
+            message(check(
+                "Q",
+                "quality",
+                IntegerInput::<u8>::new(256),
+                POSITIVE
+            )),
+            "Q.quality must be within the 8-bit unsigned integer range (got 256)"
+        );
+        assert_eq!(
+            message(check("Q", "offset", IntegerInput::<i8>::new(-129), NOT_NAN)),
+            "Q.offset must be within the 8-bit signed integer range (got -129)"
+        );
+        assert_eq!(
+            message(check("Q", "offset", IntegerInput::<i8>::beyond(), NOT_NAN)),
+            "Q.offset must be within the 8-bit signed integer range \
+             (got an integer wider than 128 bits)"
         );
     }
 
