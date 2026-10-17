@@ -542,8 +542,7 @@ pub struct ComponentLayout {
     pub wrapper_size: WrapperSize,
 }
 
-// SAFETY: py_type_ptr is an opaque identity key, never dereferenced; type
-// objects live for the interpreter lifetime
+// SAFETY: py_type_ptr is an opaque identity key, never dereferenced here.
 unsafe impl Send for ComponentLayout {}
 // SAFETY: see the Send impl above
 unsafe impl Sync for ComponentLayout {}

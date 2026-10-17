@@ -9,7 +9,11 @@
 //! execution window. The owned Python reference prevents a removed component from leaving
 //! an escaped proxy with a dangling object pointer.
 
-use bevy::ecs::{entity::Entity, world::unsafe_world_cell::UnsafeWorldCell};
+use std::mem::transmute;
+
+use bevy::ecs::{
+    component::ComponentId, entity::Entity, world::unsafe_world_cell::UnsafeWorldCell,
+};
 use pybevy_ecs::shared::{change_tracking::mark_component_changed_explicit, run_ticks::RunTicks};
 use pyo3::{
     PyTraverseError, PyVisit,
@@ -26,7 +30,7 @@ use crate::ecs::{
 struct CustomComponentStorage {
     object: Py<PyAny>,
     validity: ValidityFlagWithMode,
-    component_id: bevy::ecs::component::ComponentId,
+    component_id: ComponentId,
     /// Entity this component belongs to (for change tracking outside iteration context)
     entity: Entity,
     /// Validity-fenced cell used for narrow change-tick writeback.
@@ -69,48 +73,40 @@ impl PyCustomComponent {
     }
 
     /// Intercept field access to forward to underlying Python object
-    fn __getattribute__<'py>(
-        slf: PyRef<'py, Self>,
-        py: Python<'py>,
-        name: &str,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    fn __getattribute__<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Bound<'py, PyAny>> {
         // Check validity first
-        slf.check_valid()?;
+        self.check_valid()?;
 
         // Get underlying Python object
-        let py_obj = slf.get_py_object(py);
+        let py_obj = self.get_py_object(py);
 
         // Forward to Python object's __getattribute__
         let value = py_obj.getattr(name)?;
-        if slf.storage.validity.access_mode() == AccessMode::Write
+        self.check_valid()?;
+        if self.storage.validity.access_mode() == AccessMode::Write
             && !name.starts_with("__")
             && !is_immutable_value(&value)
         {
             // Lists, dicts and methods can mutate in place, as Bevy's DerefMut does.
-            slf.mark_changed();
+            self.mark_changed()?;
         }
         Ok(value)
     }
 
     /// Intercept field mutation to forward to underlying Python object
-    fn __setattr__(
-        slf: PyRefMut<'_, Self>,
-        py: Python<'_>,
-        name: &str,
-        value: Bound<'_, PyAny>,
-    ) -> PyResult<()> {
-        slf.check_valid()?;
+    fn __setattr__(&self, py: Python<'_>, name: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
+        self.check_valid()?;
 
         // Ensure mutable access
-        slf.storage.validity.check_write()?;
+        self.storage.validity.check_write()?;
 
         // Get underlying Python object
-        let py_obj = slf.get_py_object(py);
+        let py_obj = self.get_py_object(py);
 
         // Forward to Python object's __setattr__
         py_obj.setattr(name, value)?;
 
-        slf.mark_changed();
+        self.mark_changed()?;
 
         Ok(())
     }
@@ -131,8 +127,9 @@ fn is_immutable_value(value: &Bound<'_, PyAny>) -> bool {
 impl PyCustomComponent {
     /// Mark the component changed through the stored entity context, during
     /// iteration or after collection.
-    fn mark_changed(&self) {
-        // SAFETY: world_cell is fenced by the ValidityFlag checked by the caller,
+    fn mark_changed(&self) -> PyResult<()> {
+        self.storage.validity.check_write()?;
+        // SAFETY: world_cell is fenced by the writable ValidityFlag checked above,
         // and entity was extracted from a live query during system execution.
         unsafe {
             mark_component_changed_explicit(
@@ -142,6 +139,7 @@ impl PyCustomComponent {
                 self.storage.run_ticks,
             );
         }
+        Ok(())
     }
 
     /// Create a proxy for an ECS-stored component.
@@ -155,15 +153,14 @@ impl PyCustomComponent {
     pub fn from_object(
         object: Py<PyAny>,
         validity: ValidityFlagWithMode,
-        component_id: bevy::ecs::component::ComponentId,
+        component_id: ComponentId,
         entity: Entity,
         world_cell: UnsafeWorldCell<'_>,
         run_ticks: Option<RunTicks>,
     ) -> Self {
         // SAFETY: the caller fences this lifetime-erased cell with `validity`.
-        let world_cell = unsafe {
-            std::mem::transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell)
-        };
+        let world_cell =
+            unsafe { transmute::<UnsafeWorldCell<'_>, UnsafeWorldCell<'static>>(world_cell) };
         PyCustomComponent {
             storage: CustomComponentStorage {
                 object,

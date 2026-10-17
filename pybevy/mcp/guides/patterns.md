@@ -292,6 +292,13 @@ def damage_players(query: Query[Mut[Player]]) -> None:
 - **Default (wrapper)**: `int`, `float`, `bool`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `Mat2`, `Mat3`, `Mat4` - fast, supports View batch execution and Numba JIT. Matrix fields work through Query, lazy View expressions and `batch()` spawning. Matrix View batch buffers for Numba remain unsupported.
 - **Python storage**: `str`, `list`, `dict`, custom classes - use `@component(storage="python")`. This includes private data fields beginning with `_`. Slower (no View/Numba), but supports any Python type.
 
+Resolvable string annotations and aliases retain the same wrapper layout as
+direct types. Wrapper layouts over 1,024 bytes raise `TypeError` on insertion or
+batch construction; opt into Python storage for larger components. Fieldless
+classes with inherited constructors or slots that may hold unannotated state
+use Python storage to preserve that state. Out-of-range custom integer values
+raise `ValueError` before insertion or assignment.
+
 Wrapper-storage components support properties, property setters (with `Mut[T]`),
 static/class methods, and common special methods through Query and World access.
 `vars(query_item)` is a snapshot of stored fields, not a live writable dictionary;
@@ -311,8 +318,10 @@ class Inventory(Component):
 
 `Query[Inventory]` rejects direct field assignment, but nested values and
 methods still reach the live stored object. Such reads are scheduled
-exclusively. A nested change does not trigger `Changed[Inventory]`; when change
-detection matters, copy the field and assign it through `Query[Mut[Inventory]]`:
+exclusively. Through `Query[Mut[Inventory]]`, scalar reads stay clean, while
+access to mutable containers or bound methods conservatively marks
+`Changed[Inventory]`. Use mutable access for changes; copying and reassigning
+the field also works:
 
 ```python
 @system
@@ -326,6 +335,13 @@ def add_item(query: Query[Mut[Inventory]]) -> None:
 After insertion, mutate the value through its ECS access. Do not retain a
 mutable external alias or insert the same object into multiple ECS slots; the
 scheduler cannot associate those aliases with the component access.
+
+Python-storage property callbacks can reenter the same valid mutable proxy.
+A callback that revokes access, for example by switching a `ParamSet` slot,
+causes `RuntimeError` before native change-tick writeback. Python side effects
+that already ran are not rolled back. Observer queries validate live class
+identity just like scheduled queries; a retired class address is not an alias
+for an unrelated class that later occupies it.
 
 **Class identity:** custom component, resource, message and state classes are
 identified by module and qualified name (`module.__qualname__`). Classes that

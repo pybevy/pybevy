@@ -1,9 +1,14 @@
+use std::ffi::c_void;
+
 use pybevy_bytecodevm::bytecode::FieldType;
-use pybevy_core::component_fields::declared_annotations;
 // Re-export backend-agnostic types from pybevy_core
 pub use pybevy_core::component_layout::{
     ComponentLayout, ComponentSerializationError, ComponentStorageType, PrimitiveType,
     PrimitiveValue,
+};
+use pybevy_core::{
+    component_fields::declared_annotations,
+    domain::{IntegerInput, check_for},
 };
 use pybevy_math::{
     mat2::PyMat2, mat3::PyMat3, mat4::PyMat4, quat::PyQuat, vec2::PyVec2, vec3::PyVec3,
@@ -14,8 +19,34 @@ use pyo3::{
     exceptions::{PyRuntimeError, PyTypeError},
     intern,
     prelude::*,
-    types::{PyBool, PyFloat, PyInt, PyType},
+    types::{PyBool, PyDict, PyFloat, PyInt, PyString, PyType},
 };
+
+use crate::ecs::{component::PyComponent, custom_component::PyCustomComponent};
+
+fn component_annotations<'py>(cls: &Bound<'py, PyType>) -> PyResult<Bound<'py, PyDict>> {
+    let annotations = declared_annotations(cls)?;
+    if !annotations
+        .values()
+        .iter()
+        .any(|hint| hint.is_instance_of::<PyString>())
+    {
+        return Ok(annotations);
+    }
+    let hints = cls
+        .py()
+        .import("typing")?
+        .call_method1("get_type_hints", (cls,));
+    let Ok(hints) = hints else {
+        return Ok(annotations);
+    };
+    let hints = hints.cast_into::<PyDict>()?;
+    let resolved = PyDict::new(cls.py());
+    for (name, hint) in annotations.iter() {
+        resolved.set_item(&name, hints.get_item(&name)?.unwrap_or(hint))?;
+    }
+    Ok(resolved)
+}
 
 /// PyO3-specific extension methods for PrimitiveType
 pub trait PrimitiveTypeExt {
@@ -121,10 +152,22 @@ pub(crate) fn extract_primitive_from_py(
     Ok(match field_type {
         PrimitiveType::F32 => PrimitiveValue::F32(value.extract()?),
         PrimitiveType::F64 => PrimitiveValue::F64(value.extract()?),
-        PrimitiveType::I32 => PrimitiveValue::I32(value.extract()?),
-        PrimitiveType::I64 => PrimitiveValue::I64(value.extract()?),
-        PrimitiveType::U32 => PrimitiveValue::U32(value.extract()?),
-        PrimitiveType::U64 => PrimitiveValue::U64(value.extract()?),
+        PrimitiveType::I32 => PrimitiveValue::I32(
+            check_for::<PyCustomComponent, _>("value", value.extract::<IntegerInput<i32>>()?, &[])?
+                .stored(),
+        ),
+        PrimitiveType::I64 => PrimitiveValue::I64(
+            check_for::<PyCustomComponent, _>("value", value.extract::<IntegerInput<i64>>()?, &[])?
+                .stored(),
+        ),
+        PrimitiveType::U32 => PrimitiveValue::U32(
+            check_for::<PyCustomComponent, _>("value", value.extract::<IntegerInput<u32>>()?, &[])?
+                .stored(),
+        ),
+        PrimitiveType::U64 => PrimitiveValue::U64(
+            check_for::<PyCustomComponent, _>("value", value.extract::<IntegerInput<u64>>()?, &[])?
+                .stored(),
+        ),
         PrimitiveType::Bool => PrimitiveValue::Bool(value.extract()?),
         PrimitiveType::Vec3 => {
             let py_vec3: PyRef<PyVec3> = value.extract()?;
@@ -187,7 +230,7 @@ impl ComponentLayoutExt for ComponentLayout {
     fn from_annotations(cls: &Bound<'_, PyType>) -> PyResult<ComponentLayout> {
         let name = cls.name()?.to_string();
 
-        let annotations = declared_annotations(cls)?;
+        let annotations = component_annotations(cls)?;
 
         // Parse each field annotation
         let mut field_types = Vec::new();
@@ -217,7 +260,7 @@ impl ComponentLayoutExt for ComponentLayout {
             }
         }
 
-        let py_type_ptr = cls.as_ptr() as *const std::ffi::c_void;
+        let py_type_ptr = cls.as_ptr() as *const c_void;
 
         ComponentLayout::from_fields(py_type_ptr, name.clone(), &field_types).map_err(|data_size| {
             PyTypeError::new_err(format!(
@@ -245,28 +288,31 @@ fn empty_layout_has_undeclared_instance_state(cls: &Bound<'_, PyType>) -> PyResu
     if !declared_annotations(cls)?.is_empty() {
         return Ok(false);
     }
-    let class_dict = cls.getattr("__dict__")?;
-    if class_dict.contains("__new__")? {
-        let constructor = class_dict.get_item("__new__")?;
-        let function = constructor.getattr_opt("__func__")?.unwrap_or(constructor);
-        let guarded = match function.getattr_opt("__pybevy_missing_constructor_guard__")? {
-            Some(marker) => marker.is_truthy()?,
-            None => false,
-        };
-        if !guarded {
+    let object = cls.py().get_type::<PyAny>();
+    let constructor = cls.getattr("__new__")?;
+    let guarded = constructor
+        .getattr_opt("__pybevy_missing_constructor_guard__")?
+        .is_some_and(|marker| marker.is_truthy().unwrap_or(false));
+    if !constructor.is(object.getattr("__new__")?)
+        && !constructor.is(cls.py().get_type::<PyComponent>().getattr("__new__")?)
+        && !guarded
+    {
+        return Ok(true);
+    }
+    for base in cls.getattr("__mro__")?.try_iter()? {
+        let dictionary = base?.getattr("__dict__")?;
+        if dictionary.contains("__slots__")? && dictionary.get_item("__slots__")?.is_truthy()? {
             return Ok(true);
         }
     }
-    if class_dict.contains("__slots__")? && class_dict.get_item("__slots__")?.is_truthy()? {
-        return Ok(true);
-    }
-    if !class_dict.contains("__init__")? {
-        return Ok(false);
+    let initializer = cls.getattr("__init__")?;
+    let class_dict = cls.getattr("__dict__")?;
+    if initializer.is(object.getattr("__init__")?) {
+        return Ok(cls.hasattr("__dataclass_fields__")? && class_dict.contains("__init__")?);
     }
     if !cls.hasattr("__dataclass_fields__")? {
         return Ok(true);
     }
-    let initializer = class_dict.get_item("__init__")?;
     let generated_by_dataclass = (|| -> PyResult<bool> {
         let Some(code) = initializer.getattr_opt("__code__")? else {
             return Ok(false);
@@ -312,17 +358,11 @@ impl ComponentStorageTypeExt for ComponentStorageType {
             return Ok((ComponentStorageType::PyObject, None));
         }
 
-        // Try to compute layout - if successful, use wrapper storage
-        match ComponentLayout::from_annotations(cls) {
-            Ok(layout) => Ok((
-                ComponentStorageType::Wrapper(layout.wrapper_size),
-                Some(layout),
-            )),
-            Err(_) => {
-                // Layout computation failed (non-primitive types) - use PyObject storage
-                Ok((ComponentStorageType::PyObject, None))
-            }
-        }
+        let layout = ComponentLayout::from_annotations(cls)?;
+        Ok((
+            ComponentStorageType::Wrapper(layout.wrapper_size),
+            Some(layout),
+        ))
     }
 }
 
@@ -358,7 +398,7 @@ pub(crate) fn cached_storage_and_layout_match(
         return Ok(false);
     }
 
-    let annotations = declared_annotations(cls)?;
+    let annotations = component_annotations(cls)?;
     if annotations.len() != layout.fields.len() {
         return Ok(false);
     }

@@ -2,7 +2,7 @@
 //!
 //! Implements lazy change detection that matches Bevy's semantics:
 //! - Query[Mut[T]] iteration does NOT mark components as changed
-//! - Only actual field mutations (via __setattr__) mark components as changed
+//! - Field writes and opaque mutable Python-object access mark changes
 //!
 //! Safety: World pointer is only dereferenced during valid query iteration (protected by ValidityFlag)
 

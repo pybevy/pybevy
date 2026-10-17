@@ -560,16 +560,16 @@ def _has_undeclared_component_state(
 ) -> bool:
     if field_hints:
         return False
-    constructor = cls.__dict__.get("__new__")
-    if constructor is not None:
+    constructor = cls.__new__
+    if constructor is not object.__new__ and constructor is not Component.__new__:
         function = getattr(constructor, "__func__", constructor)
         if not getattr(function, "__pybevy_missing_constructor_guard__", False):
             return True
-    if bool(cls.__dict__.get("__slots__")):
+    if any(bool(base.__dict__.get("__slots__")) for base in cls.__mro__):
         return True
-    initializer = cls.__dict__.get("__init__")
-    if initializer is None:
-        return False
+    initializer = cls.__init__
+    if initializer is object.__init__:
+        return dataclasses.is_dataclass(cls) and "__init__" in cls.__dict__
     code = getattr(initializer, "__code__", None)
     # The generated empty dataclass initializer is a state-free self-only function.
     return not (
