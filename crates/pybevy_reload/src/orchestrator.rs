@@ -8,8 +8,8 @@ use bevy::{
     time::{Real, Time},
 };
 use pybevy_core::{
-    PluginIdentity, gpu_validation::clear_wgpu_validation_errors, publish_last_system_error,
-    publish_reload_failure, publish_reload_failure_at,
+    CustomComponentInfo, PluginIdentity, gpu_validation::clear_wgpu_validation_errors,
+    public_error, publish_last_system_error, publish_reload_failure, publish_reload_failure_at,
 };
 
 use crate::{
@@ -162,8 +162,13 @@ pub fn perform_reload<R: ReloadRuntime, S: HotReloadStateAccess>(
         let previous = world
             .get_resource::<EscalationTracker>()
             .and_then(|tracker| tracker.last.clone());
+        let orphaned = carried_custom_components(world, &fingerprint.removed_components);
+        let removed =
+            (!orphaned.is_empty()).then(|| public_error::reload_component_class_removed(&orphaned));
         let reason = if recovery_required {
             Some("recovering from failed Full reload")
+        } else if let Some(removed) = &removed {
+            Some(removed.as_str())
         } else {
             match &previous {
                 Some(previous) => {
@@ -731,6 +736,27 @@ pub trait HotReloadStateAccess {
     fn current_generation(&self) -> u32;
     fn increment_generation(&self);
     fn set_generation(&self, generation: u32);
+}
+
+/// The removed component classes, by `module.qualname`, that a live entity
+/// still carries. Registry entries hold the bare class name.
+fn carried_custom_components(world: &World, keys: &[String]) -> Vec<String> {
+    let Some(info) = world.get_resource::<CustomComponentInfo>() else {
+        return Vec::new();
+    };
+    keys.iter()
+        .filter(|key| {
+            let class_name = key.rsplit('.').next().unwrap_or(key);
+            info.iter().any(|(id, entry)| {
+                entry.name == class_name
+                    && world
+                        .archetypes()
+                        .iter()
+                        .any(|archetype| !archetype.is_empty() && archetype.contains(id))
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]

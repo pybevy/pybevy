@@ -113,7 +113,7 @@ reload {"mode": "full", "time_scale": 0.1}            - Reload at slow-motion
 reload {"mode": "full", "pause": true, "time_scale": 0.1} - Both: frozen at 0.1x, resume when ready
 
 get_reload_status                  - Check if reload is pending/complete
-get_last_error                     - Get Python error traceback if reload failed, plus wgpu_validation GPU errors and shader_errors
+get_last_error                     - Get Python error traceback if reload failed, plus wgpu_validation GPU errors, shader_errors, and asset_load_failures
 ```
 
 `get_last_error.shader_errors` is `null` or lists the compile errors of shaders
@@ -213,6 +213,7 @@ def main(app: App) -> App:
 | Changed Update system logic | Partial | Faster, keeps scene state |
 | Added new `@component`/`@resource` types | Full | Need fresh registration |
 | Changed `@component` fields or storage mode | Full | Partial reload auto-escalates before applying the new layout |
+| Deleted a `@component` class an entity still carries | Full | Partial reload auto-escalates; `escalation_reason` names the class |
 | Changed `@resource` fields | Full | Partial reload keeps the live instance, so it auto-escalates to rebuild it |
 | Removed or renamed the active `@state` member | Full | Partial reload auto-escalates and reinitializes that state from the entrypoint |
 | Tweaking animation parameters | Partial | Preserves entity state |
@@ -236,8 +237,9 @@ scene reload succeeds; later edits to the new module are watched normally.
 Unrelated Python files under the root are ignored. Scenes that use dynamic
 imports or load and execute Python files by path reload conservatively for
 Python edits under the root. This includes `runpy`, `spec_from_file_location`,
-and `exec`/`compile`; the watcher cannot infer a specific dependency from a
-runtime path. Asset files such as `.wgsl` remain owned by Bevy's asset watcher.
+and the `exec`/`compile` builtins; the watcher cannot infer a specific
+dependency from a runtime path. Asset files such as `.wgsl` remain owned by
+Bevy's asset watcher.
 
 The first Partial reload after `run_scene` preserves live state when definitions
 are unchanged. Escalation to Full discards live edits and changes entity IDs;
@@ -290,7 +292,12 @@ a non-escalated Partial reload. This does not undo arbitrary import-time side
 effects, such as file writes.
 
 `running_previous_generation` means the previous generation is running with
-its scene World intact. It is not merely a code-generation check.
+its scene World intact. It is not merely a code-generation check. After a
+failed reload, the `reload` and `reload_and_capture` responses,
+`get_reload_status`, `get_last_error` and `get_scene_summary` all report it,
+so an empty summary with `running_previous_generation: false` is a scene the
+failed Full reload cleared. `get_reload_status` and `get_last_error` then also
+add `scene_cleared`, saying so in words.
 
 After successful recovery, the debug overlay clears the failure indicator and
 hides the previous error. Full reload resets the scene clocks but does not stall

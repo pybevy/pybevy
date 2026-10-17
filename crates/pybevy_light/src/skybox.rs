@@ -4,7 +4,7 @@ use pybevy_macros::pycomponent;
 use pybevy_math::quat::PyQuat;
 use pyo3::prelude::*;
 
-#[pycomponent(Skybox, bridge, view_fields = [brightness])]
+#[pycomponent(Skybox, bridge, view_fields = [brightness], domains = [brightness => [finite]])]
 #[pyclass(name = "Skybox", module = "pybevy.light", extends = PyComponent)]
 pub struct PySkybox {
     pub(crate) storage: ComponentStorage<Skybox>,
@@ -24,6 +24,7 @@ impl PySkybox {
         brightness: f32,
         rotation: PyQuat,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let brightness = Self::check_brightness(brightness)?;
         let image = match image {
             Some(image) => Some(extract_handle_from_any(image)?.try_into()?),
             None => None,
@@ -57,6 +58,7 @@ impl PySkybox {
 
     #[setter]
     pub fn set_brightness(&mut self, brightness: f32) -> PyResult<()> {
+        let brightness = Self::check_brightness(brightness)?;
         self.as_mut()?.brightness = brightness;
         Ok(())
     }

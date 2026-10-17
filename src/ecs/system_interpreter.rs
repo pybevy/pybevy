@@ -22,7 +22,7 @@ use pybevy_core::public_error::{
     CONDITION_MUTABLE_QUERY, CONDITION_MUTABLE_VIEW, CONDITION_OPAQUE_MESSAGE_READER,
     CONDITION_OPAQUE_QUERY, CONDITION_OPAQUE_RESOURCE, CONDITION_OPAQUE_VIEW, CONDITION_RES_MUT,
     CONDITION_RETURNED_CALLABLE, CONDITION_WORLD, REQUIRED_SINGLE_MULTIPLE_MATCHES,
-    REQUIRED_SINGLE_NO_MATCHES, pipe_input_type_mismatch,
+    REQUIRED_SINGLE_NO_MATCHES, pipe_input_type_mismatch, resolved_access_conflict,
 };
 #[cfg(debug_assertions)]
 use pybevy_ecs::shared::access_audit::assert_query_access_declared;
@@ -687,6 +687,21 @@ unsafe impl SystemInterpreter for MainInterpreter {
                         conflict_error_message(&plan.name, &conflict),
                         format!("parameter_{}", conflict.param_idx),
                     )
+                })
+                .or_else(|| {
+                    let conflict = declared.alias_conflict?;
+                    let name = |index: usize| params.get(index).map_or("?", |p| p.name.as_str());
+                    Some(SystemParamValidationError::new::<MainDynamicSystem>(
+                        false,
+                        resolved_access_conflict(
+                            &plan.name,
+                            conflict.parameter,
+                            name(conflict.parameter),
+                            conflict.existing_parameter,
+                            name(conflict.existing_parameter),
+                        ),
+                        format!("parameter_{}", conflict.parameter),
+                    ))
                 });
             (declared, validation)
         });
@@ -1036,6 +1051,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                                 .world
                                 .get_resource::<pybevy_reload::HotReloadGeneration>()
                                 .is_none(),
+                        &plan.name,
                     ),
                     ctx.parity_trace.cloned(),
                 )
@@ -1058,7 +1074,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
     unsafe fn build_args_and_call_observer(
         &self,
         prepared: Self::PreparedCall,
-        _plan: &Self::ParamPlan,
+        plan: &Self::ParamPlan,
         _state: &mut Self::ObserverRunState,
         ctx: InterpreterCallContext<'_, '_, Self::Event>,
     ) -> Result<CallOutcome<Self::ValueToken>, InterpreterFailure<Self::ExceptionToken>> {
@@ -1093,6 +1109,7 @@ unsafe impl SystemInterpreter for MainInterpreter {
                         self.error_buffer.clone(),
                         self.error_report.clone(),
                         false,
+                        &plan.name,
                     ),
                     &message_cursors,
                     ctx.parity_trace.cloned(),

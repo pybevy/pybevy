@@ -10,7 +10,7 @@ use pybevy_core::{
 use pybevy_macros::{pycomponent, pyresource};
 use pyo3::prelude::*;
 
-#[pyresource(GlobalAmbientLight, bridge, no_user_remove)]
+#[pyresource(GlobalAmbientLight, bridge, no_user_remove, domains = [brightness => [finite]])]
 #[pyclass(name = "GlobalAmbientLight", module = "pybevy.light", extends = PyResource, from_py_object)]
 #[derive(Debug, Resource)]
 pub struct PyGlobalAmbientLight {
@@ -31,6 +31,7 @@ impl PyGlobalAmbientLight {
         brightness: f32,
         affects_lightmapped_meshes: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let brightness = Self::check_brightness(brightness)?;
         let color = Color::try_from(color)?;
         Ok(resource_initializer(
             GlobalAmbientLight {
@@ -61,6 +62,7 @@ impl PyGlobalAmbientLight {
 
     #[setter]
     pub fn set_brightness(&mut self, brightness: f32) -> PyResult<()> {
+        let brightness = Self::check_brightness(brightness)?;
         self.as_mut()?.brightness = brightness;
         Ok(())
     }
@@ -77,7 +79,7 @@ impl PyGlobalAmbientLight {
     }
 }
 
-#[pycomponent(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color])]
+#[pycomponent(AmbientLight, bridge, view_fields = [brightness, affects_lightmapped_meshes], batch_only_fields = [color], domains = [brightness => [finite]])]
 #[pyclass(name = "AmbientLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyAmbientLight {
@@ -98,6 +100,7 @@ impl PyAmbientLight {
         brightness: f32,
         affects_lightmapped_meshes: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let brightness = Self::check_brightness(brightness)?;
         let color = Color::try_from(color)?;
         Ok(Self::from_owned(AmbientLight {
             color,
@@ -126,6 +129,7 @@ impl PyAmbientLight {
 
     #[setter]
     pub fn set_brightness(&mut self, brightness: f32) -> PyResult<()> {
+        let brightness = Self::check_brightness(brightness)?;
         self.as_mut()?.brightness = brightness;
         Ok(())
     }

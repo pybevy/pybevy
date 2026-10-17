@@ -5,7 +5,7 @@ use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
 
 // The tonemapping shader raises to `1.0 / gamma`.
-#[pyvalue(domains = [gamma => [positive]])]
+#[pyvalue(domains = [gamma => [positive], saturation => [finite], contrast => [finite], gain => [finite], lift => [finite]])]
 #[pyclass(name = "ColorGradingSection", module = "pybevy.render", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyColorGradingSection {
@@ -23,6 +23,10 @@ impl PyColorGradingSection {
     #[new]
     #[pyo3(signature = (*, saturation = 1.0, contrast = 1.0, gamma = 1.0, gain = 1.0, lift = 0.0))]
     pub fn new(saturation: f32, contrast: f32, gamma: f32, gain: f32, lift: f32) -> PyResult<Self> {
+        let saturation = Self::check_saturation(saturation)?;
+        let contrast = Self::check_contrast(contrast)?;
+        let gain = Self::check_gain(gain)?;
+        let lift = Self::check_lift(lift)?;
         Ok(Self::from_owned(ColorGradingSection {
             saturation,
             contrast,
@@ -39,6 +43,7 @@ impl PyColorGradingSection {
 
     #[setter]
     pub fn set_saturation(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_saturation(value)?;
         self.as_mut()?.saturation = value;
         Ok(())
     }
@@ -50,6 +55,7 @@ impl PyColorGradingSection {
 
     #[setter]
     pub fn set_contrast(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_contrast(value)?;
         self.as_mut()?.contrast = value;
         Ok(())
     }
@@ -72,6 +78,7 @@ impl PyColorGradingSection {
 
     #[setter]
     pub fn set_gain(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_gain(value)?;
         self.as_mut()?.gain = value;
         Ok(())
     }
@@ -83,6 +90,7 @@ impl PyColorGradingSection {
 
     #[setter]
     pub fn set_lift(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_lift(value)?;
         self.as_mut()?.lift = value;
         Ok(())
     }
@@ -114,7 +122,7 @@ impl TryFrom<&PyColorGradingSection> for ColorGradingSection {
     }
 }
 
-#[pyfield]
+#[pyfield(domains = [exposure => [finite], temperature => [finite], tint => [finite], hue => [finite], post_saturation => [finite]])]
 #[pyclass(name = "ColorGradingGlobal", module = "pybevy.render", from_py_object)]
 #[derive(Debug)]
 pub struct PyColorGradingGlobal {
@@ -149,6 +157,11 @@ impl PyColorGradingGlobal {
         post_saturation: f32,
         midtones_range: PyRange,
     ) -> PyResult<Self> {
+        let exposure = Self::check_exposure(exposure)?;
+        let temperature = Self::check_temperature(temperature)?;
+        let tint = Self::check_tint(tint)?;
+        let hue = Self::check_hue(hue)?;
+        let post_saturation = Self::check_post_saturation(post_saturation)?;
         Ok(Self::from_owned(ColorGradingGlobal {
             exposure,
             temperature,
@@ -166,6 +179,7 @@ impl PyColorGradingGlobal {
 
     #[setter]
     pub fn set_exposure(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_exposure(value)?;
         self.as_mut()?.exposure = value;
         Ok(())
     }
@@ -177,6 +191,7 @@ impl PyColorGradingGlobal {
 
     #[setter]
     pub fn set_temperature(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_temperature(value)?;
         self.as_mut()?.temperature = value;
         Ok(())
     }
@@ -188,6 +203,7 @@ impl PyColorGradingGlobal {
 
     #[setter]
     pub fn set_tint(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_tint(value)?;
         self.as_mut()?.tint = value;
         Ok(())
     }
@@ -199,6 +215,7 @@ impl PyColorGradingGlobal {
 
     #[setter]
     pub fn set_hue(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_hue(value)?;
         self.as_mut()?.hue = value;
         Ok(())
     }
@@ -210,6 +227,7 @@ impl PyColorGradingGlobal {
 
     #[setter]
     pub fn set_post_saturation(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_post_saturation(value)?;
         self.as_mut()?.post_saturation = value;
         Ok(())
     }

@@ -29,20 +29,20 @@ def setup(
     meshes: ResMut[Assets[Mesh]],
     materials: ResMut[Assets[StandardMaterial]],
 ) -> None:
-    # Camera: default to eye-level, NOT overhead.
+    # Camera: choose viewpoint and effects for the requested style.
     # DistanceFog is a camera component; it does nothing on its own entity.
     commands.spawn(
         Camera3d(),
         Transform.from_xyz(8, 3, 8).looking_at(Vec3(0, 1.5, 0), Vec3.Y),
         Bloom(intensity=0.15),
-        DistanceFog(  # mandatory for 3D scenes
+        DistanceFog(  # optional atmospheric depth
             color=Color.srgb(0.7, 0.8, 0.95),
             falloff=FogFalloff.Exponential(density=0.005),  # or FogFalloff.Linear(start=1.0, end=100.0)
         ),
     )
-    # WARNING: Ambient 300+ for outdoor, 500+ for indoor/cave.
-    # Material base_color >= 0.20 for large surfaces. Start bright, dim later.
-    # See guide://scene-quality for minimum lighting floors.
+    # Tune exposure and lighting for the requested style.
+    # Bloom, fog, bright surfaces, and fill lights are optional.
+    # See guide://scene-quality for style choices and realism presets.
     # Geometry, lights, etc.
     ...
 
@@ -177,10 +177,9 @@ World resource methods when immediate mutation is required.
 
 Enqueueing copies borrowed native component/resource values while they are
 valid, including native components passed directly from a Query to
-`commands.spawn()` or `commands.entity(id).insert()`. A custom wrapper-storage
-query proxy is not itself an insertable component; construct a new instance
-from its field values before passing it to either method. Custom Python-storage
-objects retain their identity. Queueing does not
+`commands.spawn()` or `commands.entity(id).insert()`. To copy a custom
+component from a query, of either storage, construct a new instance from its
+field values. An inserted Python-storage object keeps its identity. Queueing does not
 extend the lifetime of World/Commands handles or borrowed fields. Flush may run
 observers; captured outer handles are suspended during those callbacks.
 Do not change a custom component's storage hint or field schema while its
@@ -819,8 +818,9 @@ Query data implies `With` for required components. Reciprocal `Without` filters 
 
 **Change detection note:** Direct field assignments trigger `Changed[T]` for both
 wrapper and Python-object storage. Wrapper-backed `Vec2` and `Vec3` setters also
-mark their owning component. For Python-object storage, reassign a list, dict, or
-other mutable child after changing it in place so the assignment can be observed.
+mark their owning component. For Python-object storage under `Mut[T]`, reaching a
+mutable attribute (list, dict, nested object, or method) marks the component
+changed, so `inv.items.append(x)` is observed; reading immutable values does not.
 MCP `set_component` writes to either storage mark the component changed once;
 reads and rejected writes do not.
 

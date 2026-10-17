@@ -15,8 +15,9 @@ use bevy::{
 };
 use bevy::{
     app::{App, First, Last, MainScheduleOrder, Plugin},
-    ecs::schedule::ScheduleLabel,
-    prelude::{IntoScheduleConfigs, Res, Resource},
+    asset::UntypedAssetLoadFailedEvent,
+    ecs::{message::Messages, schedule::ScheduleLabel},
+    prelude::{IntoScheduleConfigs, Res, Resource, resource_exists},
     render::{Render, RenderApp, RenderSystems},
 };
 #[cfg(feature = "pyo3-runtime")]
@@ -29,6 +30,7 @@ use pyo3::prelude::*;
 #[cfg(feature = "pyo3-runtime")]
 use crate::pyo3::runtime::Pyo3ControlRuntime;
 use crate::{
+    asset_load_errors::{AssetLoadFailures, record_asset_load_failures},
     asset_reference::AssetReferenceSession,
     capture::{
         analysis::CapturedFrames,
@@ -38,7 +40,10 @@ use crate::{
         screenshot::{
             PendingScreenshotResponders, process_pending_screenshots, screenshot_captured_observer,
         },
-        shader_errors::{ShaderErrors, publish_shader_errors},
+        shader_errors::{
+            ShaderErrors, UnresolvedShaderImports, publish_shader_errors,
+            track_unresolved_shader_imports,
+        },
         timeline::{PendingTimelines, TimelineCaptures, process_pending_timelines},
         turnaround::{PendingTurnarounds, TurnaroundCaptures, process_pending_turnarounds},
     },
@@ -198,6 +203,11 @@ pub fn install_control_runtime(
     app.init_resource::<ActiveSchedules>();
     app.insert_resource(SharedScheduleRegistryResource(schedule_registry.clone()));
     app.init_resource::<AssetReferenceSession>();
+    app.init_resource::<AssetLoadFailures>();
+    app.add_systems(
+        Last,
+        record_asset_load_failures.run_if(resource_exists::<Messages<UntypedAssetLoadFailedEvent>>),
+    );
     app.insert_resource(config);
     app.insert_non_send(runtime);
 
@@ -270,6 +280,8 @@ pub fn install_render_frame_readiness(app: &mut App) {
         );
     app.insert_resource(readiness);
     app.insert_resource(shader_errors);
+    app.init_resource::<UnresolvedShaderImports>();
+    app.add_systems(Last, track_unresolved_shader_imports);
 }
 
 /// Adds render-frame readiness once the render sub-app exists.

@@ -24,6 +24,7 @@ use super::{
     isolation::{ENTITY_ISOLATION_SETTLE_FRAMES, begin_entity_capture_isolation},
     lease::capture_in_progress,
     readiness::RenderFrameReadiness,
+    shader_errors::current_shader_errors,
     timeline::{PendingTimelines, TimelineCaptures},
 };
 use crate::{
@@ -174,6 +175,12 @@ pub fn process_pending_screenshots(world: &mut World) {
                 .pending
                 .push(screenshot);
             continue;
+        }
+        if matches!(
+            screenshot.response_kind,
+            CaptureResponseKind::ReloadAndCapture
+        ) {
+            report_shader_errors(world, screenshot.extra_response.as_mut());
         }
 
         let mut hold = CaptureHold::with_gizmo_restore(mem::take(&mut screenshot.gizmo_restore));
@@ -557,6 +564,17 @@ pub fn screenshot_captured_observer(
 /// Without `extra`, returns the screenshot result unchanged. With it, returns
 /// `extra`'s fields alongside screenshot/screenshot_width/screenshot_height; on
 /// a screenshot error the extra fields are still returned with a null screenshot.
+/// Shader compile errors surface only once the reloaded frame has rendered.
+fn report_shader_errors(world: &World, extra: Option<&mut serde_json::Value>) {
+    let Some(extra) = extra else {
+        return;
+    };
+    let errors = current_shader_errors(world);
+    if !errors.is_empty() && extra.get("errors").is_none_or(serde_json::Value::is_null) {
+        extra["errors"] = serde_json::json!(errors);
+    }
+}
+
 fn merge_extra_response(
     result: Result<serde_json::Value, ControlError>,
     extra: Option<serde_json::Value>,
@@ -1405,6 +1423,7 @@ mod tests {
                 .id(),
             reused_state: None,
             original_cameras: vec![],
+            temporary_image: None,
         };
         world.insert_resource(StagedScreenshots {
             pending: vec![StagedScreenshot {

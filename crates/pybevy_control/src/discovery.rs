@@ -511,7 +511,7 @@ fn indentation(line: &str) -> usize {
 fn class_name(line: &str) -> Option<&str> {
     line.trim()
         .strip_prefix("class ")?
-        .split(['(', ':'])
+        .split(['[', '(', ':'])
         .next()
         .map(str::trim)
         .filter(|name| !name.is_empty())
@@ -521,7 +521,7 @@ fn function_name(line: &str) -> Option<&str> {
     let line = line.trim();
     line.strip_prefix("def ")
         .or_else(|| line.strip_prefix("async def "))?
-        .split('(')
+        .split(['[', '('])
         .next()
         .map(str::trim)
         .filter(|name| !name.is_empty())
@@ -742,21 +742,15 @@ fn parse_stub_definitions(content: &str) -> (Vec<String>, Vec<String>) {
         if line.starts_with(' ') || line.starts_with('\t') {
             continue;
         }
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("class ") {
-            if let Some(name) = rest.split(['(', ':']).next() {
-                let name = name.trim().to_string();
-                if !name.is_empty() && !name.starts_with('_') && seen_classes.insert(name.clone()) {
-                    classes.push(name);
-                }
+        if let Some(name) = class_name(line) {
+            if !name.starts_with('_') && seen_classes.insert(name.to_string()) {
+                classes.push(name.to_string());
             }
-        } else if let Some(rest) = trimmed.strip_prefix("def ")
-            && let Some(name) = rest.split('(').next()
+        } else if let Some(name) = function_name(line)
+            && !name.starts_with('_')
+            && seen_functions.insert(name.to_string())
         {
-            let name = name.trim().to_string();
-            if !name.is_empty() && !name.starts_with('_') && seen_functions.insert(name.clone()) {
-                functions.push(name);
-            }
+            functions.push(name.to_string());
         }
     }
 
@@ -1253,6 +1247,15 @@ mod tests {
         let (classes, functions) = parse_stub_definitions(content);
         assert_eq!(classes, vec!["Foo", "Baz"]);
         assert!(functions.is_empty());
+    }
+
+    #[test]
+    fn parse_stub_definitions_strips_type_parameters() {
+        let content = "class LiveList[T](LiveSequence[T], Protocol):\n    pass\n\
+                       def shader_type[Record](cls: type[Record]) -> type[Record]: ...\n";
+        let (classes, functions) = parse_stub_definitions(content);
+        assert_eq!(classes, vec!["LiveList"]);
+        assert_eq!(functions, vec!["shader_type"]);
     }
 
     #[test]

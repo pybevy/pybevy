@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 
 use crate::wireframe_topology::PyWireframeTopology;
 
-#[pyasset(WireframeMaterial, bridge, not_loadable)]
+#[pyasset(WireframeMaterial, bridge, not_loadable, domains = [line_width => [finite]])]
 #[pyclass(name = "WireframeMaterial", module = "pybevy.pbr", extends = PyAsset, skip_from_py_object)]
 #[derive(Debug)]
 pub struct PyWireframeMaterial {
@@ -30,6 +30,7 @@ impl PyWireframeMaterial {
         line_width: f32,
         topology: Omittable<PyRef<'_, PyWireframeTopology>>,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let line_width = Self::check_line_width(line_width)?;
         let color = color.try_into()?;
         let material = WireframeMaterial {
             color,
@@ -64,6 +65,7 @@ impl PyWireframeMaterial {
 
     #[setter]
     pub fn set_line_width(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_line_width(value)?;
         self.as_mut()?.line_width = value;
         Ok(())
     }

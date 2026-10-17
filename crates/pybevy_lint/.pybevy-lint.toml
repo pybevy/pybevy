@@ -3672,6 +3672,13 @@ paths = [
 ]
 
 [[validation.exceptions]]
+code = "W039"
+reason = "Mesh.get_index_buffer_bytes returns Bevy's &[u8] as a live read-only uint8 array borrowed from the mesh, like Mesh.indices"
+paths = [
+    "mesh.Mesh.get_index_buffer_bytes",
+]
+
+[[validation.exceptions]]
 code = "W041"
 reason = "AnimatableKeyframeCurve is an uninstantiable type marker: PyBevy neither constructs nor reads its values, so the Curve methods have no receiver"
 paths = [

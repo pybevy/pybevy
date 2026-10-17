@@ -128,6 +128,14 @@ class Mesh(Asset):
         edited buffer back with `insert_indices`.
         """
 
+    def get_index_buffer_bytes(self) -> xp.Array | None:
+        """The index buffer's raw bytes as a read-only `uint8` view, or None if
+        the mesh is non-indexed.
+
+        Two bytes per index for `uint16` indices, four for `uint32`, in native
+        byte order. The view is borrowed like `indices()`.
+        """
+
     def positions(self) -> xp.Array:
         """Read-only zero-copy bounded array of vertex positions, shape (N, 3).
 

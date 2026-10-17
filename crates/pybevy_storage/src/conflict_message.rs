@@ -47,6 +47,20 @@ pub const CONFLICT_WORLD: &str = "World is exclusive: a system taking World cann
 pub const CONFLICT_RESOURCES: &str = "Two parameters cannot address the same resource when either declares write access. Take it once, as ResMut[...] if you need to write, or split the parameters across systems.";
 pub const CONFLICT_RESOURCE_QUERY: &str = "Query and Res parameters address the same resource entity. Add Without[IsResource] as the query filter to exclude resource entities where representable, or split the parameters across systems.";
 pub const CONFLICT_QUERIES: &str = "Different With[...] filters do not prove two queries are disjoint, because one entity could hold both markers. Add Without[...] to each query to prove exclusion (Query[tuple[Mut[Transform], Bat], Without[BatWing]] and Query[tuple[Mut[Transform], BatWing], Without[Bat]]), or split the queries across systems.";
+/// Two parameters of different logical types whose resolved ECS access
+/// conflicts, such as two classes registered under one qualified name.
+pub fn resolved_access_conflict(
+    system: &str,
+    parameter: usize,
+    name: &str,
+    existing_parameter: usize,
+    existing_name: &str,
+) -> String {
+    format!(
+        "System '{system}' has conflicting access:\n- Parameter {parameter} ({name}) and parameter {existing_parameter} ({existing_name}) address the same ECS data, and at least one writes it\nClasses with the same module and qualified name share one registration. Split the parameters across systems."
+    )
+}
+
 /// A query marker that only one of two conflicting queries requires.
 pub struct DisjointMarker<'a> {
     pub name: &'a str,

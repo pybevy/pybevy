@@ -11,7 +11,7 @@ use pyo3::prelude::*;
     shadow_maps_enabled,
     contact_shadows_enabled,
     affects_lightmapped_mesh_diffuse
-], batch_only_fields = [color])]
+], batch_only_fields = [color], domains = [illuminance => [finite], shadow_depth_bias => [finite], shadow_normal_bias => [finite]])]
 #[pyclass(name = "DirectionalLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyDirectionalLight {
@@ -70,6 +70,9 @@ impl PyDirectionalLight {
         shadow_depth_bias: f32,
         shadow_normal_bias: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let illuminance = Self::check_illuminance(illuminance)?;
+        let shadow_depth_bias = Self::check_shadow_depth_bias(shadow_depth_bias)?;
+        let shadow_normal_bias = Self::check_shadow_normal_bias(shadow_normal_bias)?;
         let color = Color::try_from(color)?;
         Ok(Self::from_owned(DirectionalLight {
             color,
@@ -102,6 +105,7 @@ impl PyDirectionalLight {
 
     #[setter]
     pub fn set_illuminance(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_illuminance(value)?;
         self.as_mut()?.illuminance = value;
         Ok(())
     }
@@ -146,6 +150,7 @@ impl PyDirectionalLight {
 
     #[setter]
     pub fn set_shadow_depth_bias(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_shadow_depth_bias(value)?;
         self.as_mut()?.shadow_depth_bias = value;
         Ok(())
     }
@@ -157,6 +162,7 @@ impl PyDirectionalLight {
 
     #[setter]
     pub fn set_shadow_normal_bias(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_shadow_normal_bias(value)?;
         self.as_mut()?.shadow_normal_bias = value;
         Ok(())
     }

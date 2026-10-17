@@ -4,7 +4,7 @@ Setting up lights, fog, atmosphere, and emissive materials for indoor and outdoo
 
 ## Default Lighting Setup (Start Here)
 
-Every 3D scene should start with a warm key light + cool fill light. Single-light scenes look flat with pure-black shadows.
+For a conventionally lit scene with warm/cool contrast, try a warm key and cool fill. This is optional: follow the requested palette and contrast. Atmosphere scenes should use one sun plus environment fill (see Environment Lighting); graphic, unlit, and silhouette scenes may need neither this setup nor bright shadows.
 
 ```python
 # Key light: warm, strong, shadows
@@ -21,7 +21,7 @@ commands.spawn(
 )
 ```
 
-The warm/cool contrast creates visual depth. Fill at ~40% of key eliminates black shadows without flattening the scene.
+The warm/cool contrast can help separate forms. Treat a fill around 40% of key as a starting point; reduce it when it flattens the subject or conflicts with the intended mood.
 
 ## Light Types
 

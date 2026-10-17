@@ -146,6 +146,7 @@ mod tests {
             runtime::fake::FakeRuntime,
         },
         protocol::{ControlError, EntityRef, ErrorCode},
+        test_python::initialize_python,
     };
     #[cfg(feature = "pyo3-runtime")]
     use crate::{protocol::GetComponentParams, pyo3::runtime::Pyo3ControlRuntime};
@@ -341,7 +342,7 @@ mod tests {
 
         static INIT: Once = Once::new();
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
             collect_all();
         });
 

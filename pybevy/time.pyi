@@ -426,13 +426,13 @@ class Time(Resource, Generic[_TimeContext]):
         """Get the fixed timestep duration."""
 
     def set_timestep(self: Time[Fixed], timestep: timedelta) -> None:
-        """Set the fixed timestep duration."""
+        """Set the fixed timestep duration; at least 100 microseconds."""
 
     def set_timestep_seconds(self: Time[Fixed], seconds: float) -> None:
-        """Set the fixed timestep in seconds."""
+        """Set the fixed timestep in seconds; at least 0.0001."""
 
     def set_timestep_hz(self: Time[Fixed], hz: float) -> None:
-        """Set the fixed timestep frequency in Hertz."""
+        """Set the fixed timestep frequency in Hertz; at most 10,000."""
 
     def overstep(self: Time[Fixed]) -> timedelta:
         """Get the accumulated time beyond complete timesteps."""

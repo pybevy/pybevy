@@ -1,3 +1,4 @@
+pub mod asset_load_errors;
 pub mod asset_reference;
 pub mod capture;
 pub mod catalog;
@@ -11,6 +12,8 @@ pub mod pyo3;
 pub mod reload;
 pub mod scene;
 pub mod schedule;
+#[cfg(test)]
+mod test_python;
 pub mod transport;
 
 #[cfg(feature = "pyo3-runtime")]

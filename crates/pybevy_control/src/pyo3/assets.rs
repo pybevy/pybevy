@@ -198,16 +198,15 @@ mod tests {
         mesh::Mesh,
         pbr::StandardMaterial,
     };
-    use pyo3::prelude::*;
 
     use super::*;
-    use crate::protocol::ErrorCode;
+    use crate::{protocol::ErrorCode, test_python::initialize_python};
 
     static INIT: Once = Once::new();
 
     fn setup_python() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
         });
     }
 

@@ -31,6 +31,7 @@ logger = logging.getLogger("pybevy.mcp.http")
 _SESSION_EXPIRY_SECONDS = 30 * 60  # 30 minutes
 _SWEEP_INTERVAL_SECONDS = 60
 _MAX_BODY_BYTES = 2 * 1024 * 1024
+_MAX_BATCH_MESSAGES = 1024
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _UNSPECIFIED_HOSTS = frozenset({"0.0.0.0", "::", ""})
 
@@ -117,6 +118,14 @@ def _format_sse_event(data: JsonDict) -> str:
     return f"event: message\ndata: {payload}\n\n"
 
 
+def _invalid_request() -> JsonDict:
+    return {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32600, "message": "Invalid Request"},
+    }
+
+
 class McpHttpHandler(BaseHTTPRequestHandler):
     """HTTP handler implementing MCP Streamable HTTP transport."""
 
@@ -146,7 +155,13 @@ class McpHttpHandler(BaseHTTPRequestHandler):
             self._error(406, "Must Accept application/json")
             return
 
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = -1
+        if content_length < 0:
+            self._error(400, "Invalid Content-Length")
+            return
         if content_length == 0:
             self._error(400, "Empty body")
             return
@@ -164,14 +179,26 @@ class McpHttpHandler(BaseHTTPRequestHandler):
             )
             return
 
-        messages: list[JsonDict] = body if isinstance(body, list) else [body]
+        if isinstance(body, list) and len(body) > _MAX_BATCH_MESSAGES:
+            self._error(413, f"Batch too large (max {_MAX_BATCH_MESSAGES} messages)")
+            return
+        messages: list[object] = body if isinstance(body, list) else [body]
+        if not any(isinstance(msg, dict) for msg in messages):
+            # A scalar or an empty batch gets one error; a batch gets one per member.
+            if isinstance(body, list) and body:
+                self._json_response(200, [_invalid_request() for _ in body])
+            else:
+                self._json_response(200, _invalid_request())
+            return
 
         session_id = self.headers.get("Mcp-Session-Id")
         session: McpSession | None = None
 
+        first = messages[0]
         is_initialize = (
             len(messages) == 1
-            and messages[0].get("method") == "initialize"
+            and isinstance(first, dict)
+            and first.get("method") == "initialize"
             and session_id is None
         )
 
@@ -191,7 +218,10 @@ class McpHttpHandler(BaseHTTPRequestHandler):
 
         with session.lock:
             for msg in messages:
-                is_notification = "id" not in msg
+                if not isinstance(msg, dict):
+                    responses.append(_invalid_request())
+                    continue
+                is_notification = "id" not in msg and "method" in msg
                 result = session.bridge._dispatch(msg)
                 if result is not None and not is_notification:
                     responses.append(result)

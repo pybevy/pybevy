@@ -1,6 +1,6 @@
 use bevy::{
     asset::{
-        AssetPath, AssetServer,
+        AssetId, AssetPath, AssetServer, UntypedAssetId,
         saver::{SaveAssetError, SavedAsset, save_using_saver as bevy_save_using_saver},
     },
     ecs::world::unsafe_world_cell::UnsafeWorldCell,
@@ -15,8 +15,8 @@ use pybevy_core::{
     handle::PyHandle,
     public_error::{
         ASSET_LOADING_TASK_POOL_MISSING, LOAD_BUILDER_TYPE_REQUIRED, LOAD_WITH_SETTINGS_DEPRECATED,
-        LOADER_SETTINGS_BRIDGE_MISSING, asset_settings_type_mismatch, invalid_asset_type,
-        removed_asset_load_method,
+        LOADER_SETTINGS_BRIDGE_MISSING, asset_path_unapproved, asset_settings_type_mismatch,
+        invalid_asset_type, removed_asset_load_method,
     },
     registry::global_registry,
 };
@@ -123,7 +123,17 @@ impl PyAssetServer {
                 bridge.name()
             )));
         }
+        let rejected = path.is_unapproved().then(|| path.to_string());
         let handle = plan.load(server, path, bridge.bevy_type_id());
+        // Bevy returns its default handle instead of loading an unapproved path.
+        if let Some(path) = rejected
+            && matches!(
+                handle.id(),
+                UntypedAssetId::Uuid { uuid, .. } if uuid == AssetId::<()>::DEFAULT_UUID
+            )
+        {
+            return Err(PyValueError::new_err(asset_path_unapproved(&path)));
+        }
         PyHandle::from_untyped(handle, bridge.py_type_ptr()).into_py_any(py)
     }
 

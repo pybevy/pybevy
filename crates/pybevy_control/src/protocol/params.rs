@@ -131,7 +131,7 @@ pub struct CaptureScreenshotParams {
     /// Max image width in pixels (default 768). Use 1280 for detail.
     #[serde(default, deserialize_with = "capture_width")]
     pub max_width: Option<u32>,
-    /// Camera position [x, y, z]. If set, temporarily re-poses a Camera3d and restores it after capture; creates one only when the scene has no cameras.
+    /// Camera position [x, y, z]. If set, temporarily re-poses a Camera3d and restores it after capture; creates one only when the scene has no cameras, rendering into a 768x432 image when there is no window.
     pub position: Option<[f32; 3]>,
     /// Point the camera looks at [x, y, z]. Defaults to [0, 0, 0] if position is set.
     pub look_at: Option<[f32; 3]>,

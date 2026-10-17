@@ -68,6 +68,7 @@ pub(crate) struct PendingDefinitions {
     pub observers: Vec<Py<PyAny>>,
     pub plugins: Vec<PluginIdentity>,
     pub component_layout_changes: Vec<String>,
+    pub removed_components: Vec<String>,
     pub resource_layout_changes: Vec<String>,
     pub entrypoint_changed: bool,
 }
@@ -534,11 +535,15 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 .getattr("_resource_layout_reload_names")?
                 .call0()?
                 .extract::<Vec<String>>()?;
-            let entrypoint_changed = py
-                .import("pybevy._internal.reload_modules")?
+            let reload_modules = py.import("pybevy._internal.reload_modules")?;
+            let entrypoint_changed = reload_modules
                 .getattr("entrypoint_changed")?
                 .call0()?
                 .extract::<bool>()?;
+            let removed_components = reload_modules
+                .getattr("removed_component_names")?
+                .call0()?
+                .extract::<Vec<String>>()?;
 
             let temp_app_ref = temp_app_py.borrow(py);
             Ok(PendingDefinitions {
@@ -551,6 +556,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
                 observers: temp_app_ref.take_pending_observers(),
                 plugins: temp_app_ref.take_pending_plugins(),
                 component_layout_changes,
+                removed_components,
                 resource_layout_changes,
                 entrypoint_changed,
             })
@@ -612,6 +618,7 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
             let mut fingerprint = builder.finish();
             fingerprint.component_layout_changed = !defs.component_layout_changes.is_empty();
             fingerprint.resource_layout_changed = !defs.resource_layout_changes.is_empty();
+            fingerprint.removed_components = defs.removed_components.clone();
             fingerprint
         })
     }
@@ -1115,14 +1122,6 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
     fn clear_custom_resources(&mut self, world: &mut World, verbose: bool) {
         clear_python_messages(world);
         cleanup::clear_custom_resources(world, verbose);
-        // Generated State[T]/NextState[T] descriptors are cached against the
-        // user's @state enum, so the cache pins one scene generation per
-        // reload unless it is dropped here with the rest of the class tables.
-        if let Err(error) = Python::attach(crate::ecs::state::clear_state_resource_type_caches)
-            && verbose
-        {
-            eprintln!("   → Could not clear state resource caches: {error}");
-        }
         // Full reload is the only caller of this hook. Drop the control-facing
         // class table so a component removed from the new scene cannot be
         // constructed through MCP using a rollback-generation type alias.

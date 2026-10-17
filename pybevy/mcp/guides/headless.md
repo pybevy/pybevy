@@ -2,6 +2,11 @@
 
 GPU rendering without a window or display server - for CI, remote servers, containers, and automated testing.
 
+`capture_screenshot` and `capture_stats` with `position` work in a scene with
+no camera: they render through a temporary `Camera3d` with a 768x432 image
+target and remove both afterwards. Author a camera with an image target for
+another resolution or projection.
+
 `Image.new_render_target` creates an RGBA8 sRGB target with `TEXTURE_BINDING`,
 `COPY_SRC`, `COPY_DST`, and `RENDER_ATTACHMENT`. It is a convenience for
 `Image.new_target_texture` with that format and `COPY_SRC` added. Import
@@ -195,3 +200,32 @@ A camera's first readback frame can be blank (all zeros), because Bevy does not 
 If the GPU rejects a render target or its readback buffer, PyBevy logs the
 mapping error and disables readback for that camera. Capture may then time out;
 use a target within the device's supported dimensions and restart the scene.
+
+## Capture Quality and Style
+
+The target size sets the rendered resolution, and `capture_screenshot(max_width=...)`
+sets the returned image size; raise the target size for more detail. Save
+full-resolution evidence when comparing fine edges, texture sampling, shadow
+bias, or shader detail.
+
+For a smooth realistic still, try a target twice the delivery width and height
+(for example 3840x2160 for 1920x1080 delivery), then downsample once. This costs
+four times the pixels and can improve shading detail as well as edges. MSAA
+smooths geometry edges; texture sampling relies on filtering and mipmaps. For
+pixel art, choose the intended pixel grid and presentation scaling.
+
+For controlled comparisons:
+
+1. Fix camera, geometry, exposure, and animation state; vary one effect at a time.
+2. Wait until assets, generated environment maps and render pipelines are
+   loaded, then capture a repeat control.
+3. Check logs and reject unexpected blank frames before comparing aesthetics.
+4. Inspect crops at delivery resolution. Use `capture_stats`/`compare_frames` to
+   locate differences; judge artistic quality by eye.
+5. Compare repeated frames and motion for stochastic shadows and SSR; renderer
+   noise can change between captures while scene time is paused. Inspect it
+   before choosing SSR for a polished still or video.
+
+The timer-driven runner is paced, so FPS under `run_loop(16)` reports the
+paced rate. State the resolution, renderer settings, hardware, runtime version,
+and capture/downsampling method with measurements.

@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use crate::{
     PyAlignContent, PyAlignItems, PyAlignSelf, PyBoxSizing, PyDisplay, PyFlexDirection, PyFlexWrap,
     PyGridAutoFlow, PyInlineDirection, PyJustifyContent, PyJustifyItems, PyJustifySelf,
-    PyOverflowAxis, PyPositionType, PyVisualBox,
+    PyOverflowAxis, PyPositionType,
     border_radius::PyBorderRadius,
     grid_placement::PyGridPlacement,
     grid_track::PyGridTrack,
@@ -59,7 +59,7 @@ impl PyNode {
         position_type = PyPositionType::Relative,
         overflow = PyOverflow::py_new(PyOverflowAxis::Visible, PyOverflowAxis::Visible),
         scrollbar_width = 0.0,
-        overflow_clip_margin = PyOverflowClipMargin::new(PyVisualBox::PaddingBox, 0.0),
+        overflow_clip_margin = PyOverflowClipMargin::padding_box(),
         left = IntoVal(Val::Auto),
         right = IntoVal(Val::Auto),
         top = IntoVal(Val::Auto),

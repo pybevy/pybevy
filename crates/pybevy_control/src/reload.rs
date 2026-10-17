@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use bevy::{
     ecs::{schedule::Schedules, world::World},
     prelude::Resource,
-    time::{Time, Virtual},
+    time::{Real, Time, Virtual},
 };
 use pybevy_core::{
     PendingReloadRequest, ReloadRequestMode, ReloadResult,
@@ -14,11 +14,12 @@ use pybevy_ecs::shared::system_runtime::HotReloadGeneration;
 use tokio::sync::oneshot;
 
 use crate::{
+    asset_load_errors::asset_load_failures_json,
     capture::{
         hold::prepare_pending_screenshot_gizmos,
         queue::{CaptureResponseKind, DebugCameraRequest, PendingScreenshot, PendingScreenshots},
         readiness::RenderFrameReadiness,
-        shader_errors::ShaderErrors,
+        shader_errors::current_shader_errors,
     },
     protocol::{ControlError, ReloadMode},
     scene::{entity_count::scene_entity_count, time::validate_time_scale},
@@ -179,6 +180,12 @@ pub fn get_reload_status(world: &mut World) -> Result<serde_json::Value, Control
                 "running_previous_generation".into(),
                 serde_json::json!(reload_result.running_previous_generation),
             );
+            if !reload_result.running_previous_generation {
+                result.insert(
+                    "scene_cleared".into(),
+                    serde_json::json!(public_error::RELOAD_FAILED_AFTER_SCENE_CLEARED),
+                );
+            }
         }
         if let Some(ref added) = reload_result.plugins_added {
             result.insert("plugins_added".into(), serde_json::json!(added));
@@ -211,16 +218,16 @@ pub fn get_last_error(world: &mut World) -> Result<serde_json::Value, ControlErr
     let mut response = last_python_error(world);
     response["wgpu_validation"] = wgpu_validation_json(world);
     response["shader_errors"] = shader_errors_json(world);
+    response["asset_load_failures"] = asset_load_failures_json(world);
     Ok(response)
 }
 
 fn shader_errors_json(world: &World) -> serde_json::Value {
-    match world
-        .get_resource::<ShaderErrors>()
-        .map(ShaderErrors::current)
-    {
-        Some(errors) if !errors.is_empty() => serde_json::json!(errors),
-        _ => serde_json::Value::Null,
+    let errors = current_shader_errors(world);
+    if errors.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!(errors)
     }
 }
 
@@ -259,20 +266,29 @@ fn last_python_error(world: &World) -> serde_json::Value {
     if let Some(last_error) = live_error
         && reload_failure.is_none_or(|reload| last_error.sequence > reload.failure_sequence)
     {
+        let now = world
+            .get_resource::<Time<Real>>()
+            .map_or(last_error.timestamp_secs, |time| time.elapsed_secs_f64());
         return serde_json::json!({
             "error": last_error.error,
             "traceback": last_error.traceback,
             "timestamp_secs": last_error.timestamp_secs,
+            "age_secs": (now - last_error.timestamp_secs).max(0.0),
         });
     }
 
     if let Some(reload_result) = reload_failure {
-        return serde_json::json!({
+        let mut response = serde_json::json!({
             "error": reload_result.failure_reason,
             "traceback": reload_result.failure_traceback,
             "reload_failed": true,
             "running_previous_generation": reload_result.running_previous_generation,
         });
+        if !reload_result.running_previous_generation {
+            response["scene_cleared"] =
+                serde_json::json!(public_error::RELOAD_FAILED_AFTER_SCENE_CLEARED);
+        }
+        return response;
     }
 
     serde_json::json!({ "error": null })
@@ -301,6 +317,20 @@ fn add_error_hint(response: &mut serde_json::Value) {
         return;
     };
     response["hint"] = serde_json::json!(hint);
+}
+
+/// Adds `reload_failed` and `running_previous_generation` after a failed
+/// reload, the pair `get_reload_status` and `get_last_error` also report. A
+/// false `running_previous_generation` means Full cleanup already cleared the
+/// previous scene.
+pub fn add_reload_failure_state(world: &World, response: &mut serde_json::Value) {
+    if let Some(reload_result) = world.get_resource::<ReloadResult>()
+        && reload_result.failed
+    {
+        response["reload_failed"] = serde_json::json!(true);
+        response["running_previous_generation"] =
+            serde_json::json!(reload_result.running_previous_generation);
+    }
 }
 
 /// Adds the completed reload's system error, registration failure and
@@ -337,6 +367,7 @@ fn add_reload_outcome(
             if let Some(ref reason) = reload_result.failure_reason {
                 response["failure_reason"] = serde_json::json!(reason);
             }
+            add_reload_failure_state(world, response);
             has_error = true;
         }
         response["escalated"] = serde_json::json!(reload_result.escalated);
@@ -497,7 +528,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::capture::screenshot::process_pending_screenshots;
+    use crate::capture::{screenshot::process_pending_screenshots, shader_errors::ShaderErrors};
 
     #[test]
     fn get_reload_status_empty_world() {

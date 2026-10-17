@@ -256,6 +256,8 @@ pub struct DeclaredAccess {
     pub needs_world: bool,
     pub resources_to_read: Vec<ComponentId>,
     pub resources_to_write: Vec<ComponentId>,
+    /// The first pair of parameters whose resolved access conflicts.
+    pub alias_conflict: Option<ResolvedParameterConflict>,
 }
 
 fn push_unique(ids: &mut Vec<ComponentId>, id: ComponentId) {
@@ -292,9 +294,15 @@ pub fn build_declared_access<K: BackendKeys>(
     let mut param_accesses: Vec<FilteredAccess> = Vec::new();
     let mut resources_to_read: Vec<ComponentId> = Vec::new();
     let mut resources_to_write: Vec<ComponentId> = Vec::new();
-    let mut needs_world = false;
+    let needs_world = params.iter().any(|param| matches!(param, ParamSpec::World));
+    let resource_marker = resolver.resource_marker_id(world);
+    let mut resolved_parameters = Vec::with_capacity(params.len());
 
     for param in params {
+        let mut direct = FilteredAccessSet::default();
+        let mut direct_reads = Vec::new();
+        let mut direct_writes = Vec::new();
+        let mut auxiliary_reads = Vec::new();
         match param {
             ParamSpec::Query(spec) | ParamSpec::View(spec) => {
                 let mut access = QueryParamAccess::default();
@@ -333,7 +341,7 @@ pub fn build_declared_access<K: BackendKeys>(
                         }
                     }
                     for id in resolved.aux_reads {
-                        push_unique(&mut resources_to_read, id);
+                        push_unique(&mut auxiliary_reads, id);
                     }
                 }
                 for f in &spec.with {
@@ -363,7 +371,9 @@ pub fn build_declared_access<K: BackendKeys>(
                     let _ = resolver.component_id(world, key);
                 }
 
-                param_accesses.push(access.build());
+                let access = access.build();
+                direct.add(access.clone());
+                param_accesses.push(access);
             }
             ParamSpec::Res {
                 key,
@@ -373,26 +383,26 @@ pub fn build_declared_access<K: BackendKeys>(
                 let resolved = resolver.resource_ids(world, key);
                 if let Some(id) = resolved.primary {
                     if scheduler_access.is_exclusive() {
-                        push_unique(&mut resources_to_write, id);
+                        push_unique(&mut direct_writes, id);
                     } else {
-                        push_unique(&mut resources_to_read, id);
+                        push_unique(&mut direct_reads, id);
                     }
                 }
                 for id in resolved.aux_reads {
-                    push_unique(&mut resources_to_read, id);
+                    push_unique(&mut auxiliary_reads, id);
                 }
             }
             ParamSpec::Assets { key, mutable, .. } => {
                 let resolved = resolver.asset_ids(world, key);
                 if let Some(id) = resolved.primary {
                     if *mutable {
-                        push_unique(&mut resources_to_write, id);
+                        push_unique(&mut direct_writes, id);
                     } else {
-                        push_unique(&mut resources_to_read, id);
+                        push_unique(&mut direct_reads, id);
                     }
                 }
                 for id in resolved.aux_reads {
-                    push_unique(&mut resources_to_read, id);
+                    push_unique(&mut auxiliary_reads, id);
                 }
             }
             ParamSpec::MessageReader {
@@ -402,27 +412,25 @@ pub fn build_declared_access<K: BackendKeys>(
                 let write = scheduler_access.is_exclusive();
                 let resolved = resolver.message_ids(world, key, write);
                 for id in resolved.writes {
-                    push_unique(&mut resources_to_write, id);
+                    push_unique(&mut direct_writes, id);
                 }
                 for id in resolved.reads {
-                    push_unique(&mut resources_to_read, id);
+                    push_unique(&mut direct_reads, id);
                 }
             }
             ParamSpec::MessageWriter { key } | ParamSpec::MessageMutator { key } => {
                 let write = true;
                 let resolved = resolver.message_ids(world, key, write);
                 for id in resolved.writes {
-                    push_unique(&mut resources_to_write, id);
+                    push_unique(&mut direct_writes, id);
                 }
                 for id in resolved.reads {
-                    push_unique(&mut resources_to_read, id);
+                    push_unique(&mut direct_reads, id);
                 }
             }
-            ParamSpec::World => {
-                needs_world = true;
-            }
+            ParamSpec::World => {}
             ParamSpec::Gizmos { .. } => {
-                push_unique(&mut resources_to_read, resolver.gizmo_config_id(world));
+                push_unique(&mut direct_reads, resolver.gizmo_config_id(world));
             }
             // A `Commands` param defers every structural mutation into its
             // queue (applied at apply_deferred); entity reservation goes
@@ -430,6 +438,20 @@ pub fn build_declared_access<K: BackendKeys>(
             // world access. All three declare nothing.
             ParamSpec::Input | ParamSpec::Commands | ParamSpec::Local | ParamSpec::Observer => {}
         }
+        for access in build_resource_accesses(&direct_reads, &direct_writes, resource_marker) {
+            direct.add(access);
+        }
+        let mut auxiliary = FilteredAccessSet::default();
+        for access in build_resource_accesses(&auxiliary_reads, &[], resource_marker) {
+            auxiliary.add(access);
+        }
+        for &id in direct_reads.iter().chain(&auxiliary_reads) {
+            push_unique(&mut resources_to_read, id);
+        }
+        for &id in &direct_writes {
+            push_unique(&mut resources_to_write, id);
+        }
+        resolved_parameters.push((direct, auxiliary));
     }
 
     for id in resolver.infrastructure_reads(world) {
@@ -443,7 +465,6 @@ pub fn build_declared_access<K: BackendKeys>(
         for access in param_accesses {
             set.add(access);
         }
-        let resource_marker = resolver.resource_marker_id(world);
         for access in
             build_resource_accesses(&resources_to_read, &resources_to_write, resource_marker)
         {
@@ -457,7 +478,43 @@ pub fn build_declared_access<K: BackendKeys>(
         needs_world,
         resources_to_read,
         resources_to_write,
+        alias_conflict: resolved_alias_conflict(resolved_parameters),
     }
+}
+
+/// Two parameters whose resolved access conflicts although their logical
+/// types differ, such as two Python classes registered as one resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedParameterConflict {
+    pub parameter: usize,
+    /// Equal to `parameter` when its own direct and auxiliary access conflict.
+    pub existing_parameter: usize,
+}
+
+fn resolved_alias_conflict(
+    parameters: Vec<(FilteredAccessSet, FilteredAccessSet)>,
+) -> Option<ResolvedParameterConflict> {
+    let mut combined = Vec::with_capacity(parameters.len());
+    for (parameter, (mut direct, auxiliary)) in parameters.into_iter().enumerate() {
+        if !direct.get_conflicts(&auxiliary).is_empty() {
+            return Some(ResolvedParameterConflict {
+                parameter,
+                existing_parameter: parameter,
+            });
+        }
+        direct.extend(auxiliary);
+        if let Some(existing_parameter) = combined
+            .iter()
+            .position(|existing: &FilteredAccessSet| !direct.get_conflicts(existing).is_empty())
+        {
+            return Some(ResolvedParameterConflict {
+                parameter,
+                existing_parameter,
+            });
+        }
+        combined.push(direct);
+    }
+    None
 }
 
 /// Lower specs to [`ParamAccess`] for the intra-system conflict check.
@@ -1204,6 +1261,55 @@ mod tests {
 
         assert!(resolver.component_calls.contains(&"A"));
         assert!(!declared.set.combined_access().has_read(a_id));
+    }
+
+    fn res(key: &'static str, vkey: usize, mutable: bool) -> ParamSpec<MockKeys> {
+        ParamSpec::Res {
+            key,
+            vkey: Some(vkey),
+            name: key.to_string(),
+            mutable,
+            scheduler_access: if mutable {
+                SchedulerAccess::Exclusive
+            } else {
+                SchedulerAccess::Shared
+            },
+        }
+    }
+
+    #[test]
+    fn distinct_resource_keys_resolving_to_one_id_conflict() {
+        let (mut world, mut resolver) = setup();
+        let shared = world.register_component::<R1>();
+        let other = world.register_component::<R2>();
+        for (key, id) in [
+            ("original", shared),
+            ("replacement", shared),
+            ("other", other),
+        ] {
+            resolver.resources.insert(
+                key,
+                ResolvedResource {
+                    primary: Some(id),
+                    aux_reads: vec![],
+                },
+            );
+        }
+
+        let alias = [res("original", 1, true), res("replacement", 2, false)];
+        assert_eq!(
+            build_declared_access(&mut world, &alias, &mut resolver).alias_conflict,
+            Some(ResolvedParameterConflict {
+                parameter: 1,
+                existing_parameter: 0,
+            })
+        );
+        let reads = [res("original", 1, false), res("replacement", 2, false)];
+        let distinct = [res("original", 1, true), res("other", 3, true)];
+        for params in [&reads, &distinct] {
+            let declared = build_declared_access(&mut world, params, &mut resolver);
+            assert_eq!(declared.alias_conflict, None);
+        }
     }
 
     #[test]

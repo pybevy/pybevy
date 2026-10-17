@@ -271,6 +271,10 @@ def material(
             opacity=0.8,
         )
     """
+    if isinstance(fragment_shader, type):
+        raise TypeError(
+            "@material takes arguments: write @material() or @material(...) above the class"
+        )
     for name, value in removed_settings.items():
         if name in {"alpha_mode", "double_sided", "cull_mode", "unlit", "depth_bias"}:
             raise TypeError(f"@material({name}=...) was removed; use base=StandardMaterial({name}={value!r})")

@@ -21,7 +21,7 @@ use crate::pyo3::{
             enum_variant_names, tagged_enum_variant_request,
         },
         lists::find_pybevy_class,
-        math::math_readback_array,
+        math::{math_readback_array, math_value_from_any_json},
         rules::{FieldContext, RULES},
     },
 };
@@ -224,44 +224,165 @@ pub(crate) fn validate_annotated_field_value(
             .unbind();
     }
 
-    let builtins = PyModule::import(py, "builtins").map_err(|error| error.to_string())?;
-    let direct_check = builtins
-        .getattr("isinstance")
-        .and_then(|isinstance| isinstance.call1((value.bind(py), &annotation)))
-        .and_then(|result| result.extract::<bool>());
-    let compatible = match direct_check {
-        Ok(compatible) => compatible,
-        Err(_) => {
-            let typing = PyModule::import(py, "typing").map_err(|error| error.to_string())?;
-            let origin = typing
-                .call_method1("get_origin", (&annotation,))
-                .map_err(|error| error.to_string())?;
-            if origin.is_none() {
-                return Ok(value);
-            }
-            builtins
-                .getattr("isinstance")
-                .and_then(|isinstance| isinstance.call1((value.bind(py), origin)))
-                .and_then(|result| result.extract::<bool>())
-                .map_err(|error| error.to_string())?
-        }
-    };
+    conform_to_annotation(py, value.bind(py), &annotation).map(Bound::unbind)
+}
 
-    if compatible {
-        return Ok(value);
-    }
-
+fn annotation_mismatch(annotation: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> String {
     let actual = value
-        .bind(py)
         .get_type()
         .name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!("expected {}, got {actual}", annotation_name(annotation))
+}
+
+/// Checks a value against a type annotation, recursing into parameterised
+/// containers and dataclasses and building dataclasses from their JSON objects.
+fn conform_to_annotation<'py>(
+    py: Python<'py>,
+    value: &Bound<'py, PyAny>,
+    annotation: &Bound<'py, PyAny>,
+) -> Result<Bound<'py, PyAny>, String> {
+    let typing = PyModule::import(py, "typing").map_err(|error| error.to_string())?;
+    let origin = typing
+        .call_method1("get_origin", (annotation,))
+        .map_err(|error| error.to_string())?;
+    let args = typing
+        .call_method1("get_args", (annotation,))
+        .and_then(|args| Ok(args.cast_into::<PyTuple>()?))
+        .map_err(|error| error.to_string())?;
+    if origin.is_none() {
+        let Ok(class) = annotation.cast::<PyType>() else {
+            return Ok(value.clone());
+        };
+        if class.is(py.get_type::<PyFloat>())
+            && value.is_instance_of::<PyInt>()
+            && !value.is_instance_of::<PyBool>()
+        {
+            return py
+                .get_type::<PyFloat>()
+                .call1((value,))
+                .map_err(|error| error.to_string());
+        }
+        if class.hasattr("__dataclass_fields__").unwrap_or(false)
+            && let Ok(fields) = value.cast::<PyDict>()
+        {
+            return dataclass_from_dict(py, class, fields);
+        }
+        return if value.is_instance(class).unwrap_or(true) {
+            Ok(value.clone())
+        } else {
+            Err(annotation_mismatch(annotation, value))
+        };
+    }
+    let types = PyModule::import(py, "types").map_err(|error| error.to_string())?;
+    let is_union = typing.getattr("Union").is_ok_and(|union| origin.is(union))
+        || types
+            .getattr("UnionType")
+            .is_ok_and(|union| origin.is(union));
+    if is_union {
+        return args
+            .iter()
+            .find_map(|arg| conform_to_annotation(py, value, &arg).ok())
+            .ok_or_else(|| annotation_mismatch(annotation, value));
+    }
+    let Ok(container) = origin.cast::<PyType>() else {
+        return Ok(value.clone());
+    };
+    let is_tuple = container.is(py.get_type::<PyTuple>());
+    let compatible = value.is_instance(container).unwrap_or(true)
+        || (is_tuple && value.is_instance_of::<PyList>());
+    if !compatible {
+        return Err(annotation_mismatch(annotation, value));
+    }
+    if args.is_empty() {
+        return Ok(value.clone());
+    }
+    if container.is(py.get_type::<PyDict>()) {
+        let (Ok(key_type), Ok(value_type)) = (args.get_item(0), args.get_item(1)) else {
+            return Ok(value.clone());
+        };
+        let entries = PyDict::new(py);
+        for (key, item) in value.cast::<PyDict>().map_err(|error| error.to_string())? {
+            let key = conform_to_annotation(py, &key, &key_type)
+                .map_err(|error| format!("key {key}: {error}"))?;
+            let item = conform_to_annotation(py, &item, &value_type)
+                .map_err(|error| format!("{key}: {error}"))?;
+            entries
+                .set_item(key, item)
+                .map_err(|error| error.to_string())?;
+        }
+        return Ok(entries.into_any());
+    }
+    let items = value
+        .try_iter()
         .map_err(|error| error.to_string())?
-        .to_string_lossy()
-        .into_owned();
-    Err(format!(
-        "expected {}, got {actual}",
-        annotation_name(&annotation)
-    ))
+        .collect::<PyResult<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    let homogeneous = !is_tuple
+        || (args.len() == 2
+            && args
+                .get_item(1)
+                .is_ok_and(|arg| arg.is(py.Ellipsis().bind(py))));
+    if !homogeneous && items.len() != args.len() {
+        return Err(format!(
+            "expected {}, got {} elements",
+            annotation_name(annotation),
+            items.len()
+        ));
+    }
+    let converted = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let element_type = args
+                .get_item(if homogeneous { 0 } else { index })
+                .map_err(|error| error.to_string())?;
+            conform_to_annotation(py, item, &element_type)
+                .map_err(|error| format!("element {index}: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let rebuilt = PyList::new(py, converted).map_err(|error| error.to_string())?;
+    if container.is(py.get_type::<PyList>()) {
+        return Ok(rebuilt.into_any());
+    }
+    container
+        .call1((rebuilt,))
+        .map_err(|error| error.to_string())
+}
+
+fn dataclass_from_dict<'py>(
+    py: Python<'py>,
+    class: &Bound<'py, PyType>,
+    fields: &Bound<'py, PyDict>,
+) -> Result<Bound<'py, PyAny>, String> {
+    let class_name = class
+        .name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let declared = dataclass_field_names(class)
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let kwargs = PyDict::new(py);
+    for (name, value) in fields {
+        let name = name
+            .extract::<String>()
+            .map_err(|error| error.to_string())?;
+        if !declared.contains(&name) {
+            return Err(format!("{class_name} has no field '{name}'"));
+        }
+        let value = match resolved_field_annotation(py, class, &name) {
+            Some(annotation) => conform_to_annotation(py, &value, &annotation)
+                .map_err(|error| format!("{name}: {error}"))?,
+            None => value,
+        };
+        kwargs
+            .set_item(name, value)
+            .map_err(|error| error.to_string())?;
+    }
+    class
+        .call((), Some(&kwargs))
+        .map_err(|error| format!("invalid {class_name}: {error}"))
 }
 
 pub(crate) fn convert_annotated_field_value(
@@ -414,6 +535,9 @@ pub(super) fn construct_declared_optional(
     type_name: &str,
     field_value: &serde_json::Value,
 ) -> Result<Option<Py<PyAny>>, String> {
+    if let Some(result) = math_value_from_any_json(py, type_name, field_value) {
+        return result.map(Some);
+    }
     let Some(class) = find_pybevy_class(py, type_name) else {
         return Ok(None);
     };
@@ -633,12 +757,13 @@ mod tests {
     use pyo3::types::PySet;
 
     use super::*;
+    use crate::test_python::initialize_python;
 
     static INIT: Once = Once::new();
 
     fn setup_python() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
         });
     }
 
@@ -989,7 +1114,11 @@ holder = Holder()
 
             let error = convert_field_value(py, &holder, "rotation", &field_value).unwrap_err();
 
-            assert_eq!(error, "Quat expects [x, y, z, w], got 3 elements");
+            assert_eq!(
+                error,
+                "Quat expects [x, y, z, w], got 3 elements; accepted forms: [x, y, z, w] \
+                 or {\"x\": x, \"y\": y, \"z\": z, \"w\": w}"
+            );
         });
     }
 

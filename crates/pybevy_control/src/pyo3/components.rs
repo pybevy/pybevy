@@ -27,7 +27,7 @@ use crate::{
         asset_reference::{contains_reference_field, set_from_reference},
         custom,
         enum_names::canonical_variant_name,
-        errors::{component_unknown_field_error, unknown_set_fields},
+        errors::{component_unknown_field_error, drop_read_only_echoes, unknown_set_fields},
         execute::create_world_wrapper,
         from_json::{
             enums::{
@@ -41,6 +41,7 @@ use crate::{
                 validate_annotated_field_value,
             },
         },
+        inspect::native_component_fields,
         names::{ComponentTarget, resolve_component},
         to_json::py_value_to_json,
     },
@@ -788,8 +789,8 @@ fn set_component_python(
 
     let optional_types = optional_field_types(world, bridge.bevy_type_id());
 
-    let (owned, replacement_variant) = Python::attach(
-        |py| -> Result<(Py<PyAny>, Option<String>), ControlError> {
+    let (owned, replacement_variant, echoes_dropped) = Python::attach(
+        |py| -> Result<(Py<PyAny>, Option<String>, Option<serde_json::Map<_, _>>), ControlError> {
             let (_read_window, validity) = ValidityGuard::read();
             // SAFETY: `world` is live for this call, the wrapper is fenced by
             // `_read_window`, and only read access is requested before copying.
@@ -818,19 +819,32 @@ fn set_component_python(
                     ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
                 })?;
                 match replacement {
-                    Some(replacement) => Ok((replacement, Some(request.name))),
-                    None => current
-                        .call_method0("__copy__")
-                        .map(|copy| (copy.unbind(), None))
-                        .map_err(|error| {
-                            ControlError::invalid_params(format!(
-                                "Component '{component}' cannot be copied for atomic mutation: {error}"
-                            ))
-                        }),
+                    Some(replacement) => Ok((replacement, Some(request.name), None)),
+                    None => {
+                        let read = native_component_fields(py, world, entity, bridge, current);
+                        let kept =
+                            drop_read_only_echoes(current, field_obj, &read).map_err(|error| {
+                                ControlError::invalid_params(format!(
+                                    "Failed to set '{component}': {error}"
+                                ))
+                            })?;
+                        current
+                            .call_method0("__copy__")
+                            .map(|copy| (copy.unbind(), None, Some(kept)))
+                            .map_err(|error| {
+                                ControlError::invalid_params(format!(
+                                    "Component '{component}' cannot be copied for atomic mutation: {error}"
+                                ))
+                            })
+                    }
                 }
             } else {
+                let read = native_component_fields(py, world, entity, bridge, current);
+                let kept = drop_read_only_echoes(current, field_obj, &read).map_err(|error| {
+                    ControlError::invalid_params(format!("Failed to set '{component}': {error}"))
+                })?;
                 // Pre-write guard: a later setattr would leak a raw AttributeError for typos.
-                let unknown = unknown_set_fields(current, field_obj.keys());
+                let unknown = unknown_set_fields(current, kept.keys());
                 if !unknown.is_empty() {
                     return Err(ControlError::invalid_params(component_unknown_field_error(
                         component, &unknown, current,
@@ -838,7 +852,7 @@ fn set_component_python(
                 }
                 current
                     .call_method0("__copy__")
-                    .map(|copy| (copy.unbind(), None))
+                    .map(|copy| (copy.unbind(), None, Some(kept)))
                     .map_err(|error| {
                         ControlError::invalid_params(format!(
                             "Component '{component}' cannot be copied for atomic mutation: {error}"
@@ -847,6 +861,17 @@ fn set_component_python(
             }
         },
     )?;
+    let field_obj = match &echoes_dropped {
+        Some(kept) if kept.is_empty() && !field_obj.is_empty() => {
+            return Ok(serde_json::json!({
+                "entity_id": entity_id,
+                "component": component,
+                "new_values": {},
+            }));
+        }
+        Some(kept) => kept,
+        None => field_obj,
+    };
 
     let new_values = Python::attach(
         |py| -> Result<serde_json::Map<String, serde_json::Value>, ControlError> {
@@ -1497,13 +1522,15 @@ mod tests {
     use pyo3::types::PyInt;
 
     use super::*;
-    use crate::{protocol::ErrorCode, pyo3::inspect::get_component};
+    use crate::{
+        protocol::ErrorCode, pyo3::inspect::get_component, test_python::initialize_python,
+    };
 
     static INIT: Once = Once::new();
 
     fn setup_python() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
         });
     }
 

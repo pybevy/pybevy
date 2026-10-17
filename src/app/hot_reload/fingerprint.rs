@@ -188,6 +188,7 @@ impl InitialDefsFingerprint {
             observer_code: self.observers.finish(),
             component_layout_changed: false,
             resource_layout_changed: false,
+            removed_components: Vec::new(),
             has_startup: self.has_startup,
             has_resources: !self.resource_names.is_empty(),
             has_observers: self.has_observers,

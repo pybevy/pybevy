@@ -10,10 +10,17 @@
 //! an escaped proxy with a dangling object pointer.
 
 use bevy::ecs::{entity::Entity, world::unsafe_world_cell::UnsafeWorldCell};
-use pybevy_ecs::shared::run_ticks::RunTicks;
-use pyo3::{PyTraverseError, PyVisit, prelude::*, types::PyAny};
+use pybevy_ecs::shared::{change_tracking::mark_component_changed_explicit, run_ticks::RunTicks};
+use pyo3::{
+    PyTraverseError, PyVisit,
+    prelude::*,
+    types::{PyAny, PyBool, PyBytes, PyComplex, PyFloat, PyFrozenSet, PyInt, PyString, PyTuple},
+};
 
-use crate::ecs::{component::PyComponent, helpers::validity_guard::ValidityFlagWithMode};
+use crate::ecs::{
+    component::PyComponent,
+    helpers::validity_guard::{AccessMode, ValidityFlagWithMode},
+};
 
 /// Storage for a custom Python component proxy.
 struct CustomComponentStorage {
@@ -73,7 +80,15 @@ impl PyCustomComponent {
         let py_obj = slf.get_py_object(py);
 
         // Forward to Python object's __getattribute__
-        py_obj.getattr(name)
+        let value = py_obj.getattr(name)?;
+        if slf.storage.validity.access_mode() == AccessMode::Write
+            && !name.starts_with("__")
+            && !is_immutable_value(&value)
+        {
+            // Lists, dicts and methods can mutate in place, as Bevy's DerefMut does.
+            slf.mark_changed();
+        }
+        Ok(value)
     }
 
     /// Intercept field mutation to forward to underlying Python object
@@ -94,24 +109,40 @@ impl PyCustomComponent {
         // Forward to Python object's __setattr__
         py_obj.setattr(name, value)?;
 
-        // Mark component as changed using stored entity context.
-        // This works both during iteration and after collection (list(query)).
-        // SAFETY: world_ptr is valid (protected by ValidityFlag on CustomComponentProxy),
-        // entity was extracted from a live query during system execution.
-        unsafe {
-            pybevy_ecs::shared::change_tracking::mark_component_changed_explicit(
-                slf.storage.entity,
-                slf.storage.world_cell,
-                slf.storage.component_id,
-                slf.storage.run_ticks,
-            );
-        }
+        slf.mark_changed();
 
         Ok(())
     }
 }
 
+fn is_immutable_value(value: &Bound<'_, PyAny>) -> bool {
+    value.is_none()
+        || value.is_instance_of::<PyBool>()
+        || value.is_instance_of::<PyInt>()
+        || value.is_instance_of::<PyFloat>()
+        || value.is_instance_of::<PyComplex>()
+        || value.is_instance_of::<PyString>()
+        || value.is_instance_of::<PyBytes>()
+        || value.is_instance_of::<PyTuple>()
+        || value.is_instance_of::<PyFrozenSet>()
+}
+
 impl PyCustomComponent {
+    /// Mark the component changed through the stored entity context, during
+    /// iteration or after collection.
+    fn mark_changed(&self) {
+        // SAFETY: world_cell is fenced by the ValidityFlag checked by the caller,
+        // and entity was extracted from a live query during system execution.
+        unsafe {
+            mark_component_changed_explicit(
+                self.storage.entity,
+                self.storage.world_cell,
+                self.storage.component_id,
+                self.storage.run_ticks,
+            );
+        }
+    }
+
     /// Create a proxy for an ECS-stored component.
     ///
     /// # Safety

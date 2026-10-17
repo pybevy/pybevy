@@ -123,6 +123,9 @@ operation, so valid fields in the same request are not changed.
 For dataclasses, only persisted fields from `dataclasses.fields()` are editable.
 `ClassVar` constants and `InitVar` constructor-only parameters are excluded
 from component schemas and from component/resource patches.
+Values are checked against the field annotations down to nested leaves: a
+nested dataclass, each element of `list[T]`, and the length of `tuple[int, int]`.
+Unparameterised `list` and `tuple` fields accept any JSON array.
 
 Partial updates - only specify fields to change:
 ```
@@ -184,8 +187,10 @@ the component. Change the local `Transform` to affect the world transform.
 Readable read-only fields on other
 components, such as the `AccessibilityNode`
 `role`, `label`, and `value` properties, are included on read and rejected
-with a field-named error when written. Derived enum predicates such as `is_*`
-are omitted.
+with a field-named error when written with a different value. Sending a
+read-only field's current value is ignored, so a `get_component` or
+`get_resource` result can be written back unchanged. Derived enum predicates
+such as `is_*` are omitted.
 
 Numeric fields with a declared value domain reject values outside it in
 `set_component`, `batch`, and `spawn_entity`, with the Python setter's message:
@@ -331,6 +336,9 @@ changed. A rejected field is an invalid-parameters error (HTTP 400) naming
 `Resource.field`, for example `Failed to convert ClearColor.color: unknown
 variant 'nope' for Color. Valid variants: ...`. Successful patches retain the
 resource entity and mark the resource changed without replacement hooks.
+An enum resource such as `TimeUpdateStrategy` takes `{"variant": ...}` with its
+payload fields. Resources whose value cannot be staged, such as `ButtonInput`,
+reject `set_resource` with HTTP 400.
 
 Resources that cannot safely provide a detached copy reject patches without
 mutation. An absent resource still requires support for construction and
@@ -856,6 +864,8 @@ value. Advance one frame before reading the pose or capturing an image. See
 ## Field Value Formats (MCP JSON)
 
 Integer vector coordinates must be JSON integers; floats and booleans are rejected.
+Every vector type and `Quat` also accepts its complete coordinate object, such as
+`{"x": 1.0, "y": 2.0}` for a Vec2, in both `spawn_entity` and `set_component`.
 
 | Type | JSON Format | Example |
 |------|-------------|---------|

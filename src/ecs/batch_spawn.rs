@@ -18,6 +18,7 @@ use pyo3::{
 };
 
 use super::{
+    commands::reject_borrowed_component_proxy,
     component_layout::{ComponentStorageType, ComponentStorageTypeExt, serialize_to_wrapper},
     component_type::{
         PreparedCustomComponentRegistration, PyComponentType, register_prepared_custom_component,
@@ -144,6 +145,7 @@ impl SpawnBatchCommand {
         let mut registrations = Vec::new();
 
         for component in components.iter() {
+            reject_borrowed_component_proxy(&component)?;
             // Check if it's a registered batch component
             let type_ptr = component.get_type().as_type_ptr();
             if let Some(bridge) = global_registry::get_batch_bridge_by_py_type(type_ptr) {

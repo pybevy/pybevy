@@ -5,11 +5,94 @@ Composition, lighting, color, and common mistakes that produce dark or flat resu
 NumPy examples require the optional dependency: install `pybevy[numpy]` in the
 scene's Python environment.
 
+## Choose the Look Before the Settings
+
+Quality means executing the requested style well. Realism is one possible goal;
+effects, detail, brightness and smoothing serve whichever style is chosen.
+Translate the request or reference into a short visual brief: dominant shapes,
+palette, contrast, surface treatment, camera/projection, and motion. When the
+style is unspecified, choose a coherent direction and state the assumption.
+
+| Intended look | Useful choices | Preserve when intentional |
+|---|---|---|
+| Realistic / product | Detailed silhouettes, bevels, PBR maps, environment lighting, controlled exposure | Material differences and believable light direction |
+| Low-poly / graphic | Faceted geometry, deliberate flat shading, simple materials and clear silhouettes | Large color areas and visible facets |
+| Pixel art / retro | Deliberate render resolution, nearest texture filtering, pixel-aligned presentation where appropriate | Crisp pixel structure |
+| Toon / illustration | Designed color regions, stylized shading or custom shaders, selective outlines | Graphic contrast and simplified light response |
+| Noir / silhouette | Restricted palette, strong shape separation, selective illumination | Deep blacks and intentionally hidden detail |
+| Dreamlike / emissive | Selected glow, atmospheric depth, controlled color and motion | Mood without losing intended focal points |
+
+Treat these as directions. Establish a small representative scene first.
+Compare at the intended delivery size and, for animation, in motion. Adjust the
+largest mismatch to the visual brief before adding detail. A histogram reveals
+clipping or a blank frame; judge the style itself by eye.
+
+## Optional Realistic Rendering Workflow
+
+For a realistic brief, start with geometry, materials, light, and composition:
+silhouettes, bevels, texture detail and indirect lighting come from the scene,
+and post-processing finishes it. These profiles are starting points:
+
+| Profile | Camera and rendering choices | Tradeoff |
+|---|---|---|
+| Clean forward, including glass/custom shaders | Explicit `Hdr`, exposure and tonemapping; MSAA4 or MSAA8; Gaussian shadows; environment lighting | Stable edges; assess contact shadows separately |
+| Opaque scene with ambient occlusion | Forward rendering, SSAO High/Ultra, MSAA off; larger render target followed by downsampling | Better grounding; extra pixels needed to reduce edge aliasing |
+| Local screen-space reflections | Deferred opaque rendering and SSR, MSAA off | Screen-space coverage and noise limits; compare repeated frames before choosing |
+
+Read `guide://camera` for HDR, exposure, SSAO/SSR and AA compatibility;
+`guide://lighting` for prefiltered environment maps, local probes and baked GI;
+`guide://materials/advanced` for linear data textures, tangents and mipmaps;
+and `guide://shadows` for resolution, cascades and contact-shadow caveats.
+
+Use a scene-matched environment map for reflective surfaces. Generate mesh
+tangents for normal maps and anisotropy. Match shadow cascade distances to the
+subject before increasing map size. Choose exposure with the light intensities,
+and set material colors for the material itself.
+
+For smooth high-detail stills, try rendering at twice the delivery width and
+height, then downsample once: four times the pixels. This can improve shader
+and specular detail beyond what MSAA resolves. Keep the native resolution for a
+deliberate pixel grid. See `guide://headless`
+for capture resolution and repeat-frame checks. Baked indirect light, authored
+assets, and more deliberate art direction can raise quality beyond these presets.
+
+## Going Beyond Built-In Rendering Presets
+
+A polished scene may combine native components with authored assets and custom
+rendering. Distinguish these levels when planning effort and explaining results:
+
+- **Native settings:** PBR materials, exposure, environment lighting, cascaded
+  shadows, SSAO, transmission, atmosphere and volumetrics. Select a compatible
+  subset for the requested style before adding specialized code.
+- **Asset and scene construction:** scanned or carefully authored surfaces,
+  bevels and silhouette detail, varied vegetation, coherent scale, local light
+  placement, camera paths, and composition.
+- **Custom rendering:** planar reflection cameras, surface reconstruction,
+  procedural water, depth-aware scattering, approximate indirect-light transport,
+  or temporal image filtering. These need dedicated implementation and
+  validation.
+
+For a flat mirror or water plane, a reflected camera rendering to an image can
+capture geometry absent from the main view, unlike SSR. This costs another view
+per plane. Exclude the reflective surface from its own capture, synchronize the
+camera pose, clip geometry below the reflection plane, and keep HDR/tonemapping
+consistent. Complex water then uses the reflection in its shader; this is an
+advanced multi-camera technique.
+
+Keep deformed geometry consistent across color, depth, shadows and any motion
+inputs. A wind shader that moves leaves only in the color pass produces stale
+shadows and incorrect screen-space effects. Use transforms shared by all passes
+or implement matching deformation in the relevant shader passes.
+
+Review a finished frame and a motion segment alongside the list of enabled
+features. Historical showcase scenes may use older APIs: verify compatibility
+and preserve their original assets and recordings when adapting them.
+
 ## Lighting Quick-Reference
 
-For paste-ready lighting recipes by scene type (outdoor, interior, cave, industrial, moody), see `guide://lighting` (Recipes section). Always start bright, dim later.
+For paste-ready lighting recipes by scene type (outdoor, interior, cave, industrial, moody), see `guide://lighting` (Recipes section). Use their numbers as starting points for a readable, conventionally lit scene; adapt them to exposure, scale, and style.
 
-### Minimum Brightness Floors (non-negotiable)
+### Lighting Starting Points
 
 | Setting | Outdoor | Interior/Cave | Game Level |
 |---------|---------|---------------|------------|
@@ -20,18 +103,18 @@ For paste-ready lighting recipes by scene type (outdoor, interior, cave, industr
 | base_color (darkest element) | 0.10 | 0.15 | 0.10 |
 | DistanceFog density max | 0.005 | 0.004 | 0.006 |
 
-**Never set base_color below 0.08** - it's indistinguishable from black.
+Dark materials below 0.08 can be intentional and read well under suitable lighting. Evaluate the rendered subject and exposure.
 
 **Fog density is scale-dependent:** the DistanceFog maxima above assume long outdoor
 sightlines (100m+). For enclosed spaces ~50m across, choose a density in the
 0.01-0.03 range (for example, `FogFalloff.Exponential(density=0.02)`); judge by
 whether the far wall still reads, not by the number.
 
-**Dark/moody exceptions:** For intentionally dark scenes (galleries, space, underwater), ambient can go as low as 100 if emissive sources provide sufficient readability. The key test: can you distinguish midground subjects from background?
+**Dark/moody scenes:** Ambient may be lower than these starting points, including zero. Judge whether the intended subjects or silhouettes remain readable.
 
-### Two-Light Setup (eliminates dark-side problem)
+### Key and Fill Option
 
-Every scene needs at minimum a **key light** (shadows) + **fill light** (~40% intensity, no shadows, opposite direction). See `guide://lighting` (Default Lighting Setup) for code.
+A key plus fill is useful when both sides of a subject should read. Fill may come from an environment map, baked light, or another light; its ratio is artistic. Atmosphere scenes should use one sun and environment fill, as explained in `guide://lighting`. Unlit and silhouette styles need different setups.
 
 ### ClearColor Defaults
 
@@ -65,7 +148,7 @@ Every scene needs at minimum a **key light** (shadows) + **fill light** (~40% in
 | Sunset | Warm amber (0.55, 0.35, 0.15) | Cool shadow blue (0.15, 0.18, 0.30) | White highlight (0.90, 0.88, 0.85) |
 
 ### Material Variation Rule
-Use 2-3 shades within each hue family. Never use one color for all surfaces of a type:
+For organic variation, try 2-3 shades within a hue family. Keep uniform colors when the requested graphic style calls for them:
 ```python
 # Stone family - 3 variants
 stone_light = materials.add(StandardMaterial(base_color=Color.srgb(0.50, 0.45, 0.38)))
@@ -77,7 +160,7 @@ stone_dark  = materials.add(StandardMaterial(base_color=Color.srgb(0.30, 0.27, 0
 
 ## Camera Placement by Scene Type
 
-**Default is eye-level, NOT overhead.** The patterns guide template uses `(8, 3, 8)` looking at `(0, 1.5, 0)`.
+Choose the viewpoint for the requested composition. Eye-level is a useful starting point for immersive scenes; overhead, orthographic, and close product views are valid choices. The patterns guide template uses `(8, 3, 8)` looking at `(0, 1.5, 0)`.
 
 | Scene type | Camera Y | Looking at Y | Notes |
 |------------|----------|-------------|-------|
@@ -86,7 +169,7 @@ stone_dark  = materials.add(StandardMaterial(base_color=Color.srgb(0.30, 0.27, 0
 | Interior | 1.5–2.0 | 1.2–1.5 | Eye height, looking across room |
 | Game level / platformer | Character height | Horizontally across level | Side-scroller feel |
 | Atmospheric / mood | 1.5–3 | 1–2 | Low = more immersive |
-| Top-down / strategy | 15–25 | 0 | Only when explicitly a god-view game |
+| Top-down / strategy | 15–25 | 0 | Strategy, diagrams, or an intentional overhead composition |
 
 **Distance:** Close enough that the main subject fills 30–50% of the frame width. If the subject is tiny, move closer.
 
@@ -94,13 +177,13 @@ stone_dark  = materials.add(StandardMaterial(base_color=Color.srgb(0.30, 0.27, 0
 
 ## Composition Rules
 
-### Three Depth Layers (mandatory)
-Every scene MUST have:
+### Three Depth Layers (optional composition pattern)
+For an immersive environment, consider:
 1. **Foreground** (0–3m from camera) - framing elements, nearby props, ground detail
 2. **Midground** (3–10m) - main subject matter, key architecture, characters
 3. **Background** (10m+) - distant context, walls, terrain, fog fade
 
-If the background is pure black, add a back wall, distant terrain, or set fog color above pure black.
+If unintended black space weakens the composition, add a backdrop or distant context. Keep black or flat backgrounds for styles that call for them.
 
 ### Element Placement
 - **Accents:** each platform/surface gets AT MOST one decorative accent. Leave some bare.
@@ -120,20 +203,23 @@ Start with `guide://patterns` + one matching recipe. Read topic guides (lighting
 
 ---
 
-## Scene-Type Checklists
+## Optional Scene-Type Checklists
+
+Select items that support the requested look. These lists describe
+conventional environments.
 
 ### Outdoor / Nature
 - [ ] `Atmosphere.earth(medium_handle)` on its own entity + `AtmosphereSettings()` on the camera for sky (no flat gray)
 - [ ] Ground plane large enough that edges aren't visible (>= 40x40)
 - [ ] Trees/rocks at perimeter with scale variation (0.7x–1.5x)
-- [ ] At least one water feature if pastoral
+- [ ] Water or other landmarks when requested or useful to the composition
 - [ ] Vegetation gradient: bushes near structures, trees at edges
 - [ ] DistanceFog density 0.002–0.005
 
 ### Architecture / Interior
-- [ ] Multiple PointLights (4+) to eliminate dark corners
-- [ ] DirectionalLight as fill only (shadow_maps_enabled=False)
-- [ ] Material base_colors 0.25+ (brighter than outdoor - no sky bounce)
+- [ ] Lights placed at intended fixtures; fill or indirect light where needed
+- [ ] Fill appropriate to the room, kept inside its walls
+- [ ] Exposure and indirect lighting preserve the intended material colors
 - [ ] Furniture/props to define spaces
 - [ ] Bloom intensity low (0.05–0.12)
 
@@ -309,7 +395,7 @@ rock.set_positions(positions)
 ```python
 from pybevy.light import ShadowFilteringMethod
 
-commands.spawn(Camera3d(), ShadowFilteringMethod.Temporal)  # or .Gaussian
+commands.spawn(Camera3d(), ShadowFilteringMethod.Gaussian)  # Stable without TAA
 ```
 
 ### Water / Glass Materials
@@ -352,12 +438,15 @@ commands.spawn(
 
 Prefer `Visibility.set_hidden()` over despawn for object pooling. Toggling visibility on hundreds of entities has zero measurable FPS cost - the GPU simply skips hidden entities. Pre-spawn objects, hide them at startup, and show/hide as needed.
 
-## Actually Missing Features
+## Features Requiring Custom Scene Logic
 
-These genuinely don't exist in PyBevy:
+These patterns currently require scene code:
 
 | Feature | Best workaround |
 |---------|----------------|
 | Trail / ribbon renderer | Chain of small meshes updated per frame |
 | 3D billboard component | Orient quads toward camera in Update system |
-| GPU instancing | Individual entities with Python loop variation |
+
+Compatible entities sharing mesh and material handles use Bevy's automatic
+batching and instancing. Reuse handles for repeated objects; see
+`guide://performance`.

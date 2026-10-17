@@ -14,12 +14,11 @@ use crate::{
     codec::{
         enum_payload,
         json_float::nonfinite_float_from_json,
-        math_shape::{MathShape, READBACK_ARRAYS, math_shape},
         reflect, value,
         value::{json_f32, json_f64},
     },
     pyo3::{
-        descriptors::constructor_fields,
+        descriptors::{constructor_fields, constructor_parameter_names},
         enum_names,
         from_json::{
             color::{construct_color_variant, linear_rgba_from_json, srgba_from_array},
@@ -28,12 +27,12 @@ use crate::{
                 reject_enum_constant,
             },
             field::{
-                construct_declared_optional, convert_field_value, convert_with_current,
-                entity_from_json, has_public_getset_fields, is_dataclass_instance, json_to_py,
-                rebuild_array_like,
+                construct_declared_optional, convert_annotated_field_value, convert_field_value,
+                convert_with_current, entity_from_json, has_public_getset_fields,
+                is_dataclass_instance, json_to_py, rebuild_array_like,
             },
             lists::convert_list_elements,
-            math::{math_readback_array, math_value_from_json, range_from_json},
+            math::{math_value_from_any_json, range_from_json},
         },
     },
 };
@@ -121,8 +120,7 @@ pub(super) const RULES: &[Rule] = &[
     vec3,
     quat,
     float,
-    math_readback_object,
-    math_shape_mismatch,
+    math_value,
     opaque_repr,
     val,
     color_array,
@@ -138,8 +136,6 @@ pub(super) const RULES: &[Rule] = &[
     set,
     array_like,
     list_elements,
-    math_array_length,
-    math_array,
     wrapped_scalar,
     pybevy_value_patch,
     constructor_patch,
@@ -198,22 +194,8 @@ fn float(cx: &FieldContext<'_, '_>) -> Converted {
         .map_err(|error| error.to_string())
 }
 
-fn math_readback_object(cx: &FieldContext<'_, '_>) -> Converted {
-    let Some(Value::Array(values)) = math_readback_array(&cx.current, cx.value) else {
-        return Ok(None);
-    };
-    math_value_from_json(cx.py, &cx.type_name, &values).transpose()
-}
-
-fn math_shape_mismatch(cx: &FieldContext<'_, '_>) -> Converted {
-    let Some(shape) = math_shape(READBACK_ARRAYS, &cx.type_name).map(MathShape::label) else {
-        return Ok(None);
-    };
-    let kind = match cx.value {
-        Value::Array(_) => return Ok(None),
-        other => value::json_kind_name(other),
-    };
-    Err(format!("{} expects {shape}, got {kind}", cx.type_name))
+fn math_value(cx: &FieldContext<'_, '_>) -> Converted {
+    math_value_from_any_json(cx.py, &cx.type_name, cx.value).transpose()
 }
 
 fn opaque_repr(cx: &FieldContext<'_, '_>) -> Converted {
@@ -318,7 +300,8 @@ fn dataclass_patch(cx: &FieldContext<'_, '_>) -> Converted {
         if !cx.current.hasattr(name.as_str()).unwrap_or(false) {
             return Err(format!("{} has no field '{name}'", cx.type_name));
         }
-        let converted = convert_field_value(cx.py, &cx.current, name, value)?;
+        let converted = convert_annotated_field_value(cx.py, &cx.current, name, value)
+            .map_err(|error| format!("{name}: {error}"))?;
         kwargs
             .set_item(name, converted)
             .map_err(|error| error.to_string())?;
@@ -474,34 +457,6 @@ fn list_elements(cx: &FieldContext<'_, '_>) -> Converted {
     convert_list_elements(cx.py, cx.component, cx.field_name, &cx.current, values)
 }
 
-fn math_array_length(cx: &FieldContext<'_, '_>) -> Converted {
-    let Some(values) = cx.array() else {
-        return Ok(None);
-    };
-    let Some(shape) = math_shape(READBACK_ARRAYS, &cx.type_name) else {
-        return Ok(None);
-    };
-    if values.len() == shape.coordinates.len() {
-        return Ok(None);
-    }
-    Err(format!(
-        "{} expects {}, got {} elements",
-        cx.type_name,
-        shape.label(),
-        values.len()
-    ))
-}
-
-fn math_array(cx: &FieldContext<'_, '_>) -> Converted {
-    let Some(values) = cx.array() else {
-        return Ok(None);
-    };
-    if cx.type_name == "Vec3" {
-        return Ok(None);
-    }
-    math_value_from_json(cx.py, &cx.type_name, values).transpose()
-}
-
 /// A single-value pybevy wrapper built from its scalar payload.
 fn wrapped_scalar(cx: &FieldContext<'_, '_>) -> Converted {
     if !cx.is_pybevy_value()
@@ -552,11 +507,28 @@ fn pybevy_value_patch(cx: &FieldContext<'_, '_>) -> Converted {
             .set_item(name, converted)
             .map_err(|error| error.to_string())?;
     }
-    cx.current
-        .get_type()
+    // Fields the constructor does not take, such as `LinearGradient.color_space`, are set after.
+    let owner = cx.current.get_type();
+    let mut after = Vec::new();
+    if let Some(parameters) = constructor_parameter_names(&owner) {
+        for name in fields.keys() {
+            if !parameters.contains(name)
+                && let Some(value) = kwargs.get_item(name).map_err(|error| error.to_string())?
+            {
+                kwargs.del_item(name).map_err(|error| error.to_string())?;
+                after.push((name, value));
+            }
+        }
+    }
+    let value = owner
         .call((), Some(&kwargs))
-        .map(|value| Some(value.unbind()))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    for (name, field) in after {
+        value
+            .setattr(name.as_str(), field)
+            .map_err(|error| format!("{name}: {error}"))?;
+    }
+    Ok(Some(value.unbind()))
 }
 
 /// Rebuild a pybevy value without field descriptors, such as `UiRect`, through

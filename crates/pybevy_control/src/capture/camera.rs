@@ -1,9 +1,10 @@
 use std::cmp::Reverse;
 
 use bevy::{
-    camera::RenderTarget,
+    camera::{ImageRenderTarget, RenderTarget},
     ecs::world::World,
     prelude::*,
+    render::render_resource::{TextureFormat, TextureUsages},
     window::{PrimaryWindow, Window, WindowRef},
 };
 use pybevy_core::public_error::{
@@ -24,7 +25,12 @@ pub struct DebugCameraCleanup {
     pub reused_state: Option<(Transform, GlobalTransform, bool)>,
     /// Other cameras and their original `is_active` state before we disabled them.
     pub original_cameras: Vec<(Entity, bool)>,
+    /// Offscreen target of a camera spawned in a scene without a window.
+    pub temporary_image: Option<AssetId<Image>>,
 }
+
+/// Size of the offscreen target a temporary headless camera renders into.
+const TEMPORARY_TARGET_SIZE: (u32, u32) = (768, 432);
 
 /// The pose a capture holds on its camera until the capture releases it.
 ///
@@ -253,6 +259,7 @@ fn setup_debug_camera_with_up_for_entity(
                 original_active,
             )),
             original_cameras: other_cameras,
+            temporary_image: None,
         })
     } else {
         let has_camera2d = world
@@ -264,8 +271,22 @@ fn setup_debug_camera_with_up_for_entity(
             return Err(ControlError::invalid_params(camera2d_only_error));
         }
 
-        // No Camera3d exists - spawn a new one.
-        // Cascade crash is unlikely here since the scene probably has no directional lights.
+        // No Camera3d exists - spawn a new one. Without a window it renders
+        // into an image, since the default window target cannot be captured.
+        let temporary_image = if has_primary_window(world) {
+            None
+        } else {
+            let (width, height) = TEMPORARY_TARGET_SIZE;
+            let mut image =
+                Image::new_target_texture(width, height, TextureFormat::Rgba8UnormSrgb, None);
+            image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+            let mut images = world.get_resource_mut::<Assets<Image>>().ok_or_else(|| {
+                ControlError::invalid_params(
+                    "a temporary Camera3d in a scene without a window needs Assets<Image>",
+                )
+            })?;
+            Some(images.add(image))
+        };
         let original_cameras = all_cameras.clone();
         for (entity, _) in &all_cameras {
             if let Some(mut cam) = world.get_mut::<Camera>(*entity) {
@@ -273,13 +294,15 @@ fn setup_debug_camera_with_up_for_entity(
             }
         }
 
-        let debug_entity = world
-            .spawn((
-                Camera3d::default(),
-                target_transform,
-                GlobalTransform::from(target_transform),
-            ))
-            .id();
+        let mut debug_camera = world.spawn((
+            Camera3d::default(),
+            target_transform,
+            GlobalTransform::from(target_transform),
+        ));
+        if let Some(handle) = &temporary_image {
+            debug_camera.insert(RenderTarget::Image(ImageRenderTarget::from(handle.clone())));
+        }
+        let debug_entity = debug_camera.id();
         world.insert_resource(CapturePoseHold {
             entity: debug_entity,
             transform: target_transform,
@@ -289,6 +312,7 @@ fn setup_debug_camera_with_up_for_entity(
             debug_entity,
             reused_state: None,
             original_cameras,
+            temporary_image: temporary_image.map(|handle| handle.id()),
         })
     }
 }
@@ -339,6 +363,11 @@ pub(crate) fn cleanup_debug_camera_world(cleanup: DebugCameraCleanup, world: &mu
         }
     } else if world.get_entity(cleanup.debug_entity).is_ok() {
         world.despawn(cleanup.debug_entity);
+    }
+    if let Some(image) = cleanup.temporary_image
+        && let Some(mut images) = world.get_resource_mut::<Assets<Image>>()
+    {
+        images.remove(image);
     }
 
     for (entity, was_active) in cleanup.original_cameras {
@@ -685,6 +714,7 @@ mod tests {
     #[test]
     fn setup_debug_camera_spawns_when_no_camera3d() {
         let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
 
         let req = DebugCameraRequest {
             position: [10.0, 5.0, 0.0],
@@ -695,6 +725,42 @@ mod tests {
         // Should have spawned a new camera (reused_state is None)
         assert!(cleanup.reused_state.is_none());
         assert!(world.get::<Camera3d>(cleanup.debug_entity).is_some());
+        let Some(RenderTarget::Image(target)) = world.get::<RenderTarget>(cleanup.debug_entity)
+        else {
+            panic!("a camera spawned without a window needs an image target");
+        };
+        let image = world
+            .resource::<Assets<Image>>()
+            .get(&target.handle)
+            .unwrap();
+        assert_eq!((image.width(), image.height()), TEMPORARY_TARGET_SIZE);
+        assert!(
+            image
+                .texture_descriptor
+                .usage
+                .contains(TextureUsages::COPY_SRC)
+        );
+    }
+
+    #[test]
+    fn setup_debug_camera_spawns_window_camera_beside_a_primary_window() {
+        let mut world = World::new();
+        world.spawn((Window::default(), PrimaryWindow));
+
+        let cleanup = setup_debug_camera(
+            &mut world,
+            &DebugCameraRequest {
+                position: [10.0, 5.0, 0.0],
+                look_at: [0.0, 0.0, 0.0],
+            },
+        )
+        .unwrap();
+
+        assert!(cleanup.temporary_image.is_none());
+        assert!(matches!(
+            world.get::<RenderTarget>(cleanup.debug_entity),
+            Some(RenderTarget::Window(WindowRef::Primary))
+        ));
     }
 
     #[test]
@@ -721,6 +787,7 @@ mod tests {
     #[test]
     fn cleanup_debug_camera_world_despawns_temporary_camera() {
         let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
         let cleanup = setup_debug_camera(
             &mut world,
             &DebugCameraRequest {
@@ -730,10 +797,12 @@ mod tests {
         )
         .unwrap();
         let debug_entity = cleanup.debug_entity;
+        let image = cleanup.temporary_image.unwrap();
 
         cleanup_debug_camera_world(cleanup, &mut world);
 
         assert!(world.get_entity(debug_entity).is_err());
+        assert!(world.resource::<Assets<Image>>().get(image).is_none());
     }
 
     #[test]
@@ -913,6 +982,7 @@ mod tests {
     #[test]
     fn setup_debug_camera_spawns_with_global_transform() {
         let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
 
         let req = DebugCameraRequest {
             position: [10.0, 5.0, 0.0],

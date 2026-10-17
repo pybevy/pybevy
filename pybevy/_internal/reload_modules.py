@@ -22,6 +22,9 @@ _ResourceAssignmentAliases = Mapping[str, tuple[weakref.ReferenceType[type], ...
 _HintFreezer = Callable[[], None]
 _annotation_hint_freezers: tuple[tuple[str, weakref.WeakMethod[_HintFreezer]], ...] = ()
 _annotation_hint_freezers_lock = threading.Lock()
+# Defining module of every registered component class, by `module.qualname`.
+_component_modules: dict[str, str] = {}
+_component_forgetters: list[Callable[[list[str]], None]] = []
 
 
 class _ResourceValidation(Protocol):
@@ -144,6 +147,9 @@ class ModuleReloadTransaction:
         self._class_bodies: dict[type, dict[str, object]] = {}
         self._import_graph_updates: dict[int, tuple[ImportGraph, ImportGraph]] = {}
         self._entrypoint_fingerprint: str | None = None
+        self._flushed: set[str] = set()
+        self._components_defined: set[str] = set()
+        self._components_removed: list[str] = []
         self._token = _active.set(self)
 
     def stage_resource_assignment_alias(
@@ -172,6 +178,7 @@ class ModuleReloadTransaction:
     def record_flush(self, project_dir: str, names: list[str]) -> None:
         root = os.path.realpath(project_dir) + os.sep
         self._roots.add(root)
+        self._flushed.update(names)
         for name in names:
             if name not in self._before:
                 continue
@@ -185,9 +192,24 @@ class ModuleReloadTransaction:
                     name, (parent, vars(parent).get(child, _MISSING))
                 )
 
+    def note_component_defined(self, key: str) -> None:
+        self._components_defined.add(key)
+
+    def removed_component_names(self) -> list[str]:
+        self._components_removed = sorted(
+            key
+            for key, module in _component_modules.items()
+            if module in self._flushed and key not in self._components_defined
+        )
+        return self._components_removed
+
     def finish(self, success: bool) -> None:
         try:
             if success:
+                for key in self._components_removed:
+                    _component_modules.pop(key, None)
+                for forget in _component_forgetters:
+                    forget(self._components_removed)
                 for validation, aliases in self._resource_aliases.items():
                     cast(_ResourceValidation, validation).publish(aliases)
                 for component_type, annotations in self._component_annotations.items():
@@ -232,6 +254,9 @@ class ModuleReloadTransaction:
             self._component_annotations.clear()
             self._class_bodies.clear()
             self._import_graph_updates.clear()
+            self._flushed.clear()
+            self._components_defined.clear()
+            self._components_removed = []
 
     def stage_import_graph(self, graph: ImportGraph, candidate: ImportGraph) -> None:
         """Publish a candidate dependency graph only if this reload commits."""
@@ -243,6 +268,25 @@ def record_module_flush(project_dir: str, names: list[str]) -> None:
     if transaction is not None:
         _freeze_annotation_hints(names)
         transaction.record_flush(project_dir, names)
+
+
+def register_component_forgetter(forget: Callable[[list[str]], None]) -> None:
+    """Called with the component keys a committed reload found removed."""
+    if forget not in _component_forgetters:
+        _component_forgetters.append(forget)
+
+
+def note_component_defined(key: str, module: str) -> None:
+    _component_modules[key] = module
+    transaction = _active.get()
+    if transaction is not None:
+        transaction.note_component_defined(key)
+
+
+def removed_component_names() -> list[str]:
+    """Component classes that a module re-executed by this reload no longer defines."""
+    transaction = _active.get()
+    return [] if transaction is None else transaction.removed_component_names()
 
 
 def evict_modules(names: list[str]) -> None:

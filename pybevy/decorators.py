@@ -426,6 +426,12 @@ def _commit_component_layout_reload() -> None:
     _component_layout_reload_required.clear()
 
 
+def _forget_components(keys: list[str]) -> None:
+    for key in keys:
+        _component_layout_signatures.pop(key, None)
+        _component_cache.pop(key, None)
+
+
 def _resource_layout_reload_names() -> tuple[str, ...]:
     return tuple(sorted(_resource_layout_reload_required))
 
@@ -615,6 +621,13 @@ def _register_component(cls: type[CT], *, storage: str | None = None) -> type[CT
 
     # Generate cache key from fully qualified name
     key = f"{cls.__module__}.{cls.__qualname__}"
+    from ._internal.reload_modules import (
+        note_component_defined,
+        register_component_forgetter,
+    )
+
+    register_component_forgetter(_forget_components)
+    note_component_defined(key, cls.__module__)
     field_hints = _component_field_hints(cls)
     has_undeclared_instance_state = _has_undeclared_component_state(cls, field_hints)
     layout_signature = (

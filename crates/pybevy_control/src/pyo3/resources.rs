@@ -14,6 +14,7 @@ use pybevy_core::{
     registry::global_registry::all_resource_bridges,
 };
 use pyo3::{
+    exceptions::PyNotImplementedError,
     ffi::PyObject,
     prelude::*,
     types::{PyDict, PyType},
@@ -25,10 +26,15 @@ use crate::{
     pyo3::{
         components::validate_written_fields,
         dataclass_fields::dataclass_field_names,
-        errors::{unknown_field_error, unknown_set_fields, writable_field_names},
-        from_json::field::{
-            convert_annotated_field_value, convert_committed_resource_enum_field_value,
-            convert_field_value,
+        errors::{
+            drop_read_only_echoes, unknown_field_error, unknown_set_fields, writable_field_names,
+        },
+        from_json::{
+            enums::resolve_enum_instance,
+            field::{
+                convert_annotated_field_value, convert_committed_resource_enum_field_value,
+                convert_field_value,
+            },
         },
         inspect::{opaque_value_fields, reflected_type_is_enum},
         names::{ResourceTarget, custom_resource_name, qualified_type_name, resolve_resource},
@@ -158,12 +164,52 @@ pub fn insert_resource(
                     && !obj.is_empty()
                 {
                     let py_resource = bridge.clone_owned(world, py).map_err(|e| {
-                        ControlError::internal(format!(
-                            "Failed to copy existing resource for atomic patch: {e}"
-                        ))
+                        if e.is_instance_of::<PyNotImplementedError>(py) {
+                            ControlError::invalid_params(public_error::mcp_resource_not_writable(
+                                &resource_type,
+                            ))
+                        } else {
+                            ControlError::internal(format!(
+                                "Failed to copy existing resource for atomic patch: {e}"
+                            ))
+                        }
                     })?;
                     let instance = py_resource.bind(py);
 
+                    if obj.contains_key("variant")
+                        && let Some(replacement) = resolve_enum_instance(py, instance, obj)
+                            .map_err(|error| {
+                                ControlError::invalid_params(format!(
+                                    "Failed to set {resource_type}: {error}"
+                                ))
+                            })?
+                    {
+                        bridge
+                            .commit_owned(world, replacement.bind(py))
+                            .map_err(|e| {
+                                ControlError::internal(format!(
+                                    "Failed to commit atomic resource patch: {e}"
+                                ))
+                            })?;
+                        return Ok(Some(resource_mutation_response(
+                            &resource_type,
+                            false,
+                            false,
+                        )));
+                    }
+
+                    let read = extract_bridge_fields(
+                        py,
+                        instance,
+                        reflected_type_is_enum(world, bridge.bevy_type_id()),
+                    );
+                    let read = opaque_value_fields(world, bridge.bevy_type_id(), None, &read)
+                        .unwrap_or(read);
+                    let obj = &drop_read_only_echoes(instance, obj, &read).map_err(|error| {
+                        ControlError::invalid_params(format!(
+                            "Failed to set {resource_type}: {error}"
+                        ))
+                    })?;
                     let unknown = unknown_set_fields(instance, obj.keys());
                     if !unknown.is_empty() {
                         return Err(ControlError::invalid_params(unknown_field_error(
@@ -646,13 +692,13 @@ mod tests {
     use pybevy_core::bridge_inventory::collect_all;
 
     use super::*;
-    use crate::protocol::ErrorCode;
+    use crate::{protocol::ErrorCode, test_python::initialize_python};
 
     static INIT: Once = Once::new();
 
     fn setup_python() {
         INIT.call_once(|| {
-            Python::initialize();
+            initialize_python();
         });
     }
 
@@ -913,7 +959,7 @@ mod tests {
 
     fn setup() {
         INIT_WITH_BRIDGES.call_once(|| {
-            Python::initialize();
+            initialize_python();
             collect_all();
         });
     }

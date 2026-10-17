@@ -16,7 +16,7 @@ use pyo3::prelude::*;
     shadow_maps_enabled,
     contact_shadows_enabled,
     affects_lightmapped_mesh_diffuse
-], batch_only_fields = [color])]
+], batch_only_fields = [color], domains = [intensity => [finite], range => [finite], radius => [finite], shadow_depth_bias => [finite], shadow_normal_bias => [finite], shadow_map_near_z => [finite], outer_angle => [finite], inner_angle => [finite]])]
 #[pyclass(name = "SpotLight", module = "pybevy.light", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PySpotLight {
@@ -106,6 +106,14 @@ impl PySpotLight {
         outer_angle: f32,
         inner_angle: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let intensity = Self::check_intensity(intensity)?;
+        let range = Self::check_range(range)?;
+        let radius = Self::check_radius(radius)?;
+        let shadow_depth_bias = Self::check_shadow_depth_bias(shadow_depth_bias)?;
+        let shadow_normal_bias = Self::check_shadow_normal_bias(shadow_normal_bias)?;
+        let shadow_map_near_z = Self::check_shadow_map_near_z(shadow_map_near_z)?;
+        let outer_angle = Self::check_outer_angle(outer_angle)?;
+        let inner_angle = Self::check_inner_angle(inner_angle)?;
         let color = Color::try_from(color)?;
         Ok(Self::from_owned(SpotLight {
             color,
@@ -143,6 +151,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_intensity(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_intensity(value)?;
         self.as_mut()?.intensity = value;
         Ok(())
     }
@@ -154,6 +163,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_range(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_range(value)?;
         self.as_mut()?.range = value;
         Ok(())
     }
@@ -165,6 +175,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_radius(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_radius(value)?;
         self.as_mut()?.radius = value;
         Ok(())
     }
@@ -209,6 +220,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_shadow_depth_bias(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_shadow_depth_bias(value)?;
         self.as_mut()?.shadow_depth_bias = value;
         Ok(())
     }
@@ -220,6 +232,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_shadow_normal_bias(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_shadow_normal_bias(value)?;
         self.as_mut()?.shadow_normal_bias = value;
         Ok(())
     }
@@ -231,6 +244,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_shadow_map_near_z(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_shadow_map_near_z(value)?;
         self.as_mut()?.shadow_map_near_z = value;
         Ok(())
     }
@@ -242,6 +256,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_outer_angle(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_outer_angle(value)?;
         self.as_mut()?.outer_angle = value;
         Ok(())
     }
@@ -253,6 +268,7 @@ impl PySpotLight {
 
     #[setter]
     pub fn set_inner_angle(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_inner_angle(value)?;
         self.as_mut()?.inner_angle = value;
         Ok(())
     }

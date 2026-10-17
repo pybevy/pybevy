@@ -132,6 +132,7 @@ pub use pybevy_storage::{
         CONDITION_READ_ONLY_GUIDANCE, CONFLICT_ASSETS, CONFLICT_MESSAGES, CONFLICT_QUERIES,
         CONFLICT_RESOURCE_QUERY, CONFLICT_RESOURCES, CONFLICT_WORLD, DisjointMarker,
         SystemAccessConflictMessage, conflict_assets_shared_view, conflict_queries_disjoint,
+        resolved_access_conflict,
     },
     storage_error::{
         EXPRESSION_MAX_DEPTH, EXPRESSION_MAX_POOL_ENTRIES, NESTED_EXECUTION, enum_variant_changed,
@@ -303,6 +304,28 @@ pub fn reload_error_hint(error: &str) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+pub fn reload_component_class_removed(names: &[String]) -> String {
+    format!(
+        "custom component class removed: {}; entities may still carry it",
+        names.join(", ")
+    )
+}
+
+pub fn asset_path_unapproved(path: &str) -> String {
+    format!(
+        "Asset path '{path}' is unapproved: it leaves the asset sources, so Bevy would never \
+         load it. Move the file under the assets directory and load it by a relative path"
+    )
+}
+
+pub fn mcp_read_only_field(field: &str) -> String {
+    format!("field '{field}' is read-only; send its current value or omit it")
+}
+
+pub fn mcp_resource_not_writable(type_name: &str) -> String {
+    format!("Resource '{type_name}' is read-only through set_resource")
 }
 
 pub fn resource_atomic_patch_unsupported(type_name: &str) -> String {
@@ -540,6 +563,16 @@ pub fn indices_variant_values(variant: &str) -> String {
     )
 }
 
+pub const MESH_INDICES_WITHOUT_POSITIONS: &str =
+    "Mesh has indices but no Mesh.ATTRIBUTE_POSITION; insert positions before adding it";
+pub fn mesh_attribute_vertex_count(name: &str, actual: usize, expected: usize) -> String {
+    format!(
+        "Mesh attribute {name} has {actual} values but Mesh.ATTRIBUTE_POSITION has {expected}; every vertex attribute needs one value per vertex"
+    )
+}
+pub fn mesh_position_not_finite(index: usize) -> String {
+    format!("Mesh.ATTRIBUTE_POSITION value {index} is not finite")
+}
 pub fn mesh_attribute_missing(name: &str) -> String {
     // `{:?}` quotes and escapes the user-controlled name so the message stays one line.
     format!(
@@ -638,6 +671,21 @@ pub const ASSET_SERVER_MANUAL_INSERT: &str =
     "AssetServer cannot be manually inserted. It is provided by AssetPlugin.";
 pub const ASSET_SERVER_MANUAL_REMOVE: &str =
     "AssetServer cannot be manually removed. It is managed by AssetPlugin.";
+pub fn shader_import_unresolved(shader: &str, import: &str) -> String {
+    format!(
+        "{shader} imports `{import}`, which no loaded shader defines; load the file that declares `#define_import_path {import}` as a Shader asset and keep its handle"
+    )
+}
+pub fn fixed_timestep_too_small(seconds: f64) -> String {
+    format!(
+        "Time[Fixed].timestep must be at least 0.0001 s (got {seconds:?} s); every frame runs FixedUpdate once per elapsed timestep"
+    )
+}
+pub fn deferred_command_queued_by(owner: &str) -> String {
+    format!(
+        "Deferred command queued by `{owner}`. Bevy applied it after `{owner}` returned, so the queuing line is not available."
+    )
+}
 pub fn query_contains_requires_entity(type_name: &str) -> String {
     format!(
         "`in Query` takes an Entity, got {type_name}; a Query matches entities, not its data rows"
@@ -1404,6 +1452,7 @@ pub const AXIS_NOT_NORMALIZED: &str = "axis must be normalized";
 pub const DIRECTION_NOT_NORMALIZED: &str = "direction must be normalized";
 pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
 pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
+pub const RELOAD_FAILED_AFTER_SCENE_CLEARED: &str = "the Full reload cleared the scene before it failed, so systems now run against an empty world; fix the error and reload, or call run_scene";
 pub const RELOAD_ENTRYPOINT_CHANGED: &str = "the @entrypoint changed; Python plugins, systems and observers in it were reloaded, but native plugin settings (such as ScheduleRunnerPlugin.run_loop), WindowPlugin and other App configuration apply only at startup: call run_scene for those to take effect";
 pub const TRANSFORM_ROTATION_ZERO_LENGTH: &str =
     "Transform.rotation must be a non-zero quaternion; use Quat.IDENTITY for no rotation";

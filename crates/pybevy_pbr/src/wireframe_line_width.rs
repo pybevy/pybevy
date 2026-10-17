@@ -3,7 +3,7 @@ use pybevy_core::{ComponentStorage, PyComponent};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
-#[pycomponent(WireframeLineWidth, bridge, view_fields = [width])]
+#[pycomponent(WireframeLineWidth, bridge, view_fields = [width], domains = [width => [finite]])]
 #[pyclass(name = "WireframeLineWidth", module = "pybevy.pbr", extends = PyComponent)]
 #[derive(Debug)]
 pub struct PyWireframeLineWidth {
@@ -14,8 +14,9 @@ pub struct PyWireframeLineWidth {
 impl PyWireframeLineWidth {
     #[new]
     #[pyo3(signature = (*, width = 1.0))]
-    pub fn new(width: f32) -> PyClassInitializer<Self> {
-        Self::from_owned(WireframeLineWidth { width }).into()
+    pub fn new(width: f32) -> PyResult<PyClassInitializer<Self>> {
+        let width = Self::check_width(width)?;
+        Ok(Self::from_owned(WireframeLineWidth { width }).into())
     }
 
     #[getter]
@@ -25,6 +26,7 @@ impl PyWireframeLineWidth {
 
     #[setter]
     pub fn set_width(&mut self, width: f32) -> PyResult<()> {
+        let width = Self::check_width(width)?;
         self.as_mut()?.width = width;
         Ok(())
     }

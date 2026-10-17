@@ -8,7 +8,9 @@ use pyo3::prelude::*;
     thickness,
     length
 ], domains = [
-    linear_steps => [range_inclusive(0.0, 1024.0)]
+    linear_steps => [range_inclusive(0.0, 1024.0)],
+    length => [finite],
+    thickness => [finite],
 ])]
 #[pyclass(name = "ContactShadows", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyContactShadows {
@@ -29,6 +31,8 @@ impl PyContactShadows {
         thickness: f32,
         length: f32,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let length = Self::check_length(length)?;
+        let thickness = Self::check_thickness(thickness)?;
         Ok(Self::from_owned(ContactShadows {
             linear_steps: Self::check_linear_steps(linear_steps)?,
             thickness,
@@ -55,6 +59,7 @@ impl PyContactShadows {
 
     #[setter]
     pub fn set_thickness(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_thickness(value)?;
         self.as_mut()?.thickness = value;
         Ok(())
     }
@@ -66,6 +71,7 @@ impl PyContactShadows {
 
     #[setter]
     pub fn set_length(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_length(value)?;
         self.as_mut()?.length = value;
         Ok(())
     }

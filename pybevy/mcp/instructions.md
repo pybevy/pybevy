@@ -10,10 +10,10 @@
 4. **Read topic guides before API lookups** - Before using `search_api` or `get_type_definition`, call `get_guide("index")` and check for a relevant curated guide. Guides are faster and more reliable than raw API exploration. Only fall back to API lookups for specifics not covered in guides.
 5. **Use API lookup tools for specifics** - If you know the class name, use `get_type_definition('ClassName')` directly for the full definition. Ambiguous short names return qualified candidates; retry with one such as `get_type_definition('image.Image')`. If you don't know the name, use `search_api('keyword')` first, then `get_type_definition` on the results. API lookup covers public stubs and explicitly re-exported pure-Python modules; implementation-only modules are intentionally absent. Search also excludes private class/function bodies and helper-reference lines while preserving original source line numbers.
 6. **Reuse the running scene for ordinary edits** - after the first `run_scene`, edit and save the .py file; its watcher reloads the scene automatically. Check `get_reload_status` for the watcher result (new generation or error), then inspect or capture. Use `reload` or `reload_and_capture` only when intentionally forcing a reload or mode. Call `run_scene` again when switching scene files, adding or removing bridge-backed plugins, changing core plugin composition, or requiring a clean restart.
-7. **After reload** - call `get_last_error` to check the live Python system-error channel. `reload.error` is sampled once before the response and may miss errors reported on a later frame. Its `wgpu_validation` field reports GPU validation errors: a failed render pipeline (for example a prepass/shadow shader importing forward-only `globals`) can turn the whole frame black, and names its pipeline `label` there; `shader_errors` lists shaders that fail to compile. Use `get_logs(errors_only=true)` as a secondary check for Bevy, asset, render, and subprocess errors.
-8. **Scene style defaults (3D)** - new 3D scenes MUST include: Bloom on the camera, DistanceFog for atmospheric depth, a warm key directional light (shadows) + cool fill directional light (no shadows, ~40% intensity), ClearColor matching fog color, and lighting above the minimum floors (see Scene Generation below). For 2D scenes, see `guide://2d`. Start bright, dim later.
+7. **After reload** - call `get_last_error` to check the live Python system-error channel. `reload.error` is sampled once before the response and may miss errors reported on a later frame. Its `wgpu_validation` field reports GPU validation errors: a failed render pipeline (for example a prepass/shadow shader importing forward-only `globals`) can turn the whole frame black, and names its pipeline `label` there; `shader_errors` lists shaders that fail to compile, and `asset_load_failures` lists recent failed loads with their path and Bevy's reason. The latest error stays until another replaces it; `age_secs` says how old it is. Use `get_logs(errors_only=true)` as a secondary check for Bevy, asset, render, and subprocess errors.
+8. **Follow the requested style** - choose geometry, palette, lighting, camera, texture filtering, and effects to serve the user's visual intent. Bloom, fog, realistic materials, multiple lights, and high resolution are techniques to pick when the style calls for them. Keep deliberate darkness, flat colors, monochrome palettes, faceting, and pixelation as requested. See `guide://scene-quality` for style selection and realism presets; for 2D, see `guide://2d`.
 9. **Interior camera placement** - for enclosed scenes, use `get_bounding_box` on walls/objects to calculate safe debug camera positions instead of guessing coordinates.
-10. **Use `get_guide("scene-quality")` as a reference** - consult its lighting floors and color palette rules when refining visuals, not necessarily before writing the first line of code.
+10. **Use `get_guide("scene-quality")` as a reference** - consult its style choices, lighting starting points, and rendering compatibility guidance when refining visuals; reading it before the first line of code is optional.
 11. **After first load with GLB models** - run `check_all_overlaps(ground_y=0)` to detect sunken models scene-wide in one pass, before any visual iteration.
 
 A startup error lists the extracted traceback first, starting at the scene's
@@ -27,8 +27,9 @@ space shows the newest matching stderr lines in their original order, then
 distinct warnings that fit. A duplicate stderr traceback is omitted without
 hiding independent Bevy, asset, or render errors from the same capture.
 
-After a failed reload, `run_code` uses the restored previous scene namespace.
-Fix the source and reload again to apply the new definitions.
+After a failed reload, `run_code` uses the restored previous scene namespace;
+`running_previous_generation` in the response says whether its World is still
+intact. Fix the source and reload again to apply the new definitions.
 
 ## API Lookup Guide
 
@@ -62,7 +63,7 @@ Fix the source and reload again to apply the new definitions.
 - `capture_timeline` - Frames over time in a contact sheet (default 6 captures across 60 frames). Headless image-target captures apply UI/overlay suppression from the first tile and restore capture state after completion or timeout.
 - `capture_depth` - RGB screenshot + ray-AABB depth samples from one camera context. It selects the active `Camera3d` with the highest render order (lowest entity ID breaks ties), retains that identity across the delay, and captures its exact target. The result reports camera, viewport, and same-target pass provenance plus **entity names at each sample point** (semantic segmentation), making it the primary tool for diagnosing **occlusion, visibility, and "wrong entity showing"** problems. Use it before repeated screenshots when geometry appears wrong.
 - `capture_stats` - Numeric RGB/luma summaries, grid cells, and pixel samples without returning a PNG. Captures a retained `frame_id` for later `compare_frames` calls. Pass `entity` to either `capture_stats` or `capture_screenshot` to isolate one entity subtree while retaining camera and lighting support.
-- Temporary `position`/`look_at` overrides on `capture_stats` and `capture_screenshot` render the moved 3D camera before capturing its image target, then restore camera state. The pose holds for the whole capture, including a timeline or turnaround, even when a controller such as `OrbitCamera` rewrites the camera's `Transform` every frame. No extra caller delay is needed for objects outside the original view.
+- Temporary `position`/`look_at` overrides on `capture_stats` and `capture_screenshot` render the moved 3D camera before capturing its image target, then restore camera state. In a scene with no camera they use a temporary `Camera3d`, rendering into a 768x432 image when there is no window. The pose holds for the whole capture, including a timeline or turnaround, even when a controller such as `OrbitCamera` rewrites the camera's `Transform` every frame. No extra caller delay is needed for objects outside the original view.
 - Capture validates camera eligibility after the requested delay. Missing or all-inactive cameras and non-capturable targets are reported directly; a readback deadline means an eligible camera and target produced no fresh frame.
 - `compare_frames` - Compare two retained captures and report pixel-difference magnitude, changed percentage, bounding box, and centroid.
 
@@ -216,7 +217,7 @@ When using `set_component`, `spawn_entity`, `set_resource`, or `set_asset`, fiel
 - **Enum fields** (Color, PlaybackMode, etc.): `{"Srgba": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0}}` or unit variant as string: `"Manual"`. Class constants such as `Val.ZERO` or `Color.WHITE` are values, not variants: write their variant form, such as `{"variant": "Px", "value": 0.0}`
 - **Color shorthand**: `[1.0, 0.5, 0.0, 1.0]` means sRGBA for `Color`
 - **LinearRgba**: `[r, g, b, a]` is linear and accepts HDR channels above 1; the canonical object form is `{"red": r, "green": g, "blue": b, "alpha": a}`
-- **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`; Vec3 also accepts the complete coordinate object `{"x": x, "y": y, "z": z}`
+- **Vec2/Vec3/Vec4**: `[x, y]`, `[x, y, z]`, `[x, y, z, w]`, or the complete coordinate object such as `{"x": x, "y": y}`
 - **Quat rotations**: `[x, y, z, w]` or a complete coordinate object; MCP normalizes finite, non-zero inputs to unit length before storing them. Zero-length and non-finite rotations are rejected.
 - **Option fields**: `null` for None, value directly for Some
 - **Nested structs**: `{"x": 1.0, "y": 2.0, "z": 3.0}`; a Vec3 coordinate object requires exactly `x`, `y`, and `z` with finite numeric values
@@ -233,7 +234,7 @@ Call `get_guide("index")` for the full list of available guides with description
 ### Incremental Development (CRITICAL)
 **Never write the entire scene in one shot.** Large scenes (500+ lines) will exceed the output token limit and fail. Instead:
 
-1. **Start small** - Write a ~150-250 line initial scene with: camera, lighting, fog, ground, and the 2-3 most important entities. Load it with `run_scene`.
+1. **Start small** - Write a ~150-250 line initial scene with: camera, style-appropriate lighting and background, and the 2-3 most important entities. Load it with `run_scene`.
 2. **Screenshot and verify** - Use `capture_screenshot` after the initial `run_scene` to confirm the foundation works and looks correct; it does not trigger an extra reload.
 3. **Add detail iteratively** - Edit the file to add more entities, materials,
    and animations. The file watcher reloads saved Python changes; use an explicit
@@ -243,11 +244,11 @@ Call `get_guide("index")` for the full list of available guides with description
 ### Before Coding
 1. **Call `get_guide("patterns")` + ONE matching recipe** if available. That's enough to start. Read topic guides (lighting, materials, etc.) later when iterating on those specific features. For scenes with GLB models, also call `get_guide("3d-models")`.
 2. **Extract every noun** from the prompt → each becomes at least one entity
-3. **Plan camera** → default to eye-level (Y=2–4), NOT overhead
-4. **Plan 3 depth layers** → foreground framing, midground content, background/fog
+3. **Identify the look** → define shapes, palette, lighting, surface treatment, and camera from the request or supplied reference. If unspecified, choose a coherent direction and state the assumption.
+4. **Plan composition** → choose viewpoint and depth appropriate to that look; eye-level and three depth layers are useful options.
 
 ### Post-Screenshot Self-Review
-Before presenting to the user, verify: all geometry visible (no pure-black areas), 3 depth layers readable, every prompt noun has an entity, at least 2 distinct colors, camera at appropriate height. **If ANY check fails:** double ambient brightness, brighten materials +0.1, re-capture.
+Before presenting, compare the render with the requested look: are the important subjects readable as intended, the composition coherent, and the defining shapes, colors, light, and surfaces present? Inspect unintended clipping, missing assets, aliasing, and temporal instability at delivery resolution. Darkness, limited palettes, flat backgrounds, and hard edges may be intentional. Change one relevant variable, then re-capture.
 
 ## Headless Rendering
 

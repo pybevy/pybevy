@@ -28,7 +28,8 @@ use crate::atmosphere_mode::PyAtmosphereMode;
     multiscattering_lut_samples => [range_inclusive(0.0, 1024.0)],
     sky_view_lut_samples => [range_inclusive(0.0, 1024.0)],
     aerial_view_lut_samples => [range_inclusive(0.0, 1024.0)],
-    sky_max_samples => [range_inclusive(0.0, 1024.0)]
+    sky_max_samples => [range_inclusive(0.0, 1024.0)],
+    aerial_view_lut_max_distance => [finite],
 ])]
 #[pyclass(name = "AtmosphereSettings", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyAtmosphereSettings {
@@ -68,6 +69,8 @@ impl PyAtmosphereSettings {
         sky_max_samples: u32,
         rendering_method: PyAtmosphereMode,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let aerial_view_lut_max_distance =
+            Self::check_aerial_view_lut_max_distance(aerial_view_lut_max_distance)?;
         Ok(Self::from_owned(AtmosphereSettings {
             transmittance_lut_size: Self::check_transmittance_lut_size(UVec2::try_from(
                 transmittance_lut_size,
@@ -223,6 +226,7 @@ impl PyAtmosphereSettings {
 
     #[setter]
     pub fn set_aerial_view_lut_max_distance(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_aerial_view_lut_max_distance(value)?;
         self.as_mut()?.aerial_view_lut_max_distance = value;
         Ok(())
     }

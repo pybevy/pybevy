@@ -12,7 +12,9 @@ use pyo3::prelude::*;
     use_secant
 ], domains = [
     linear_steps => [range_inclusive(0.0, 1024.0)],
-    bisection_steps => [range_inclusive(0.0, 64.0)]
+    bisection_steps => [range_inclusive(0.0, 64.0)],
+    thickness => [finite],
+    linear_march_exponent => [finite],
 ])]
 #[pyclass(name = "ScreenSpaceReflections", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyScreenSpaceReflections {
@@ -44,6 +46,8 @@ impl PyScreenSpaceReflections {
         bisection_steps: u32,
         use_secant: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
+        let thickness = Self::check_thickness(thickness)?;
+        let linear_march_exponent = Self::check_linear_march_exponent(linear_march_exponent)?;
         Ok(Self::from_owned(ScreenSpaceReflections {
             min_perceptual_roughness: min_perceptual_roughness.try_into()?,
             max_perceptual_roughness: max_perceptual_roughness.try_into()?,
@@ -104,6 +108,7 @@ impl PyScreenSpaceReflections {
 
     #[setter]
     pub fn set_thickness(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_thickness(value)?;
         self.as_mut()?.thickness = value;
         Ok(())
     }
@@ -126,6 +131,7 @@ impl PyScreenSpaceReflections {
 
     #[setter]
     pub fn set_linear_march_exponent(&mut self, value: f32) -> PyResult<()> {
+        let value = Self::check_linear_march_exponent(value)?;
         self.as_mut()?.linear_march_exponent = value;
         Ok(())
     }

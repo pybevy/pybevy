@@ -50,7 +50,7 @@ impl PyForwardDecal {
     }
 }
 
-#[pyfield]
+#[pyfield(domains = [depth_fade_factor => [finite]])]
 #[pyclass(
     name = "ForwardDecalMaterialExt",
     module = "pybevy.pbr",
@@ -65,8 +65,11 @@ pub struct PyForwardDecalMaterialExt {
 impl PyForwardDecalMaterialExt {
     #[new]
     #[pyo3(signature = (*, depth_fade_factor = 8.0))]
-    pub fn new(depth_fade_factor: f32) -> Self {
-        Self::from_owned(ForwardDecalMaterialExt { depth_fade_factor })
+    pub fn new(depth_fade_factor: f32) -> PyResult<Self> {
+        let depth_fade_factor = Self::check_depth_fade_factor(depth_fade_factor)?;
+        Ok(Self::from_owned(ForwardDecalMaterialExt {
+            depth_fade_factor,
+        }))
     }
 
     #[getter]
@@ -76,6 +79,7 @@ impl PyForwardDecalMaterialExt {
 
     #[setter]
     pub fn set_depth_fade_factor(&mut self, depth_fade_factor: f32) -> PyResult<()> {
+        let depth_fade_factor = Self::check_depth_fade_factor(depth_fade_factor)?;
         self.as_mut()?.depth_fade_factor = depth_fade_factor;
         Ok(())
     }
