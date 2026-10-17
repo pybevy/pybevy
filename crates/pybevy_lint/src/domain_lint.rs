@@ -5,8 +5,9 @@
 //! `validate_domains`, and `#[new]` must do so for every declared field it
 //! takes as a parameter. Writes to either end of an `ordered(lower, upper)`
 //! must reach `check_<lower>_order`. A `#[getter]` that lends a declared
-//! field for nested writes must use `borrow_validated_field_as` with its
-//! validator. Calls resolve through functions in the same file only.
+//! field for nested writes must use `borrow_validated_field_as` (or
+//! `borrow_validated_optional_field` for an `Option`) with its validator.
+//! Calls resolve through functions in the same file only.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -263,10 +264,15 @@ fn missing_checks(
     let name = method.sig.ident.to_string();
     let mut missing = Vec::new();
     if has_attribute(&method.attrs, "getter") {
-        let lends = ["borrow_field_as", "borrow_resolved_field_as"]
-            .iter()
-            .any(|borrow| reached.contains(borrow));
-        let validated = reached.contains("borrow_validated_field_as");
+        let lends = [
+            "borrow_field_as",
+            "borrow_resolved_field_as",
+            "borrow_optional_field",
+        ]
+        .iter()
+        .any(|borrow| reached.contains(borrow));
+        let validated = reached.contains("borrow_validated_field_as")
+            || reached.contains("borrow_validated_optional_field");
         if declared.fields.contains(&name) && (lends || validated) {
             let validator = format!("validate_{name}");
             if lends || !(reached.contains(validator.as_str()) || covers(&validator)) {

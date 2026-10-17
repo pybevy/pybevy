@@ -279,6 +279,8 @@ pub struct PropertyDef {
     pub has_setter: bool,
     /// Getter self mutability
     pub getter_mutability: SelfMutability,
+    /// Setter self mutability
+    pub setter_mutability: SelfMutability,
     /// Getter location
     pub getter_location: Option<SourceLocation>,
     /// Setter location

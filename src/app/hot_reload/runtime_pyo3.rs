@@ -48,7 +48,9 @@ use crate::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
             ensure_state_transition_system_registered, register_reloaded_state_machine,
-            registered_state_machine_count, retained_state_member_missing,
+            registered_state_machine_count, retain_reloaded_state_machines,
+            retained_state_member_missing, state_schedule_qualified_name,
+            state_type_qualified_name,
         },
         system::SystemGcRegistry,
         system_config::{
@@ -200,24 +202,29 @@ fn reload_state_schedule(
     schedule: &Bound<'_, PyAny>,
 ) -> PyResult<ReloadStateSchedule> {
     let py = schedule.py();
+    let qualified_name = state_schedule_qualified_name(schedule)?;
     if let Ok(on_enter) = schedule.cast::<PyOnEnterSchedule>() {
         let on_enter = on_enter.borrow();
         return Ok(ReloadStateSchedule::State(
-            canonicalize_state_schedule_label(world, on_enter.to_bevy_label(py)?),
+            canonicalize_state_schedule_label(world, on_enter.to_bevy_label(py)?, &qualified_name),
             on_enter.display_name(py)?,
         ));
     }
     if let Ok(on_exit) = schedule.cast::<PyOnExitSchedule>() {
         let on_exit = on_exit.borrow();
         return Ok(ReloadStateSchedule::State(
-            canonicalize_state_schedule_label(world, on_exit.to_bevy_label(py)?),
+            canonicalize_state_schedule_label(world, on_exit.to_bevy_label(py)?, &qualified_name),
             on_exit.display_name(py)?,
         ));
     }
     if let Ok(on_transition) = schedule.cast::<PyOnTransitionSchedule>() {
         let on_transition = on_transition.borrow();
         return Ok(ReloadStateSchedule::Transition(
-            canonicalize_transition_schedule_label(world, on_transition.to_bevy_label(py)?),
+            canonicalize_transition_schedule_label(
+                world,
+                on_transition.to_bevy_label(py)?,
+                &qualified_name,
+            ),
             on_transition.display_name(py)?,
         ));
     }
@@ -1059,6 +1066,14 @@ impl ReloadRuntime for Pyo3ReloadRuntime {
         mode: ReloadMode,
     ) -> Result<(), ReloadError> {
         Python::attach(|py| -> PyResult<()> {
+            if mode == ReloadMode::Full {
+                let qualified_names = defs
+                    .states
+                    .iter()
+                    .map(|state| state_type_qualified_name(state.state_type.bind(py)))
+                    .collect::<PyResult<_>>()?;
+                retain_reloaded_state_machines(world, &qualified_names);
+            }
             for state in &defs.states {
                 register_reloaded_state_machine(
                     py,

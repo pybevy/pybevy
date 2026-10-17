@@ -29,6 +29,10 @@ pub const BUTTON_INPUT_TYPE_REQUIRED: &str =
 pub const UNSUPPORTED_LOGICAL_KEY_VARIANT: &str = "unsupported logical key variant";
 pub const FLOAT_SEQUENCE_NOT_STR: &str = "expected an iterable of floats, not str";
 
+pub fn local_value_type_mismatch(expected: impl Display, actual: impl Display) -> String {
+    format!("Expected type {expected}, but got {actual}")
+}
+
 pub fn button_input_unsupported_type(name: &str) -> String {
     format!(
         "ButtonInput[{name}] is not available; supported button types are KeyCode and \
@@ -531,6 +535,8 @@ pub const ANIMATION_GRAPH_NODE_READ_ONLY: &str =
     "Cannot modify a node obtained from AnimationGraph.get(); use get_mut() instead";
 pub const ANIMATION_GRAPH_NODE_MISSING: &str = "the node is no longer in the animation graph";
 pub const ANIMATION_GRAPH_CYCLE: &str = "AnimationGraph.add_edge would create a cycle";
+pub const ANIMATION_GRAPH_IN_USE: &str =
+    "the animation graph is in use by another operation; access its nodes after that call returns";
 pub const ANIMATION_PLAYER_ANIMATION_MISSING: &str = "Animation not found for node index";
 
 pub const RESOURCE_COMPONENT_INSERT: &str =
@@ -836,6 +842,8 @@ pub fn optional_module_requires_feature(module: &str, feature: &str) -> String {
     format!("optional module '{module}' requires the '{feature}' Cargo feature")
 }
 
+pub const MATERIAL_TYPE_MISMATCH: &str =
+    "Material type mismatch: the handle is untyped or belongs to a different @material class";
 pub const SHADER_DEFS_WITHOUT_NAMES: &str =
     "shader_defs contains enabled bits without matching shader_def_names entries";
 pub const SHADER_BUFFER_DATA_TYPE: &str = "ShaderBuffer data must be a contiguous byte buffer (bytes, bytearray or memoryview) or a uint8 pybevy.array.Array";
@@ -1253,6 +1261,8 @@ pub const PARAM_SET_OUTSIDE_SYSTEM: &str =
     "ParamSet can only be accessed while its system is running";
 pub const PARAM_SET_IN_OBSERVER: &str =
     "ParamSet is supported in systems and run conditions, not in observers";
+pub const RESOURCE_LIFECYCLE_OBSERVERS_UNSUPPORTED: &str =
+    "Lifecycle observers for resources are not supported";
 
 pub fn param_set_member_unsupported(member: &str) -> String {
     format!(

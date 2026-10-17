@@ -43,6 +43,9 @@ app.init_state(GamePhase)
 `init_state()` only initializes an absent state machine. Calling it again
 preserves the current state and any queued `NextState` transition.
 `insert_state()` replaces the current state and clears its pending transition.
+Removing `State[T]` suspends that machine's automatic transitions; calling
+`init_state(T)` restores its default current state and resets its pending request.
+The bare spelling follows the same rule when one machine is registered.
 
 ## OnEnter / OnExit / OnTransition Schedules
 
@@ -74,6 +77,13 @@ app.add_systems(OnEnter(GamePhase.PLAYING), setup_game_world)
 
 OnEnter/OnExit systems accept full system parameters (Commands, queries, resources, etc.).
 
+Each automatic pass commits every queued machine before any exit callback,
+then runs exit, transition and enter phases across all machines. Callbacks read
+all the newly committed states. Requests queued inside a callback wait for the
+next pass, including requests for another machine. Exceptions raised by state
+comparison or cleanup propagate through `update()` and `run()` without hot
+reload. With hot reload, they are reported and the App keeps running.
+
 `OnTransition(exited, entered)` runs only for one exact state change. Both
 arguments are positional state members:
 
@@ -87,6 +97,17 @@ app.add_systems(
     finish_menu_transition,
 )
 ```
+
+## Automatic Entity Cleanup
+
+Import `DespawnOnExit` and `DespawnOnEnter` from `pybevy.state` and include
+the marker in a spawned bundle. `DespawnOnExit(member)` cleans up when leaving
+that member; `DespawnOnEnter(member)` cleans up when entering it, including
+the initial entry. Descendants are cleaned up too.
+
+These sweeps deliver Python Despawn, Discard and Remove observers while their
+old component values are still readable, then release entity-scoped observers
+before deleting the entities. Observer query handles expire after each callback.
 
 ## Changing State at Runtime
 
@@ -237,6 +258,18 @@ resource access when conditional lifecycle behavior is required.
 Transitions stay deferred: the value is queued and applied by the transition
 system on a later frame, so read `State[T]` back rather than assuming the change
 landed synchronously.
+
+## State Identity and Reload
+
+State-scoped `DespawnOnExit` and `DespawnOnEnter` markers belong to their enum's
+machine. Equal integer values in distinct `IntEnum` types do not share cleanup.
+Redefining a state type under the same `module.qualname` keeps its logical
+identity across reload; a reused class address alone cannot identify a machine.
+
+Full reload rebuilds declared machines and removes obsolete ones, releasing
+retired classes and excluding them from bare-resource ambiguity checks.
+Partial reload preserves the machine set and current/pending values, migrating
+members of redefined types by name. Use Full reload to remove a machine.
 
 ## Known Limitations
 

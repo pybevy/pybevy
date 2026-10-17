@@ -17,9 +17,9 @@ pub struct PyPitch {
 impl PyPitch {
     #[new]
     #[pyo3(signature = (frequency, duration))]
-    pub fn new(frequency: f32, duration: f64) -> PyResult<PyClassInitializer<Self>> {
+    pub fn new(frequency: f32, duration: DurationInput) -> PyResult<PyClassInitializer<Self>> {
         let frequency = Self::check_frequency(frequency)?;
-        let duration = Self::check_duration(DurationInput::Seconds(duration))?.stored();
+        let duration = Self::check_duration(duration)?.stored();
         let pitch = Pitch::new(frequency, duration);
         Ok(Self::from_owned(pitch).into())
     }
@@ -42,8 +42,8 @@ impl PyPitch {
     }
 
     #[setter]
-    pub fn set_duration(&mut self, duration: f64) -> PyResult<()> {
-        let duration = Self::check_duration(DurationInput::Seconds(duration))?.stored();
+    pub fn set_duration(&mut self, duration: DurationInput) -> PyResult<()> {
+        let duration = Self::check_duration(duration)?.stored();
         self.as_mut()?.duration = duration;
         Ok(())
     }

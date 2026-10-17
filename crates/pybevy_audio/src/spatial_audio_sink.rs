@@ -6,7 +6,7 @@ use bevy::{
 };
 use pybevy_core::{
     ComponentStorage, PyComponent,
-    domain::{NON_ZERO, POSITIVE, check_for},
+    domain::{DurationInput, FINITE_NON_NEGATIVE, NON_ZERO, POSITIVE, check_for},
     public_error::audio_seek_failed,
     repr::float_repr,
 };
@@ -85,7 +85,8 @@ impl PySpatialAudioSink {
         Ok(self.as_ref()?.position())
     }
 
-    pub fn try_seek(&self, pos: Duration) -> PyResult<()> {
+    pub fn try_seek(&self, pos: DurationInput) -> PyResult<()> {
+        let pos = check_for::<Self, _>("pos", pos, FINITE_NON_NEGATIVE)?.stored();
         let sink = self.as_ref()?;
         check_seek(pos, sink.speed())?;
         sink.try_seek(pos)

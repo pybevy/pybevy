@@ -68,6 +68,14 @@ pub struct PyCustomComponent {
 
 #[pymethods]
 impl PyCustomComponent {
+    fn __bool__(&self, py: Python<'_>) -> PyResult<bool> {
+        self.check_valid()?;
+        if self.storage.validity.access_mode() == AccessMode::Write {
+            self.mark_changed()?;
+        }
+        self.storage.object.bind(py).is_truthy()
+    }
+
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.storage.object)
     }

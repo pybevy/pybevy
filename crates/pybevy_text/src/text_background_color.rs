@@ -35,9 +35,8 @@ impl PyTextBackgroundColor {
     }
 
     #[setter]
-    pub fn set_color(&mut self, color: PyColor) -> PyResult<()> {
-        let color = color.try_into()?;
-        self.as_mut()?.0 = color;
+    pub fn set_color(&mut self, color: IntoColorValue) -> PyResult<()> {
+        self.as_mut()?.0 = color.0;
         Ok(())
     }
 

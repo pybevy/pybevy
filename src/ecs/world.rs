@@ -99,6 +99,7 @@ use crate::{
         state::{
             PyOnEnterSchedule, PyOnExitSchedule, PyOnTransitionSchedule,
             canonicalize_state_schedule_label, canonicalize_transition_schedule_label,
+            state_schedule_qualified_name,
         },
         system::{SystemGcOwners, SystemGcRegistry},
         system_interpreter::{ObserverRuntimeSinks, new_main_one_shot_system},
@@ -1484,20 +1485,31 @@ impl PyWorld {
                 .map(ValidityFlag::suspend)
                 .transpose()?;
 
+            if !label.is_instance_of::<PyOnEnterSchedule>()
+                && !label.is_instance_of::<PyOnExitSchedule>()
+                && !label.is_instance_of::<PyOnTransitionSchedule>() {
+                return Err(PyTypeError::new_err(
+                    "run_schedule() requires a Stage, OnEnter, OnExit, or OnTransition schedule label",
+                ));
+            }
+            let qualified_name = state_schedule_qualified_name(&label)?;
             let schedule = if let Ok(on_enter) = label.cast::<PyOnEnterSchedule>() {
                 EitherStateSchedule::State(canonicalize_state_schedule_label(
                     &world,
                     on_enter.borrow().to_bevy_label(py)?,
+                    &qualified_name,
                 ))
             } else if let Ok(on_exit) = label.cast::<PyOnExitSchedule>() {
                 EitherStateSchedule::State(canonicalize_state_schedule_label(
                     &world,
                     on_exit.borrow().to_bevy_label(py)?,
+                    &qualified_name,
                 ))
             } else if let Ok(on_transition) = label.cast::<PyOnTransitionSchedule>() {
                 EitherStateSchedule::Transition(canonicalize_transition_schedule_label(
                     &world,
                     on_transition.borrow().to_bevy_label(py)?,
+                    &qualified_name,
                 ))
             } else {
                 return Err(PyTypeError::new_err(

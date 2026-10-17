@@ -5,6 +5,7 @@ from typing import ClassVar, Literal
 
 from pybevy.assets import Asset
 from pybevy.assets import Handle as AssetHandle
+from pybevy.collections import LiveList
 
 class ShaderImport:
     """
@@ -359,24 +360,24 @@ class Shader(Asset):
         """
 
     @property
-    def imports(self) -> list[ShaderImport]:
+    def imports(self) -> LiveList[ShaderImport]:
         """
-        Get the list of imports this shader depends on.
+        Get the live list of imports this shader depends on.
 
         Returns:
-        List of ShaderImport instances representing shader dependencies
+        Live list of ShaderImport values; edits write through to the shader
         """
 
     @imports.setter
     def imports(self, value: list[ShaderImport]) -> None: ...
 
     @property
-    def shader_defs(self) -> list[ShaderDefVal]:
+    def shader_defs(self) -> LiveList[ShaderDefVal]:
         """
-        Get the shader preprocessor definitions.
+        Get the live list of shader preprocessor definitions.
 
         Returns:
-        List of ShaderDefVal instances representing shader defines
+        Live list of ShaderDefVal values; edits write through to the shader
         """
 
     @shader_defs.setter

@@ -139,7 +139,16 @@ pub enum PyGizmoLineStyle {
     },
 }
 
-impl Eq for PyGizmoLineStyle {}
+// Equality is float equality, so 0.0 == -0.0 must hash alike; NaN never compares equal.
+fn scale_hash_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0_f32.to_bits()
+    } else if value.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
 
 impl Hash for PyGizmoLineStyle {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -151,8 +160,8 @@ impl Hash for PyGizmoLineStyle {
                 line_scale,
             } => {
                 2_u64.hash(state);
-                gap_scale.to_bits().hash(state);
-                line_scale.to_bits().hash(state);
+                scale_hash_bits(*gap_scale).hash(state);
+                scale_hash_bits(*line_scale).hash(state);
             }
         }
     }

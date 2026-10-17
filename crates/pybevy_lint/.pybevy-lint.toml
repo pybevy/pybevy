@@ -40,6 +40,10 @@ path = "ecs.ResMut"
 reason = "attribute getters and setters call arbitrary Python that can re-enter the same proxy"
 
 [[validation.shared_borrow_types]]
+path = "ecs.Local"
+reason = "value properties, constructors, copy callbacks and finalizers can re-enter the same proxy"
+
+[[validation.shared_borrow_types]]
 path = "ecs.CustomComponent"
 reason = "attribute getters and setters call arbitrary Python that can re-enter the same proxy"
 
@@ -3070,6 +3074,66 @@ reason = "private generated indexed adapter structurally implements the public L
 code = "E006"
 path = "gltf.GltfMesh"
 reason = "private generated indexed adapter structurally implements the public LiveSequence[GltfPrimitive] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.Gltf"
+message = "property 'Gltf::scenes' type mismatch: Rust='PyResult < PyGltfSceneHandles >' vs Python='LiveList[Handle]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.Gltf"
+message = "property 'Gltf::meshes' type mismatch: Rust='PyResult < PyGltfMeshHandles >' vs Python='LiveList[Handle]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.Gltf"
+message = "property 'Gltf::materials' type mismatch: Rust='PyResult < PyGltfMaterialHandles >' vs Python='LiveList[Handle[GltfMaterial]]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle[GltfMaterial]] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.Gltf"
+message = "property 'Gltf::nodes' type mismatch: Rust='PyResult < PyGltfNodeHandles >' vs Python='LiveList[Handle]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.Gltf"
+message = "property 'Gltf::skins' type mismatch: Rust='PyResult < PyGltfSkinHandles >' vs Python='LiveList[Handle]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.Gltf"
+message = "property 'Gltf::animations' type mismatch: Rust='PyResult < PyAnimationClipHandles >' vs Python='LiveList[Handle[AnimationClip]]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle[AnimationClip]] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.GltfNode"
+message = "property 'GltfNode::children' type mismatch: Rust='PyResult < PyGltfNodeHandles >' vs Python='LiveList[Handle]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "gltf.GltfSkin"
+message = "property 'GltfSkin::joints' type mismatch: Rust='PyResult < PyGltfNodeHandles >' vs Python='LiveList[Handle]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[Handle] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "shader.Shader"
+message = "property 'Shader::imports' type mismatch: Rust='PyResult < PyShaderImports >' vs Python='LiveList[ShaderImport]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[ShaderImport] protocol"
+
+[[validation.exceptions]]
+code = "E006"
+path = "shader.Shader"
+message = "property 'Shader::shader_defs' type mismatch: Rust='PyResult < PyShaderDefs >' vs Python='LiveList[ShaderDefVal]'"
+reason = "private generated indexed adapter structurally implements the public LiveList[ShaderDefVal] protocol"
 
 [[validation.exceptions]]
 code = "E006"

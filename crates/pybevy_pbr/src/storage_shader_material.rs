@@ -7,7 +7,7 @@ use bevy::{
 use pybevy_core::{
     AssetInputConverter, AssetStorage, ComponentStorage, FieldStorage, HandleArg, LogicalTypeId,
     PyComponent, PyHandle, PyMaterial, ensure_asset_type, extract_handle_from_any,
-    public_error::shader_texture_slot_out_of_range,
+    public_error::{MATERIAL_TYPE_MISMATCH, shader_texture_slot_out_of_range},
 };
 use pybevy_image::sampler_descriptor::PyImageSamplerDescriptor;
 use pybevy_macros::{pyasset, pycomponent};
@@ -411,9 +411,7 @@ impl PyMeshMaterial3dStorageShader {
         if let Some(expected) = self.logical_type_id
             && logical_type_id != Some(expected)
         {
-            return Err(PyTypeError::new_err(
-                "Material type mismatch: the handle is untyped or belongs to a different @material class",
-            ));
+            return Err(PyTypeError::new_err(MATERIAL_TYPE_MISMATCH));
         }
         self.as_mut()?.0 = handle;
         Ok(())
@@ -431,9 +429,7 @@ impl PyMeshMaterial3dStorageShader {
     ) -> PyResult<Py<Self>> {
         let logical_type_id = LogicalTypeId::new(logical_type_id);
         if slf.borrow(py).logical_type_id != Some(logical_type_id) {
-            return Err(PyTypeError::new_err(
-                "Material type mismatch: the handle is untyped or belongs to a different @material class",
-            ));
+            return Err(PyTypeError::new_err(MATERIAL_TYPE_MISMATCH));
         }
         Ok(slf)
     }

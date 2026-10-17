@@ -35,7 +35,7 @@ use pyo3::{
     PyClass, PyClassInitializer, PyTraverseError, PyVisit,
     exceptions::{PyAttributeError, PyRuntimeError, PyTypeError},
     prelude::*,
-    types::{PyDict, PyType},
+    types::{PyBool, PyDict, PyType},
 };
 
 use super::{
@@ -614,6 +614,29 @@ impl PyLazyWrapperProxy {
             Ok(method) => method.call0()?.extract(),
             Err(error) if error.is_instance_of::<PyAttributeError>(self_.py()) => {
                 this.__repr__(self_.py())
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn __bool__(self_: &Bound<'_, Self>) -> PyResult<bool> {
+        let this = self_.borrow();
+        this.check_valid()?;
+        let py = self_.py();
+        match this.class_attribute(py, "__bool__") {
+            Ok(attribute) => {
+                let result = this.bind_class_attribute(self_, attribute)?.call0()?;
+                Ok(result.cast::<PyBool>()?.is_true())
+            }
+            Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
+                match this.class_attribute(py, "__len__") {
+                    Ok(attribute) => {
+                        let method = this.bind_class_attribute(self_, attribute)?;
+                        Ok(method.call0()?.extract::<usize>()? != 0)
+                    }
+                    Err(error) if error.is_instance_of::<PyAttributeError>(py) => Ok(true),
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => Err(error),
         }

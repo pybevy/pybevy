@@ -1405,7 +1405,7 @@ pub fn validate_shared_borrow_receivers(rust: &PyClassDef, reason: &str) -> Vec<
     }
 
     for property in &rust.properties {
-        if property.has_setter {
+        if property.has_setter && property.setter_mutability == SelfMutability::RefMut {
             diagnostics.push(shared_borrow_diagnostic(
                 format!(
                     "setter '{}::{}' takes a mutable receiver on a shared-borrow type",

@@ -7,10 +7,12 @@
 mod generated_bindings;
 pub mod material_shader_variants;
 pub mod packed_uniform;
+pub mod sampler_binding;
 pub mod shader_def_registry;
 pub mod storage_element;
 pub mod storage_material;
 pub mod texture_binding;
+
 use std::{
     collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
@@ -647,7 +649,7 @@ pub fn sync_shader_handles(
 }
 
 #[cfg(test)]
-mod material_import_validation_tests {
+mod tests {
     use bevy::{
         MinimalPlugins,
         app::{App, Last},
@@ -655,6 +657,16 @@ mod material_import_validation_tests {
     };
 
     use super::*;
+
+    fn extension(frag: Option<&str>, type_id: Option<u64>) -> ShaderMaterialExtension {
+        ShaderMaterialExtension {
+            fragment_shader_path: frag.map(str::to_string),
+            logical_type_id: type_id,
+            shader_defs: 0b01,
+            shader_def_names: vec![format!("FLAG_{}", type_id.unwrap_or(0))],
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn invalid_native_shader_path_does_not_panic_in_sync_system() {
@@ -723,21 +735,6 @@ mod material_import_validation_tests {
         let error = validate_material_shader_path("shaders/glow.spv").unwrap_err();
         assert!(error.contains("must use a .wesl or .wgsl asset"), "{error}");
     }
-}
-
-#[cfg(test)]
-mod key_tests {
-    use super::*;
-
-    fn extension(frag: Option<&str>, type_id: Option<u64>) -> ShaderMaterialExtension {
-        ShaderMaterialExtension {
-            fragment_shader_path: frag.map(str::to_string),
-            logical_type_id: type_id,
-            shader_defs: 0b01,
-            shader_def_names: vec![format!("FLAG_{}", type_id.unwrap_or(0))],
-            ..Default::default()
-        }
-    }
 
     #[test]
     fn two_classes_sharing_one_shader_get_distinct_keys() {
@@ -763,5 +760,3 @@ mod key_tests {
         );
     }
 }
-
-pub mod sampler_binding;

@@ -1,11 +1,16 @@
 use bevy::pbr::ScreenSpaceTransmission;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, domain::IntegerInput};
 use pybevy_macros::pycomponent;
 use pyo3::prelude::*;
 
 use crate::screen_space_transmission_quality::PyScreenSpaceTransmissionQuality;
 
-#[pycomponent(ScreenSpaceTransmission, bridge)]
+// Each step is a full-screen copy and pass, up to one per transmissive mesh; cap the stall.
+#[pycomponent(
+    ScreenSpaceTransmission,
+    bridge,
+    domains = [steps => [range_inclusive(0.0, 1024.0)]]
+)]
 #[pyclass(name = "ScreenSpaceTransmission", module = "pybevy.pbr", extends = PyComponent)]
 pub struct PyScreenSpaceTransmission {
     pub(crate) storage: ComponentStorage<ScreenSpaceTransmission>,
@@ -16,18 +21,18 @@ impl PyScreenSpaceTransmission {
     #[new]
     #[pyo3(signature = (
         *,
-        steps = 1,
+        steps = IntegerInput::new(1),
         quality = PyScreenSpaceTransmissionQuality::Medium
     ))]
     pub fn new(
-        steps: usize,
+        steps: IntegerInput<usize>,
         quality: PyScreenSpaceTransmissionQuality,
-    ) -> PyClassInitializer<Self> {
-        Self::from_owned(ScreenSpaceTransmission {
-            steps,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        Ok(Self::from_owned(ScreenSpaceTransmission {
+            steps: Self::check_steps(steps)?.stored(),
             quality: quality.into(),
         })
-        .into()
+        .into())
     }
 
     #[getter]
@@ -36,7 +41,8 @@ impl PyScreenSpaceTransmission {
     }
 
     #[setter]
-    pub fn set_steps(&mut self, steps: usize) -> PyResult<()> {
+    pub fn set_steps(&mut self, steps: IntegerInput<usize>) -> PyResult<()> {
+        let steps = Self::check_steps(steps)?.stored();
         self.as_mut()?.steps = steps;
         Ok(())
     }

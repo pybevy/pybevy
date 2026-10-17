@@ -542,16 +542,16 @@ class Timer:
     """
 
     def __init__(
-        self, duration: Duration | None = None, mode: TimerMode = ...
+        self, duration: Duration = timedelta(0), mode: TimerMode = ...
     ) -> None:
         """Create a new timer.
 
-        If called with no arguments, creates a timer with duration 0.0 and
+        If called with no arguments, creates a timer with a zero duration and
         TimerMode.Once (equivalent to Bevy's Timer::default()).
 
         Args:
             duration: Timer duration - can be timedelta, float (seconds), or int (seconds).
-                     Defaults to 0.0 if not provided.
+                     Defaults to zero. None is rejected.
             mode: Timer mode - TimerMode.Once or TimerMode.Repeating. Defaults to Once.
         """
 

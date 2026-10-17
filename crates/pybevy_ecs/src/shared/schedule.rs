@@ -228,11 +228,10 @@ fn push_unique(labels: &mut Vec<SystemSetTarget>, label: SystemSetTarget) {
     }
 }
 
-/// Exact identity of one interpreter-defined state type.
+/// App-local identity of one interpreter-defined state machine.
 ///
-/// Adapters map their stable type-object identity to this integer key. The
-/// value is opaque to the shared schedule layer and is only meaningful for one
-/// interpreter lifetime.
+/// Raw adapter keys are canonicalized to registry-issued IDs before execution.
+/// Registry IDs remain distinct when an interpreter reuses a class address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StateMachineId(usize);
 

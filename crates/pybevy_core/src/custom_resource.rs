@@ -98,6 +98,21 @@ impl CustomResourceRegistry {
             .map(|(name, id)| (name.as_str(), *id))
     }
 
+    /// Forget a retired resource channel and all of its type aliases.
+    pub fn unregister(&mut self, component_id: ComponentId) {
+        let removed: Vec<_> = self
+            .by_type
+            .iter()
+            .filter_map(|(key, id)| (*id == component_id).then_some(*key))
+            .collect();
+        for key in removed {
+            self.by_type.remove(&key);
+            self.alias_names.remove(&key);
+            self.alias_generations.remove(&key);
+        }
+        self.by_qualified_name.retain(|_, id| *id != component_id);
+    }
+
     /// Number of interpreter type identities retained for live/rollback generations.
     pub fn alias_count(&self) -> usize {
         self.by_type.len()
@@ -456,6 +471,29 @@ mod tests {
         let registry = world.resource::<CustomResourceRegistry>();
         assert_eq!(registry.get(0x1000), Some(first.id()));
         assert_eq!(registry.get(0x2000), Some(first.id()));
+    }
+
+    #[test]
+    fn unregister_removes_only_the_retired_channel_and_all_aliases() {
+        let mut world = World::new();
+        let first = register(&mut world, 0x1000, Some("game.Settings"));
+        register(&mut world, 0x2000, Some("game.Settings"));
+        let other = register(&mut world, 0x3000, Some("other.Settings"));
+        world
+            .resource_mut::<CustomResourceRegistry>()
+            .unregister(first.id());
+        let registry = world.resource::<CustomResourceRegistry>();
+        assert_eq!(registry.get(0x1000), None);
+        assert_eq!(registry.get(0x2000), None);
+        assert_eq!(registry.id_by_qualified_name("game.Settings"), None);
+        assert_eq!(registry.get(0x3000), Some(other.id()));
+        assert_eq!(
+            registry.id_by_qualified_name("other.Settings"),
+            Some(other.id())
+        );
+        let restored = register(&mut world, 0x1000, Some("game.Settings"));
+        assert!(matches!(restored, ResourceRegisterOutcome::Registered(_)));
+        assert_ne!(restored.id(), first.id());
     }
 
     #[test]

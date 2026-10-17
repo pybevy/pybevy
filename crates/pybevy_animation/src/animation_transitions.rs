@@ -28,11 +28,11 @@ impl PyAnimationTransitions {
         &mut self,
         player: &mut PyAnimationPlayer,
         new_animation: &PyAnimationNodeIndex,
-        transition_duration: f64,
+        transition_duration: DurationInput,
     ) -> PyResult<PyActiveAnimation> {
         let duration = check_for::<Self, _>(
             "transition_duration",
-            DurationInput::Seconds(transition_duration),
+            transition_duration,
             FINITE_NON_NEGATIVE,
         )?
         .stored();

@@ -277,10 +277,11 @@ impl PySprite {
     pub fn custom_size(&self) -> PyResult<Option<PyVec2>> {
         Ok(self
             .storage
-            .borrow_optional_field(
+            .borrow_validated_optional_field(
                 "Sprite.custom_size",
                 |s| &s.custom_size,
                 |s| &mut s.custom_size,
+                Self::validate_custom_size,
             )?
             .map(<PyVec2 as FromBorrowedStorage<_>>::from_borrowed))
     }

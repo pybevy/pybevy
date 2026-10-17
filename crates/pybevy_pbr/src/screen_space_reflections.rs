@@ -1,5 +1,5 @@
 use bevy::pbr::ScreenSpaceReflections;
-use pybevy_core::{ComponentStorage, PyComponent};
+use pybevy_core::{ComponentStorage, PyComponent, domain::IntegerInput};
 use pybevy_macros::pycomponent;
 use pybevy_math::range::PyRange;
 use pyo3::prelude::*;
@@ -29,10 +29,10 @@ impl PyScreenSpaceReflections {
         min_perceptual_roughness = PyRange::from_range(0.08, 0.12),
         max_perceptual_roughness = PyRange::from_range(0.55, 0.6),
         thickness = 0.25,
-        linear_steps = 10,
+        linear_steps = IntegerInput::new(10),
         linear_march_exponent = 1.0,
         edge_fadeout = PyRange::from_range(0.0, 0.0),
-        bisection_steps = 5,
+        bisection_steps = IntegerInput::new(5),
         use_secant = true
     ))]
     #[allow(clippy::too_many_arguments)]
@@ -40,22 +40,24 @@ impl PyScreenSpaceReflections {
         min_perceptual_roughness: PyRange,
         max_perceptual_roughness: PyRange,
         thickness: f32,
-        linear_steps: u32,
+        linear_steps: IntegerInput<u32>,
         linear_march_exponent: f32,
         edge_fadeout: PyRange,
-        bisection_steps: u32,
+        bisection_steps: IntegerInput<u32>,
         use_secant: bool,
     ) -> PyResult<PyClassInitializer<Self>> {
         let thickness = Self::check_thickness(thickness)?;
+        let linear_steps = Self::check_linear_steps(linear_steps)?.stored();
+        let bisection_steps = Self::check_bisection_steps(bisection_steps)?.stored();
         let linear_march_exponent = Self::check_linear_march_exponent(linear_march_exponent)?;
         Ok(Self::from_owned(ScreenSpaceReflections {
             min_perceptual_roughness: min_perceptual_roughness.try_into()?,
             max_perceptual_roughness: max_perceptual_roughness.try_into()?,
             thickness,
-            linear_steps: Self::check_linear_steps(linear_steps)?,
+            linear_steps,
             linear_march_exponent,
             edge_fadeout: edge_fadeout.try_into()?,
-            bisection_steps: Self::check_bisection_steps(bisection_steps)?,
+            bisection_steps,
             use_secant,
         })
         .into())
@@ -119,8 +121,9 @@ impl PyScreenSpaceReflections {
     }
 
     #[setter]
-    pub fn set_linear_steps(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.linear_steps = Self::check_linear_steps(value)?;
+    pub fn set_linear_steps(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        let value = Self::check_linear_steps(value)?.stored();
+        self.as_mut()?.linear_steps = value;
         Ok(())
     }
 
@@ -142,8 +145,9 @@ impl PyScreenSpaceReflections {
     }
 
     #[setter]
-    pub fn set_bisection_steps(&mut self, value: u32) -> PyResult<()> {
-        self.as_mut()?.bisection_steps = Self::check_bisection_steps(value)?;
+    pub fn set_bisection_steps(&mut self, value: IntegerInput<u32>) -> PyResult<()> {
+        let value = Self::check_bisection_steps(value)?.stored();
+        self.as_mut()?.bisection_steps = value;
         Ok(())
     }
 

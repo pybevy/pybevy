@@ -91,6 +91,21 @@ impl StateTransitionPlan {
     }
 }
 
+/// Execute every machine through each phase before advancing the pass.
+pub fn run_state_transition_pass<E>(
+    plans: &[StateTransitionPlan],
+    mut execute: impl FnMut(usize, StateTransitionStep) -> Result<(), E>,
+) -> Result<(), E> {
+    for step in CHANGE_STEPS {
+        for (index, plan) in plans.iter().enumerate() {
+            if plan.steps().contains(step) {
+                execute(index, *step)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// App-local admission fence for an exclusive transition pass.
 #[derive(Clone, Debug, Default)]
 pub struct StateTransitionGate {
@@ -170,6 +185,42 @@ mod tests {
                 StateTransitionStep::RunExit,
                 StateTransitionStep::CleanupExited,
                 StateTransitionStep::RunTransition,
+            ]
+        );
+    }
+
+    #[test]
+    fn pass_commits_all_machines_before_exit_and_preserves_phase_order() {
+        let plans = [
+            StateTransitionPlan::change(),
+            StateTransitionPlan::initial_enter(),
+            StateTransitionPlan::conditional_identity(),
+            StateTransitionPlan::change(),
+        ];
+        let mut seen = Vec::new();
+        run_state_transition_pass(&plans, |index, step| {
+            seen.push((index, step));
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+        assert_eq!(
+            seen,
+            vec![
+                (0, StateTransitionStep::CommitNew),
+                (3, StateTransitionStep::CommitNew),
+                (0, StateTransitionStep::RunExit),
+                (3, StateTransitionStep::RunExit),
+                (0, StateTransitionStep::CleanupExited),
+                (3, StateTransitionStep::CleanupExited),
+                (0, StateTransitionStep::RunTransition),
+                (2, StateTransitionStep::RunTransition),
+                (3, StateTransitionStep::RunTransition),
+                (0, StateTransitionStep::RunEnter),
+                (1, StateTransitionStep::RunEnter),
+                (3, StateTransitionStep::RunEnter),
+                (0, StateTransitionStep::CleanupEntered),
+                (1, StateTransitionStep::CleanupEntered),
+                (3, StateTransitionStep::CleanupEntered),
             ]
         );
     }

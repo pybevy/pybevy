@@ -379,6 +379,7 @@ class On(Generic[Unpack[OnTypes]]):
     - On[EventType, ComponentType] - Only trigger if entity has single component
     - On[EventType, tuple[CompA, CompB, ...]] - Observe a custom entity event targeting any listed component
     - On[Add, ComponentType] - Observe component addition lifecycle events
+      Resource lifecycle registrations are unsupported and raise TypeError.
     - On[Insert, ComponentType] - Observe component insertion lifecycle events
     - On[Remove, ComponentType] - Observe component removal lifecycle events
     - On[Discard, ComponentType] - Observe component discard lifecycle events
@@ -811,6 +812,7 @@ class CustomComponent(Component):
     with @component) is queried from the ECS. Users typically don't need to
     reference this type directly - use the user's class type instead.
     """
+    def __bool__(self) -> bool: ...
 
 class LazyWrapperProxy:
     """Internal proxy for lazy component field access.
@@ -820,6 +822,7 @@ class LazyWrapperProxy:
     """
     @property  # type: ignore[misc]
     def __class__(self) -> type: ...
+    def __bool__(self) -> bool: ...
     def __len__(self) -> int:
         """Forward to the component class's `__len__`; TypeError if it defines none."""
     def __iter__(self) -> Iterator[object]:

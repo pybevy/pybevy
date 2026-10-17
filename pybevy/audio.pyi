@@ -317,12 +317,12 @@ class Pitch(Asset):
     def __copy__(self) -> Pitch: ...
     def __deepcopy__(self, memo: dict[int, object]) -> Pitch: ...
 
-    def __init__(self, frequency: float, duration: float) -> None:
+    def __init__(self, frequency: float, duration: timedelta | float | int) -> None:
         """Create a new Pitch asset.
 
         Args:
             frequency: Frequency in Hz (e.g., 440.0 for A4 note)
-            duration: Duration in seconds
+            duration: Duration as a timedelta or seconds
         """
 
     @property
@@ -338,8 +338,8 @@ class Pitch(Asset):
         """Get the duration in seconds."""
 
     @duration.setter
-    def duration(self, value: float) -> None:
-        """Set the duration in seconds."""
+    def duration(self, value: timedelta | float | int) -> None:
+        """Set the duration as a timedelta or seconds."""
 
 _AudioT = TypeVar("_AudioT", AudioSource, Pitch)
 
@@ -408,8 +408,8 @@ class AudioSink(Component):
     def position(self) -> timedelta:
         """Get current playback position."""
 
-    def try_seek(self, pos: timedelta) -> None:
-        """Seek to position in the audio stream.
+    def try_seek(self, pos: timedelta | float | int) -> None:
+        """Seek to position, a timedelta or seconds, in the audio stream.
 
         Needs a non-looping source whose decoder can seek. Raises
         ``RuntimeError`` for ``PlaybackMode.Loop`` and for formats whose decoder
@@ -474,8 +474,8 @@ class SpatialAudioSink(Component):
     def position(self) -> timedelta:
         """Get current playback position."""
 
-    def try_seek(self, pos: timedelta) -> None:
-        """Seek to position in the audio stream.
+    def try_seek(self, pos: timedelta | float | int) -> None:
+        """Seek to position, a timedelta or seconds, in the audio stream.
 
         Needs a non-looping source whose decoder can seek. Raises
         ``RuntimeError`` for ``PlaybackMode.Loop`` and for formats whose decoder
