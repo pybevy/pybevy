@@ -297,7 +297,6 @@ types = [
     "ui::ImageMeasure",
     "ui::LayoutConfig",
     "ui::LayoutContext",
-    "ui::LayoutError",
     "ui::MeasureArgs",
     "ui::NodeMeasure",
     "ui::TextMeasure",
@@ -352,9 +351,6 @@ types = [
     # bevy_audio internal types
     "audio::AudioLoader",
 
-    # bevy_sprite internal types
-    "sprite::TextureSlice",
-
     # bevy_mesh internal types
     "mesh::BaseMeshPipelineKey",
     "mesh::CapsuleUvProfile",
@@ -408,7 +404,6 @@ types = [
     "ecs::ComponentTicks",
     "ecs::ConditionWithAccess",
     "ecs::Dag",
-    "ecs::DefaultErrorHandler",
     "ecs::DefaultQueryFilters",
     "ecs::DynSystemParamState",
     "ecs::Edges",
@@ -558,7 +553,6 @@ types = [
     "render::ColorGradingUniform",
     "render::ComputePipelineId",
     "render::DefaultImageSampler",
-    "render::DepthAttachment",
     "render::DrawError",
     "render::DrawFunctionsInternal",
     "render::DynamicBindGroupLayoutEntries",
@@ -632,14 +626,13 @@ types = [
     "render::ViewUniformOffset",
     "render::ViewUniforms",
     "render::WgpuSettingsPriority",
-    "render::WindowSurfaces",
     "render::WriteBufferRangeError",
 
     # bevy_render - additional types not used in examples
     "render::AssetExtractionError",        # Render pipeline internal
     "render::BindGroupLayoutEntries",      # Render pipeline internal
     "render::BinnedRenderPhase",           # Render pipeline internal
-    "render::ExtractedInstances",          # Render pipeline internal
+    "extract::ExtractedInstances",         # Render pipeline internal
     "render::Pipeline",                    # Render pipeline internal
     "render::TextureView",                 # Render pipeline internal
 
@@ -666,7 +659,7 @@ types = [
     "pbr::ExtractedClusterConfig",
     "pbr::ExtractedClusterableObjects",
     "pbr::ExtractedDirectionalLight",
-    "pbr::FallbackBindlessResources",
+    "render::FallbackBindlessResources",
     "pbr::FogMeta",
     "pbr::ForwardDecalMaterialExtUniform",
     "pbr::GeneratorBindGroupLayouts",
@@ -685,16 +678,16 @@ types = [
     "pbr::LightProbesBuffer",
     "pbr::LightProbesUniform",
     "pbr::LightmapSlab",
-    "pbr::MaterialBindGroupBindlessAllocator",
+    "render::MaterialBindGroupBindlessAllocator",
     "pbr::MaterialBindGroupIndex",
-    "pbr::MaterialBindGroupNonBindlessAllocator",
+    "render::MaterialBindGroupNonBindlessAllocator",
     "pbr::MaterialBindGroupSlot",
     "pbr::MaterialBindingId",
-    "pbr::MaterialBindlessSlab",
+    "render::MaterialBindlessSlab",
     "pbr::MaterialExtensionKey",
     "pbr::MaterialExtensionPipeline",
     "pbr::MaterialPipelineSpecializer",
-    "pbr::MaterialSlab",
+    "render::MaterialSlab",
     "pbr::MaterialVertexShader",
     "pbr::MeshBindGroupPair",
     "pbr::MeshBindGroups",
