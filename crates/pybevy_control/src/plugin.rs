@@ -18,7 +18,7 @@ use bevy::{
     asset::UntypedAssetLoadFailedEvent,
     ecs::{message::Messages, schedule::ScheduleLabel},
     prelude::{IntoScheduleConfigs, Res, Resource, resource_exists},
-    render::{Render, RenderApp, RenderSystems},
+    render::{ExtractSchedule, Render, RenderApp, RenderSystems},
 };
 #[cfg(feature = "pyo3-runtime")]
 use pybevy_core::{PluginBuild, PyPlugin, ensure_asset_access_registry, repr::str_repr};
@@ -36,7 +36,10 @@ use crate::{
         analysis::CapturedFrames,
         camera::hold_capture_pose,
         depth::process_pending_depth_samples,
-        readiness::{RenderFrameReadiness, update_render_frame_readiness},
+        readiness::{
+            ExtractedRenderEpoch, RenderFrameReadiness, extract_render_frame_epoch,
+            update_render_frame_readiness,
+        },
         screenshot::{
             PendingScreenshotResponders, process_pending_screenshots, screenshot_captured_observer,
         },
@@ -274,6 +277,8 @@ pub fn install_render_frame_readiness(app: &mut App) {
     render_app
         .insert_resource(readiness.clone())
         .insert_resource(shader_errors.clone())
+        .init_resource::<ExtractedRenderEpoch>()
+        .add_systems(ExtractSchedule, extract_render_frame_epoch)
         .add_systems(
             Render,
             (update_render_frame_readiness, publish_shader_errors).after(RenderSystems::Render),

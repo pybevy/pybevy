@@ -76,6 +76,56 @@ pub fn merge_reexported_bevy_types(
     );
 }
 
+/// Keep the Rust classes a CLI type filter names: by Python or Rust name, or
+/// as the owner of a configured specialized receiver.
+pub fn retain_filtered_rust(classes: &mut Vec<PyClassDef>, filters: &[String], config: &Config) {
+    classes.retain(|class| {
+        filters.iter().any(|filter| {
+            class.python_name.eq_ignore_ascii_case(filter)
+                || class.rust_name.eq_ignore_ascii_case(filter)
+                || config
+                    .validation
+                    .specialized_receivers
+                    .iter()
+                    .any(|mapping| {
+                        mapping.rust_type == class.rust_name
+                            && mapping
+                                .path
+                                .split('[')
+                                .next()
+                                .and_then(|owner| owner.rsplit('.').next())
+                                .is_some_and(|owner| owner.eq_ignore_ascii_case(filter))
+                    })
+        })
+    });
+}
+
+/// Keep the stubs a CLI type filter names, plus the stubs of every retained
+/// Rust class, so filtering by a Rust name still finds its stub.
+pub fn retain_filtered_stubs(stubs: &mut Vec<PyClassDef>, rust: &[PyClassDef], filters: &[String]) {
+    let retained: HashSet<&str> = rust
+        .iter()
+        .map(|class| class.python_name.as_str())
+        .collect();
+    stubs.retain(|class| {
+        retained.contains(class.python_name.as_str())
+            || filters
+                .iter()
+                .any(|filter| class.python_name.eq_ignore_ascii_case(filter))
+    });
+}
+
+/// Drop classes whose public module is in `validation.excluded_modules`.
+pub fn retain_included_classes(classes: &mut Vec<PyClassDef>, config: &Config) {
+    classes.retain(|class| {
+        class
+            .python_module_path
+            .as_deref()
+            .or(class.module_path.as_deref())
+            .is_none_or(|module| !config.validation.excludes_module(module))
+    });
+}
+
 /// Parse all Rust files in the given directory and extract PyClass definitions
 pub fn parse_rust_files(path: &Path) -> Result<Vec<PyClassDef>> {
     rust_parser::parse_directory(path)

@@ -1,4 +1,10 @@
+use std::{
+    mem,
+    sync::{Arc, Mutex},
+};
+
 use bevy::{
+    diagnostic::FrameCount,
     ecs::{
         resource::Resource,
         schedule::{ScheduleCleanupPolicy, Schedules},
@@ -6,6 +12,10 @@ use bevy::{
     },
     input::{ButtonInput, keyboard::KeyCode},
     time::{Real, Time},
+};
+use pybevy_core::{
+    PendingReloadRequest, ReloadRequestMode, ReloadResult, publish_last_system_error_at,
+    publish_reload_failure,
 };
 use pybevy_reload::{
     EscalationTracker, HotReloadStats, MemoryOverlayVisible, ReloadGenerationSet, ReloadMode,
@@ -39,7 +49,7 @@ pub(crate) fn queue_schedule_compaction(world: &mut World, generations: Vec<u32>
 pub(crate) fn compact_retired_generation_systems(world: &mut World) {
     let generations = world
         .get_resource_mut::<PendingScheduleCompaction>()
-        .map(|mut pending| std::mem::take(&mut pending.0))
+        .map(|mut pending| mem::take(&mut pending.0))
         .unwrap_or_default();
     if generations.is_empty() {
         return;
@@ -79,26 +89,24 @@ fn publish_reload_diagnostic(
     running_previous_generation: bool,
 ) {
     let timestamp = diagnostic_timestamp(world);
-    let sequence = pybevy_core::publish_reload_failure(
+    let sequence = publish_reload_failure(
         world,
         message.clone(),
         traceback.clone(),
         running_previous_generation,
     );
-    pybevy_core::publish_last_system_error_at(world, message, traceback, timestamp, sequence);
+    publish_last_system_error_at(world, message, traceback, timestamp, sequence);
 }
 
 fn mirror_reload_diagnostic(world: &mut World, message: String, traceback: Option<String>) {
     let failure_sequence = world
-        .get_resource::<pybevy_core::ReloadResult>()
+        .get_resource::<ReloadResult>()
         .filter(|result| result.failed)
         .map(|result| result.failure_sequence);
     match failure_sequence {
         Some(sequence) => {
             let timestamp = diagnostic_timestamp(world);
-            pybevy_core::publish_last_system_error_at(
-                world, message, traceback, timestamp, sequence,
-            );
+            publish_last_system_error_at(world, message, traceback, timestamp, sequence);
         }
         None => publish_reload_diagnostic(world, message, traceback, true),
     }
@@ -108,7 +116,7 @@ fn run_definition_reload_attempt(
     world: &mut World,
     loader_func: Py<PyAny>,
     mode: ReloadMode,
-    error_state: std::sync::Arc<std::sync::Mutex<Vec<PyErr>>>,
+    error_state: Arc<Mutex<Vec<PyErr>>>,
     hot_reload_state: HotReloadState,
 ) {
     // Keep the transaction's Python context alive across native-host attachments.
@@ -126,7 +134,7 @@ fn run_definition_reload_attempt(
         });
         let result_succeeded = result.is_ok();
         let failure_preserved_scene = world
-            .get_resource::<pybevy_core::ReloadResult>()
+            .get_resource::<ReloadResult>()
             .is_some_and(|reload| reload.failed && reload.running_previous_generation);
         if let Err(error) = transaction.finish(result_succeeded) {
             publish_reload_diagnostic(
@@ -191,10 +199,7 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
         // corrupt GPU buffer state and permanently degrade FPS.
         const RELOAD_COOLDOWN_FRAMES: u32 = 5;
 
-        let current_frame = world
-            .get_resource::<bevy::diagnostic::FrameCount>()
-            .map(|f| f.0)
-            .unwrap_or(0);
+        let current_frame = world.get_resource::<FrameCount>().map(|f| f.0).unwrap_or(0);
         let last_reload_frame = world
             .get_resource::<HotReloadStats>()
             .map(|s| s.last_reload_frame)
@@ -259,13 +264,13 @@ pub(crate) fn handle_f5_reload_system(world: &mut World) {
 /// System that runs each frame to check for hot reload requests
 pub fn check_hot_reload_system(world: &mut World) {
     // Check for MCP reload requests (cross-crate mailbox from pybevy_core)
-    if let Some(mut mcp_request) = world.get_resource_mut::<pybevy_core::PendingReloadRequest>()
+    if let Some(mut mcp_request) = world.get_resource_mut::<PendingReloadRequest>()
         && let Some(mcp_mode) = mcp_request.mode.take()
         && let Some(reload_res) = world.get_resource::<HotReloadResource>()
     {
         let mode = match mcp_mode {
-            pybevy_core::ReloadRequestMode::Full => ReloadMode::Full,
-            pybevy_core::ReloadRequestMode::Partial => ReloadMode::Partial,
+            ReloadRequestMode::Full => ReloadMode::Full,
+            ReloadRequestMode::Partial => ReloadMode::Partial,
         };
         reload_res.state.request_reload(mode);
     }
@@ -291,8 +296,8 @@ pub fn check_hot_reload_system(world: &mut World) {
         let reload_res = world.resource::<HotReloadResource>();
         let reload_info = reload_res.state.take_pending_reload(py);
 
-        let (loader_func, mode) = match reload_info {
-            Some((func, mode)) => (func, mode),
+        let (loader_func, request) = match reload_info {
+            Some((func, request)) => (func, request),
             None => return None, // Already consumed by another thread
         };
 
@@ -300,11 +305,12 @@ pub fn check_hot_reload_system(world: &mut World) {
         let error_state = reload_res.error_state.clone();
         let hot_reload_state = reload_res.state.clone();
 
-        Some((loader_func, mode, error_state, hot_reload_state))
+        Some((loader_func, request, error_state, hot_reload_state))
     });
 
     // If we got the loader func, construct runtime and perform reload
-    if let Some((loader_func, mode, error_state, hot_reload_state)) = reload_data {
+    if let Some((loader_func, request, error_state, hot_reload_state)) = reload_data {
+        let mode = request.mode();
         // The failed Full rolled modules back; a partial import would reuse them.
         if mode == ReloadMode::Partial
             && world

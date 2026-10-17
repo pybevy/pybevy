@@ -1572,6 +1572,10 @@ fields as JSON arrays. Keys that cannot be unique object keys become an array of
 key/value pairs instead; this pair form is read-only. Writes accept dictionary
 objects, keep omitted dataclass fields, and preserve array dtypes. Cycles and
 nesting beyond 64 levels return `{"serialization_error": ...}` markers.
+Python integers from `-2**63` through `2**64 - 1` remain exact JSON numbers.
+Larger or smaller integers produce a `serialization_error` marker instead of
+an approximate float. Inspect those values in Python; omit marked fields from
+readback patches.
 
 Enums use one tagged JSON shape across reads and mutation echoes. Every enum
 object has `variant`; named payload fields keep their native names, one tuple

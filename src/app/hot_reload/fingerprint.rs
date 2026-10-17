@@ -2,12 +2,16 @@
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+use pybevy_ecs::shared::schedule::ConditionExpr;
 use pybevy_reload::DefsFingerprint;
 use pyo3::{prelude::*, types::PyType};
 
 use crate::{
     app::{PyStage, chained_systems::PyChainedSystems},
-    ecs::{conditional_system::PyConditionalSystem, system_config::PySystemConfig},
+    ecs::{
+        conditional_system::{PyConditionalSystem, extract_condition_expr},
+        system_config::PySystemConfig,
+    },
 };
 
 /// Hash a code object by its fields (recursing into nested code objects).
@@ -83,6 +87,20 @@ fn hash_callable_code(obj: &Bound<'_, PyAny>, hasher: &mut impl Hasher) {
     }
 }
 
+fn hash_condition_code(
+    py: Python<'_>,
+    expression: &ConditionExpr<Py<PyAny>>,
+    hasher: &mut impl Hasher,
+) {
+    expression
+        .map_ref(&mut |condition| {
+            let mut leaf = DefaultHasher::new();
+            hash_callable_code(condition.bind(py), &mut leaf);
+            leaf.finish()
+        })
+        .hash(hasher);
+}
+
 /// Hash a registered system into `hasher`, unwrapping conditional and
 /// chained wrappers the same way `system_names` does.
 pub(super) fn hash_system_code(
@@ -96,13 +114,14 @@ pub(super) fn hash_system_code(
             hash_callable_code(stage.bind(py), hasher);
         }
         for condition in &config.conditions {
-            hash_callable_code(condition.bind(py), hasher);
+            match extract_condition_expr(condition.clone_ref(py)) {
+                Ok(expression) => hash_condition_code(py, &expression, hasher),
+                Err(_) => hash_callable_code(condition.bind(py), hasher),
+            }
         }
     } else if let Ok(conditional) = sys_bound.extract::<PyConditionalSystem>() {
         hash_callable_code(conditional.system.bind(py), hasher);
-        conditional.condition.for_each_leaf(&mut |condition| {
-            hash_callable_code(condition.bind(py), hasher);
-        });
+        hash_condition_code(py, &conditional.condition, hasher);
     } else if let Ok(chained) = sys_bound.extract::<PyChainedSystems>() {
         // Members may be configs or nested chains, so unwrap them the same way.
         for inner in chained.systems.bind(py).iter() {

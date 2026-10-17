@@ -19,6 +19,7 @@ pub enum ReloadMode {
 struct ReloadRequestInner {
     pending: Option<ReloadMode>,
     last_mode: ReloadMode,
+    active_mode: Option<ReloadMode>,
 }
 
 /// Thread-safe, last-request-wins mailbox for reload requests.
@@ -30,12 +31,32 @@ pub struct ReloadRequestState {
     inner: Arc<Mutex<ReloadRequestInner>>,
 }
 
+/// Keeps the consumed request's import mode stable until the attempt ends.
+#[derive(Debug)]
+pub struct ReloadRequest {
+    mode: ReloadMode,
+    state: ReloadRequestState,
+}
+
+impl ReloadRequest {
+    pub fn mode(&self) -> ReloadMode {
+        self.mode
+    }
+}
+
+impl Drop for ReloadRequest {
+    fn drop(&mut self) {
+        lock_or_recover(&self.state.inner).active_mode = None;
+    }
+}
+
 impl Default for ReloadRequestState {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(ReloadRequestInner {
                 pending: None,
                 last_mode: ReloadMode::Full,
+                active_mode: None,
             })),
         }
     }
@@ -60,9 +81,18 @@ impl ReloadRequestState {
         true
     }
 
-    /// Consume the pending request, if any.
-    pub fn take(&self) -> Option<ReloadMode> {
-        lock_or_recover(&self.inner).pending.take()
+    /// Consume an idle mailbox's request and hold its mode for the attempt.
+    pub fn take(&self) -> Option<ReloadRequest> {
+        let mut inner = lock_or_recover(&self.inner);
+        if inner.active_mode.is_some() {
+            return None;
+        }
+        let mode = inner.pending.take()?;
+        inner.active_mode = Some(mode);
+        Some(ReloadRequest {
+            mode,
+            state: self.clone(),
+        })
     }
 
     pub fn is_pending(&self) -> bool {
@@ -74,17 +104,32 @@ impl ReloadRequestState {
         lock_or_recover(&self.inner).last_mode
     }
 
+    /// Import policy of the active attempt, or the most recent idle request.
+    pub fn import_mode(&self) -> ReloadMode {
+        let inner = lock_or_recover(&self.inner);
+        inner.active_mode.unwrap_or(inner.last_mode)
+    }
+
     /// Make the loader import with `mode` for the attempt in progress.
-    pub fn set_last_mode(&self, mode: ReloadMode) {
-        lock_or_recover(&self.inner).last_mode = mode;
+    pub fn set_import_mode(&self, mode: ReloadMode) {
+        let mut inner = lock_or_recover(&self.inner);
+        if let Some(active) = &mut inner.active_mode {
+            *active = mode;
+        } else {
+            inner.last_mode = mode;
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc, Barrier,
-        atomic::{AtomicU32, Ordering},
+    use std::{
+        panic::{AssertUnwindSafe, catch_unwind},
+        sync::{
+            Arc, Barrier,
+            atomic::{AtomicU32, AtomicUsize, Ordering},
+        },
+        thread,
     };
 
     use bevy::{
@@ -102,7 +147,7 @@ mod tests {
         let requests = ReloadRequestState::default();
         assert!(!requests.is_pending());
         assert_eq!(requests.last_mode(), ReloadMode::Full);
-        assert_eq!(requests.take(), None);
+        assert!(requests.take().is_none());
     }
 
     #[test]
@@ -111,8 +156,11 @@ mod tests {
         requests.request(ReloadMode::Full);
         requests.request(ReloadMode::Partial);
 
-        assert_eq!(requests.take(), Some(ReloadMode::Partial));
-        assert_eq!(requests.take(), None);
+        assert_eq!(
+            requests.take().map(|request| request.mode()),
+            Some(ReloadMode::Partial)
+        );
+        assert!(requests.take().is_none());
         assert_eq!(requests.last_mode(), ReloadMode::Partial);
     }
 
@@ -121,20 +169,23 @@ mod tests {
         let requests = ReloadRequestState::default();
         assert!(requests.request_if_idle(ReloadMode::Partial));
         assert!(!requests.request_if_idle(ReloadMode::Full));
-        assert_eq!(requests.take(), Some(ReloadMode::Partial));
+        assert_eq!(
+            requests.take().map(|request| request.mode()),
+            Some(ReloadMode::Partial)
+        );
     }
 
     #[test]
     fn concurrent_request_if_idle_admits_exactly_one_request() {
         let requests = ReloadRequestState::default();
         let barrier = Arc::new(Barrier::new(8));
-        let admitted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let admitted = Arc::new(AtomicUsize::new(0));
         let threads: Vec<_> = (0..8)
             .map(|index| {
                 let requests = requests.clone();
                 let barrier = barrier.clone();
                 let admitted = admitted.clone();
-                std::thread::spawn(move || {
+                thread::spawn(move || {
                     barrier.wait();
                     let mode = if index % 2 == 0 {
                         ReloadMode::Full
@@ -154,6 +205,44 @@ mod tests {
         assert_eq!(admitted.load(Ordering::SeqCst), 1);
         assert!(requests.take().is_some());
         assert!(!requests.is_pending());
+    }
+
+    #[test]
+    fn active_import_mode_ignores_later_requests_and_preserves_the_next_one() {
+        for mode in [ReloadMode::Full, ReloadMode::Partial] {
+            let requests = ReloadRequestState::default();
+            requests.request(mode);
+            let active = requests.take().unwrap();
+            let next = if mode == ReloadMode::Full {
+                ReloadMode::Partial
+            } else {
+                ReloadMode::Full
+            };
+            assert!(requests.request_if_idle(next));
+            assert_eq!(requests.last_mode(), next);
+            assert_eq!(requests.import_mode(), mode);
+            assert!(requests.take().is_none());
+            drop(active);
+            assert_eq!(requests.import_mode(), next);
+            assert_eq!(requests.take().unwrap().mode(), next);
+            assert!(!requests.is_pending());
+        }
+    }
+
+    #[test]
+    fn import_override_and_unwinding_leave_the_next_request_intact() {
+        let requests = ReloadRequestState::default();
+        requests.request(ReloadMode::Partial);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _active = requests.take().unwrap();
+            requests.set_import_mode(ReloadMode::Full);
+            assert!(requests.request_if_idle(ReloadMode::Partial));
+            assert_eq!(requests.import_mode(), ReloadMode::Full);
+            panic!("failed reload attempt");
+        }));
+        assert!(result.is_err());
+        assert_eq!(requests.import_mode(), ReloadMode::Partial);
+        assert_eq!(requests.take().unwrap().mode(), ReloadMode::Partial);
     }
 
     #[test]

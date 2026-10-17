@@ -11,7 +11,7 @@ import threading
 import weakref
 from collections.abc import Callable, Mapping, MutableMapping
 from contextvars import ContextVar
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from types import CodeType, FunctionType, ModuleType
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -144,7 +144,9 @@ class ModuleReloadTransaction:
         ] = []
         self._resource_aliases: dict[object, _ResourceAssignmentAliases] = {}
         self._component_annotations: dict[type, dict[str, object]] = {}
-        self._class_bodies: dict[type, dict[str, object]] = {}
+        self._class_bodies: dict[
+            type, tuple[type, dict[str, object], Callable[[], None] | None]
+        ] = {}
         self._import_graph_updates: dict[int, tuple[ImportGraph, ImportGraph]] = {}
         self._entrypoint_fingerprint: str | None = None
         self._flushed: set[str] = set()
@@ -173,8 +175,14 @@ class ModuleReloadTransaction:
     ) -> None:
         self._component_annotations[component_type] = dict(annotations)
 
-    def stage_class_body(self, target: type, body: Mapping[str, object]) -> None:
-        self._class_bodies[target] = dict(body)
+    def stage_class_body(
+        self,
+        target: type,
+        source: type,
+        body: Mapping[str, object],
+        finalize: Callable[[], None] | None,
+    ) -> None:
+        self._class_bodies[target] = (source, dict(body), finalize)
 
     def record_flush(self, project_dir: str, names: list[str]) -> None:
         root = os.path.realpath(project_dir) + os.sep
@@ -215,8 +223,10 @@ class ModuleReloadTransaction:
                     cast(_ResourceValidation, validation).publish(aliases)
                 for component_type, annotations in self._component_annotations.items():
                     type.__setattr__(component_type, "__annotations__", annotations)
-                for target, body in self._class_bodies.items():
-                    _adopt_class_body(target, body)
+                for target, (source, body, finalize) in self._class_bodies.items():
+                    _adopt_class_body(target, source, body)
+                    if finalize is not None:
+                        finalize()
                 for graph, candidate in self._import_graph_updates.values():
                     graph.publish(candidate)
                 if self._entrypoint_fingerprint is not None:
@@ -394,14 +404,17 @@ def stage_component_annotations(
 
 
 def _is_class_body_member(name: str) -> bool:
+    # Construction and assignment guards are restored after user-body adoption.
     return (
         name not in _CLASS_IDENTITY_MEMBERS
-        and name not in _PYBEVY_CLASS_MEMBERS
+        and (name not in _PYBEVY_CLASS_MEMBERS or name in {"__new__", "__setattr__"})
         and not name.startswith("__pybevy_")
     )
 
 
 def _functions_of(value: object) -> list[FunctionType]:
+    if isinstance(value, cached_property):
+        value = value.func
     if isinstance(value, classmethod | staticmethod):
         value = value.__func__
     if isinstance(value, property):
@@ -413,22 +426,26 @@ def _functions_of(value: object) -> list[FunctionType]:
     return [value] if isinstance(value, FunctionType) else []
 
 
-def _adopt_class_body(target: type, body: Mapping[str, object]) -> None:
-    for name, value in list(vars(target).items()):
-        if name not in body and _is_class_body_member(name) and _functions_of(value):
+def _adopt_class_body(target: type, source: type, body: Mapping[str, object]) -> None:
+    for name in list(vars(target)):
+        if name not in body and _is_class_body_member(name):
             type.__delattr__(target, name)
     for name, value in body.items():
         for function in _functions_of(value):
-            # Zero-argument super() reads this cell; point it at the kept class.
-            if "__class__" in function.__code__.co_freevars and function.__closure__:
-                cell = function.__closure__[
-                    function.__code__.co_freevars.index("__class__")
-                ]
-                cell.cell_contents = target
+            # super() and generated frozen setters capture the defining class.
+            for cell in function.__closure__ or ():
+                try:
+                    captured = cell.cell_contents
+                except ValueError:
+                    continue
+                if captured is source:
+                    cell.cell_contents = target
         type.__setattr__(target, name, value)
 
 
-def stage_class_body(target: type, source: type) -> None:
+def stage_class_body(
+    target: type, source: type, *, finalize: Callable[[], None] | None = None
+) -> None:
     """Give a cached class the reloaded class body once the reload commits.
 
     The cached class keeps its identity for live instances and Bevy
@@ -442,9 +459,11 @@ def stage_class_body(target: type, source: type) -> None:
     }
     transaction = _active.get()
     if transaction is None:
-        _adopt_class_body(target, body)
+        _adopt_class_body(target, source, body)
+        if finalize is not None:
+            finalize()
         return
-    transaction.stage_class_body(target, body)
+    transaction.stage_class_body(target, source, body, finalize)
 
 
 def stage_import_graph_update(graph: ImportGraph, candidate: ImportGraph) -> None:

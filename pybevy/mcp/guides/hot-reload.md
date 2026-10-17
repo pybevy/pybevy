@@ -21,6 +21,10 @@ user helper named `pybevy_helpers` is not protected from reload.
 
 ## Reload Modes
 
+Changes saved during an active reload queue another attempt. The queued request
+does not change the active attempt's import mode, and remains pending if that
+attempt fails.
+
 When a scene imports another module's `@entrypoint` and defines its own, the
 launchers select the scene's own entrypoint. An imported entrypoint is used only
 if the scene defines none.
@@ -60,6 +64,8 @@ helpers from the project root.
   types, a custom `@component`/`@resource` field layout, or the active or
   pending `@state` member changed since the previous successful reload.
   Component layout includes private (`_`-prefixed) stored fields
+- Startup condition changes include predicate code and AND/OR/NOT structure,
+  for both fluent `run_if` configurations and `ConditionalSystem` expressions
 - The baseline is seeded from the definitions the entrypoint built, so the first
   Partial reload after `run_scene` compares like any later one and keeps the
   state accumulated since launch
@@ -92,6 +98,9 @@ consequences matter during iteration:
   classes follow the edited source on Partial. The class object and existing
   instances are kept, so a changed default applies to instances created after
   the reload.
+  This includes user `__new__` and `__setattr__` edits and deleted constants
+  or cached properties. Construction guards and resource assignment validation
+  remain active. Rejected candidates leave the previous class body unchanged.
 - When the field layout is compatible, the preserved resource accepts nested
   class and enum values declared by the successfully loaded generation. Existing
   field objects are not migrated: an old enum value remains an old enum value
@@ -134,6 +143,9 @@ the reload that ran, as `get_reload_status` does. A Partial request that escalat
 reports `actual_mode: "full"`. When the reload does not run within 60 frames,
 the response has `status: "reload_requested"` and a `note`; read `get_reload_status`
 for its outcome.
+In an app running without hot reload, such as a script started with plain
+`python scene.py`, both tools fail with an error and change nothing, including
+the requested `pause` and `time_scale`.
 
 `get_last_error.shader_errors` is `null` or lists the compile errors of shaders
 whose pipelines currently fail, such as a WGSL syntax error. An error in an
@@ -248,7 +260,7 @@ def main(app: App) -> App:
 | Tweaking animation parameters | Partial | Preserves entity state |
 | First Partial reload after normal scene launch | Partial | Initial definitions provide the comparison baseline |
 | Added/changed observers | Full | Auto-escalated from Partial |
-| Renamed/removed a system function | `run_scene` | Stale schedule entries persist across `reload` |
+| Renamed/removed a system function | `reload` | Removed registrations retire, then compact after the rollback window |
 | Edited a `.wgsl` shader or other asset | none | Bevy re-loads the asset itself; the Python watcher ignores non-`.py` files |
 | Scene looks broken | Full | Clean slate |
 

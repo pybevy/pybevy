@@ -418,13 +418,18 @@ pub fn validate_domain_checks(
                 "{}::{} writes a declared domain without calling {}",
                 finding.wrapper, finding.method, finding.missing
             );
-            let excepted = exceptions.iter().position(|exception| {
-                exception.path == finding.path
-                    && exception
-                        .message
-                        .as_ref()
-                        .is_none_or(|text| *text == message)
-            });
+            let excepted = exceptions
+                .iter()
+                .enumerate()
+                .position(|(index, exception)| {
+                    !consumed[index]
+                        && !exception.reason.trim().is_empty()
+                        && exception.path == finding.path
+                        && exception
+                            .message
+                            .as_ref()
+                            .is_none_or(|text| *text == message)
+                });
             if let Some(index) = excepted {
                 consumed[index] = true;
                 continue;

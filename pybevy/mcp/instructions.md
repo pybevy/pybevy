@@ -111,6 +111,10 @@ When geometry looks wrong (wrong size, shape, missing, or occluded), follow this
 
 See `guide://hot-reload` for reload modes (Full vs Partial), type re-aliasing, memory profiling, plugin delta detection, and keyboard shortcuts (F5/F6/F7). See `guide://scene-editing` for time control commands (`pause_time`, `resume_time`, `set_time_scale`) and batched schedule workflows.
 
+Startup run-condition code or expression changes escalate Partial to Full.
+Compatible component/resource classes publish method edits and member deletions
+only after a successful reload, while retaining constructor and assignment guards.
+
 For Rust-owned applications loading and hot-reloading Python plugins, see
 `guide://native-plugins`.
 `PyBevyPlugin::with_plugin` supports build-time configuration; combining it with

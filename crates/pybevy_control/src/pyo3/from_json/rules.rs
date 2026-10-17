@@ -18,7 +18,7 @@ use crate::{
         value::{json_f32, json_f64},
     },
     pyo3::{
-        descriptors::{constructor_fields, constructor_parameter_names},
+        descriptors::{constructor_fields, constructor_parameter_names, is_getset_descriptor},
         enum_names,
         from_json::{
             color::{
@@ -517,6 +517,17 @@ fn pybevy_value_patch(cx: &FieldContext<'_, '_>) -> Converted {
     let owner = cx.current.get_type();
     let mut after = Vec::new();
     if let Some(parameters) = constructor_parameter_names(&owner) {
+        // An omitted field keeps its current value, not the constructor default.
+        for name in parameters.iter().filter(|name| !fields.contains_key(*name)) {
+            let readable = owner
+                .getattr(name.as_str())
+                .is_ok_and(|attribute| is_getset_descriptor(&attribute));
+            if readable && let Ok(current) = cx.current.getattr(name.as_str()) {
+                kwargs
+                    .set_item(name, current)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
         for name in fields.keys() {
             if !parameters.contains(name)
                 && let Some(value) = kwargs.get_item(name).map_err(|error| error.to_string())?

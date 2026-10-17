@@ -4,7 +4,9 @@ use std::sync::{
 };
 
 use bevy::prelude::Resource;
-use pybevy_reload::{HotReloadStateAccess, ReloadMode, ReloadRequestState, lock_or_recover};
+use pybevy_reload::{
+    HotReloadStateAccess, ReloadMode, ReloadRequest, ReloadRequestState, lock_or_recover,
+};
 use pyo3::prelude::*;
 
 use super::util::is_verbose;
@@ -92,10 +94,10 @@ impl HotReloadState {
         inner.loader_func.is_some()
     }
 
-    /// Check if the next reload will be in partial mode
+    /// Check the active attempt's import mode, or the next idle reload mode.
     /// Used by CLI loader to determine whether to enable component caching
     pub fn is_partial_reload(&self) -> bool {
-        let mode = self.requests.last_mode();
+        let mode = self.requests.import_mode();
         let is_partial = mode == ReloadMode::Partial;
         if is_verbose() {
             eprintln!(
@@ -130,17 +132,17 @@ impl HotReloadState {
 
     /// Re-import every user module for the attempt in progress, whatever mode was requested.
     pub(crate) fn import_all_modules(&self) {
-        self.requests.set_last_mode(ReloadMode::Full);
+        self.requests.set_import_mode(ReloadMode::Full);
     }
 
     /// Check if reload is pending and get the loader function and mode if available.
     /// A request taken before any loader is installed is intentionally consumed and dropped.
-    pub fn take_pending_reload(&self, py: Python) -> Option<(Py<PyAny>, ReloadMode)> {
-        let mode = self.requests.take()?;
+    pub fn take_pending_reload(&self, py: Python) -> Option<(Py<PyAny>, ReloadRequest)> {
+        let request = self.requests.take()?;
         lock_or_recover(&self.inner)
             .loader_func
             .as_ref()
-            .map(|function| (function.clone_ref(py), mode))
+            .map(|function| (function.clone_ref(py), request))
     }
 }
 

@@ -140,21 +140,14 @@ fn validate_batch_operation(
     )))
 }
 
-/// Parse entity ref from a batch operation JSON object.
-///
-/// The batch tool documents per-op shape as `{"action": "...", "entity": id_or_name, ...}`.
-/// `entity` is polymorphic: int → `EntityRef::Id`, string → `EntityRef::Name`.
+/// Parse entity ref from a batch operation JSON object, with the same
+/// spelling every other tool accepts: an all-digit string is a packed ID.
 fn parse_entity_ref_from_op(op: &serde_json::Value) -> Result<EntityRef, String> {
     let Some(entity) = op.get("entity") else {
         return Err("Missing 'entity' (int or string)".into());
     };
-    if let Some(id) = entity.as_u64() {
-        return Ok(EntityRef::Id(id));
-    }
-    if let Some(name) = entity.as_str() {
-        return Ok(EntityRef::Name(name.to_string()));
-    }
-    Err("'entity' must be an integer ID or a string name".into())
+    serde_json::from_value(entity.clone())
+        .map_err(|_| "'entity' must be an integer ID or a string name".into())
 }
 
 pub(crate) fn batch_response(results: Vec<serde_json::Value>) -> serde_json::Value {
@@ -192,6 +185,13 @@ mod tests {
         let op = serde_json::json!({"entity": "Player", "action": "set_component"});
         let result = parse_entity_ref_from_op(&op).unwrap();
         assert!(matches!(result, EntityRef::Name(ref s) if s == "Player"));
+    }
+
+    #[test]
+    fn parse_entity_ref_from_op_numeric_string_is_an_id() {
+        let op = serde_json::json!({"entity": "4294967244", "action": "despawn"});
+        let result = parse_entity_ref_from_op(&op).unwrap();
+        assert!(matches!(result, EntityRef::Id(4294967244)));
     }
 
     #[test]

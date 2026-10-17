@@ -389,7 +389,7 @@ class AppReloadState:
         Does not replace a pending request. F6 can subsequently toggle this mode.
         """
     def is_partial_reload(self) -> bool:
-        """Check if the next reload will be in partial mode."""
+        """Check the active attempt's import mode, or the next idle reload mode."""
     def generation(self) -> int:
         """Get the generation shared with HotReloadControl."""
 

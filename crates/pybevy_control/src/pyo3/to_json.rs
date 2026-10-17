@@ -8,7 +8,7 @@ use pybevy_transform::global_transform::PyGlobalTransform;
 use pyo3::ffi;
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyFloat, PyInt, PyModule, PyType},
+    types::{PyDict, PyFloat, PyInt, PyIterator, PyModule, PyType},
 };
 
 use super::enum_names::{canonical_variant_name, is_enum_type};
@@ -164,6 +164,11 @@ fn serialize_python_value(
     if let Ok(u) = value.extract::<u64>() {
         return serde_json::json!(u);
     }
+    if value.is_instance_of::<PyInt>() {
+        return serde_json::json!({
+            "serialization_error": public_error::CONTROL_SERIALIZATION_INTEGER_RANGE
+        });
+    }
     // float
     if let Ok(f) = value.extract::<f64>() {
         return float_to_json(f);
@@ -220,7 +225,7 @@ fn serialize_python_value(
         return serde_json::Value::Object(fields);
     }
     // Serialize iterable elements.
-    if let Ok(iter) = value.try_iter() {
+    if let Some(iter) = collection_iter(value) {
         let elements: Vec<serde_json::Value> = iter
             .filter_map(|item| item.ok())
             .map(|item| py_value_to_json_inner(&item, context))
@@ -242,6 +247,13 @@ fn serialize_python_value(
         .repr()
         .map(|r| serde_json::Value::String(r.to_string()))
         .unwrap_or_else(|_| serde_json::Value::String("<opaque>".to_string()))
+}
+
+/// An iterator over a collection's elements. An iterator itself is not read:
+/// reading would consume a generator, and an endless one would never return.
+fn collection_iter<'py>(value: &Bound<'py, PyAny>) -> Option<Bound<'py, PyIterator>> {
+    let iter = value.try_iter().ok()?;
+    (iter.as_ptr() != value.as_ptr()).then_some(iter)
 }
 
 fn linear_rgba_to_json(value: &Bound<'_, PyAny>) -> Option<serde_json::Value> {
@@ -393,7 +405,7 @@ fn extract_bridge_fields_with_context(
     // to a slice, so there is no field to read. Serialize the elements instead
     // of falling through to a repr that omits them.
     if map.is_empty()
-        && let Ok(items) = bound.try_iter()
+        && let Some(items) = collection_iter(bound)
     {
         let elements: Vec<serde_json::Value> = items
             .filter_map(|item| item.ok())

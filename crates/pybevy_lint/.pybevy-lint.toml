@@ -1,5 +1,10 @@
 # PyBevy Lint Configuration
 # This file configures the linter's behavior for Bevy API comparison
+[validation]
+# Experimental private AI services: no upstream Bevy declarations, excluded
+# from stub validation and the API exercise baseline.
+excluded_modules = ["ai"]
+
 [[validation.exceptions]]
 code = "W042"
 path = "window.FileDragAndDrop"
@@ -3770,4 +3775,17 @@ reason = "PyBevy's native Material with per-instance typed storage layouts and S
 [[validation.exceptions]]
 code = "E018"
 path = "transform.Transform"
+message = "PyTransform::translation writes a declared domain without calling borrow_validated_field_as with validate_translation"
+reason = "Nested query writes such as transform.translation.x stay unchecked like View and Numba: validating them would move the hottest Python write path onto the staged validated borrow (field domains design, decision 1)"
+
+[[validation.exceptions]]
+code = "E018"
+path = "transform.Transform"
+message = "PyTransform::rotation writes a declared domain without calling borrow_validated_field_as with validate_rotation"
+reason = "Nested query writes such as transform.translation.x stay unchecked like View and Numba: validating them would move the hottest Python write path onto the staged validated borrow (field domains design, decision 1)"
+
+[[validation.exceptions]]
+code = "E018"
+path = "transform.Transform"
+message = "PyTransform::scale writes a declared domain without calling borrow_validated_field_as with validate_scale"
 reason = "Nested query writes such as transform.translation.x stay unchecked like View and Numba: validating them would move the hottest Python write path onto the staged validated borrow (field domains design, decision 1)"

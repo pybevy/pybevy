@@ -60,8 +60,8 @@ pub use runtime::{
     DefsFingerprint, EscalationTracker, PendingSystemError, ReloadError, ReloadRuntime,
 };
 pub use state::{
-    HotReloadGeneration, ReloadGenerationSet, ReloadMode, ReloadRequestState, generation_matches,
-    startup_or_reload,
+    HotReloadGeneration, ReloadGenerationSet, ReloadMode, ReloadRequest, ReloadRequestState,
+    generation_matches, startup_or_reload,
 };
 pub use system_registry::SystemGenerationRegistry;
 pub use tracker::{KEEP_ALIVE_GENERATIONS, PluginTracker};

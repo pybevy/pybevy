@@ -740,7 +740,7 @@ class Range:
         """
 
     def is_empty(self) -> bool:
-        """Returns True if the range contains no items."""
+        """Returns True if start >= end or either bound is NaN."""
 
     def contains(self, value: float) -> bool:
         """Returns True if value is within the range [start, end)."""

@@ -322,7 +322,15 @@ fn collect_assignment(
     let kind = if node.child_by_field_name("type").is_some() {
         StubSymbolKind::Constant
     } else {
-        let right = node.child_by_field_name("right");
+        let mut right = node.child_by_field_name("right");
+        while let Some(value) = right
+            && value.kind() == "parenthesized_expression"
+        {
+            let mut cursor = value.walk();
+            right = value
+                .named_children(&mut cursor)
+                .find(|child| !child.is_extra());
+        }
         match right.map(|value| value.kind()) {
             Some("identifier" | "binary_operator" | "subscript") => StubSymbolKind::Alias,
             Some("call") if right.is_some_and(|right| is_type_checking_call(right, source)) => {

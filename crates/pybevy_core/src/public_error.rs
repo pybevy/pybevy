@@ -1590,6 +1590,7 @@ pub const DIRECTION_NOT_NORMALIZED: &str = "direction must be normalized";
 pub const UP_NOT_NORMALIZED: &str = "up must be normalized";
 pub const ROTATION_ARC_NOT_NORMALIZED: &str = "start and end vectors must be normalized";
 pub const RELOAD_FAILED_AFTER_SCENE_CLEARED: &str = "the Full reload cleared the scene before it failed, so systems now run against an empty world; fix the error and reload, or call run_scene";
+pub const RELOAD_UNAVAILABLE: &str = "hot reload is not running in this app, so there is nothing to reload; start the scene with `pybevy dev` or the run_scene tool to enable reload";
 pub const RELOAD_NOT_OBSERVED: &str = "the reload had not run when this response was built, so it reports no outcome; check get_reload_status for its generation, mode and errors";
 pub const RELOAD_ENTRYPOINT_CHANGED: &str = "the @entrypoint changed; Python plugins, systems and observers in it were reloaded, but native plugin settings (such as ScheduleRunnerPlugin.run_loop), WindowPlugin and other App configuration apply only at startup: call run_scene for those to take effect";
 pub const TRANSFORM_ROTATION_ZERO_LENGTH: &str =
@@ -1796,6 +1797,8 @@ pub fn image_encoding_unsupported(format: impl Display, supported: &[String]) ->
 
 pub const CASCADE_BOUNDS_EMPTY: &str = "bounds cannot be empty";
 
+pub const CONTROL_SERIALIZATION_INTEGER_RANGE: &str =
+    "Python integer is outside the MCP JSON range (i64/u64)";
 pub const CONTROL_SERIALIZATION_CYCLE: &str = "cyclic Python value";
 pub const CONTROL_SERIALIZATION_DEPTH: &str = "Python value exceeds the serialization depth limit";
 

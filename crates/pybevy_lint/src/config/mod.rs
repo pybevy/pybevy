@@ -102,6 +102,24 @@ pub struct ValidationConfig {
     pub shared_borrow_types: Vec<SharedBorrowType>,
     #[serde(default)]
     pub specialized_receivers: Vec<SpecializedReceiver>,
+    /// Public modules (`ai` covers `pybevy.ai` and its submodules) left out of
+    /// stub validation and the API exercise baseline.
+    #[serde(default)]
+    pub excluded_modules: Vec<String>,
+}
+
+impl ValidationConfig {
+    /// Whether `module` (`ai.alpha`, `pybevy.ai.alpha` or `ai.alpha.__init__`) is excluded.
+    pub fn excludes_module(&self, module: &str) -> bool {
+        let module = module.strip_prefix("pybevy.").unwrap_or(module);
+        let module = module.strip_suffix(".__init__").unwrap_or(module);
+        self.excluded_modules.iter().any(|excluded| {
+            module == excluded
+                || module
+                    .strip_prefix(excluded.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+    }
 }
 
 /// Reviewed routing from a public specialized receiver to its native wrapper.
