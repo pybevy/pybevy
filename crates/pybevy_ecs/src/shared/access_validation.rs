@@ -57,6 +57,10 @@ pub struct ComponentAccess<K> {
 /// Callers convert their parameter types into this enum so the validation
 /// algorithm can check for conflicts without knowing the concrete types.
 pub enum ParamAccess<K> {
+    /// A `ParamSet`: its members may conflict with each other because only
+    /// one is borrowed at a time, but each still conflicts with parameters
+    /// outside the set.
+    Set(Vec<ParamAccess<K>>),
     /// Query or View with component accesses and filters for disjointness checking
     Components {
         accesses: Vec<ComponentAccess<K>>,
@@ -175,16 +179,43 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
     let mut component_access: HashMap<K, ComponentAccessList<K>> = HashMap::new();
 
     // Track assets access (for Res<Assets<T>> / ResMut<Assets<T>> conflicts)
-    let mut assets_access: HashMap<K, (usize, bool, String)> = HashMap::new();
+    let mut assets_access: HashMap<K, (Slot, bool, String)> = HashMap::new();
 
     // Track buffered message channels (reader=shared, writer=mutable).
-    let mut message_access: HashMap<String, (usize, bool, String)> = HashMap::new();
+    let mut message_access: HashMap<String, (Slot, bool, String)> = HashMap::new();
 
     // Track if World parameter exists (World is exclusive with everything)
     let mut world_param_idx: Option<usize> = None;
 
+    let mut flattened = Vec::with_capacity(accesses.len());
     for (param_idx, param) in accesses.iter().enumerate() {
         match param {
+            ParamAccess::Set(members) => {
+                for (member, access) in members.iter().enumerate() {
+                    flatten_set(
+                        Slot {
+                            param: param_idx,
+                            member: Some(member),
+                        },
+                        access,
+                        &mut flattened,
+                    );
+                }
+            }
+            _ => flattened.push((
+                Slot {
+                    param: param_idx,
+                    member: None,
+                },
+                param,
+            )),
+        }
+    }
+
+    for (position, &(slot, param)) in flattened.iter().enumerate() {
+        let param_idx = slot.param;
+        match param {
+            ParamAccess::Set(_) => unreachable!("parameter sets are flattened above"),
             ParamAccess::Components {
                 accesses: comp_accesses,
                 filters: current_filters,
@@ -194,14 +225,15 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                     // Check against ALL previous accesses to this component
                     if let Some(existing_accesses) = component_access.get(&comp.key) {
                         for existing in existing_accesses {
-                            if (comp.exclusive || existing.exclusive)
+                            if !slot.alternates_with(existing.slot)
+                                && (comp.exclusive || existing.exclusive)
                                 && !current_filters.is_disjoint_from(&existing.filters)
                             {
                                 return Err(ComponentAccessConflict {
                                     param_idx,
                                     mutable: comp.mutable,
                                     comp_name: comp.name.clone(),
-                                    existing_idx: existing.idx,
+                                    existing_idx: existing.slot.param,
                                     existing_mut: existing.mutable,
                                     existing_name: existing.name.clone(),
                                     kind: if existing.is_query {
@@ -231,7 +263,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         .entry(comp.key.clone())
                         .or_default()
                         .push(Recorded {
-                            idx: param_idx,
+                            slot,
                             exclusive: comp.exclusive,
                             mutable: comp.mutable,
                             name: comp.name.clone(),
@@ -271,14 +303,15 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 };
                 if let Some(existing_accesses) = component_access.get(key) {
                     for existing in existing_accesses {
-                        if (*exclusive || existing.exclusive)
+                        if !slot.alternates_with(existing.slot)
+                            && (*exclusive || existing.exclusive)
                             && !resource_filters.is_disjoint_from(&existing.filters)
                         {
                             return Err(ComponentAccessConflict {
                                 param_idx,
                                 mutable: *mutable,
                                 comp_name: name.clone(),
-                                existing_idx: existing.idx,
+                                existing_idx: existing.slot.param,
                                 existing_mut: existing.mutable,
                                 existing_name: existing.name.clone(),
                                 kind: if existing.is_query {
@@ -297,7 +330,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                     .entry(key.clone())
                     .or_default()
                     .push(Recorded {
-                        idx: param_idx,
+                        slot,
                         exclusive: *exclusive,
                         mutable: *mutable,
                         name: name.clone(),
@@ -329,13 +362,17 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 backing_name,
                 mutable,
             } => {
-                if let Some((existing_idx, existing_mut, existing_name)) = assets_access.get(key) {
-                    if *mutable || *existing_mut {
+                if let Some((existing_slot, existing_mut, existing_name)) = assets_access.get(key) {
+                    if slot.alternates_with(*existing_slot) {
+                        if *mutable && !*existing_mut {
+                            assets_access.insert(key.clone(), (slot, true, name.clone()));
+                        }
+                    } else if *mutable || *existing_mut {
                         return Err(ComponentAccessConflict {
                             param_idx,
                             mutable: *mutable,
                             comp_name: format!("Assets<{}>", name),
-                            existing_idx: *existing_idx,
+                            existing_idx: existing_slot.param,
                             existing_mut: *existing_mut,
                             existing_name: format!("Assets<{}>", existing_name),
                             kind: if name == existing_name {
@@ -350,7 +387,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         });
                     }
                 } else {
-                    assets_access.insert(key.clone(), (param_idx, *mutable, name.clone()));
+                    assets_access.insert(key.clone(), (slot, *mutable, name.clone()));
                 }
 
                 let resource_filters = QueryFilters {
@@ -359,14 +396,15 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                 };
                 if let Some(existing_accesses) = component_access.get(key) {
                     for existing in existing_accesses {
-                        if (*mutable || existing.exclusive)
+                        if !slot.alternates_with(existing.slot)
+                            && (*mutable || existing.exclusive)
                             && !resource_filters.is_disjoint_from(&existing.filters)
                         {
                             return Err(ComponentAccessConflict {
                                 param_idx,
                                 mutable: *mutable,
                                 comp_name: format!("Assets<{name}>"),
-                                existing_idx: existing.idx,
+                                existing_idx: existing.slot.param,
                                 existing_mut: existing.mutable,
                                 existing_name: existing.name.clone(),
                                 kind: ConflictKind::ResourceQuery,
@@ -380,7 +418,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                     .entry(key.clone())
                     .or_default()
                     .push(Recorded {
-                        idx: param_idx,
+                        slot,
                         exclusive: *mutable,
                         mutable: *mutable,
                         name: format!("Assets<{name}>"),
@@ -406,13 +444,18 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
             }
 
             ParamAccess::Message { key, name, mutable } => {
-                if let Some((existing_idx, existing_mut, existing_name)) = message_access.get(key) {
-                    if *mutable || *existing_mut {
+                if let Some((existing_slot, existing_mut, existing_name)) = message_access.get(key)
+                {
+                    if slot.alternates_with(*existing_slot) {
+                        if *mutable && !*existing_mut {
+                            message_access.insert(key.clone(), (slot, true, name.clone()));
+                        }
+                    } else if *mutable || *existing_mut {
                         return Err(ComponentAccessConflict {
                             param_idx,
                             mutable: *mutable,
                             comp_name: name.clone(),
-                            existing_idx: *existing_idx,
+                            existing_idx: existing_slot.param,
                             existing_mut: *existing_mut,
                             existing_name: existing_name.clone(),
                             kind: ConflictKind::Messages,
@@ -421,7 +464,7 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
                         });
                     }
                 } else {
-                    message_access.insert(key.clone(), (param_idx, *mutable, name.clone()));
+                    message_access.insert(key.clone(), (slot, *mutable, name.clone()));
                 }
 
                 if let Some(world_idx) = world_param_idx {
@@ -440,11 +483,13 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
             }
 
             ParamAccess::World => {
-                if let Some((existing_idx, (category, existing_name, existing_mut))) = accesses
-                    [..param_idx]
+                if let Some((existing_idx, (category, existing_name, existing_mut))) = flattened
+                    [..position]
                     .iter()
-                    .enumerate()
-                    .find_map(|(idx, param)| describe_access(param).map(|access| (idx, access)))
+                    .filter(|(existing, _)| !slot.alternates_with(*existing))
+                    .find_map(|&(existing, param)| {
+                        describe_access(param).map(|access| (existing.param, access))
+                    })
                 {
                     return Err(ComponentAccessConflict {
                         param_idx,
@@ -466,6 +511,39 @@ pub fn validate_access<K: std::hash::Hash + Eq + Clone>(
     }
 
     Ok(())
+}
+
+/// Where one flattened access came from: its parameter, and for a `ParamSet`
+/// member, the member's position in the set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Slot {
+    param: usize,
+    member: Option<usize>,
+}
+
+impl Slot {
+    /// Different members of one `ParamSet` are borrowed one at a time, so
+    /// they may conflict; every other pair is checked.
+    fn alternates_with(self, other: Slot) -> bool {
+        self.param == other.param
+            && matches!((self.member, other.member), (Some(a), Some(b)) if a != b)
+    }
+}
+
+/// Expand a `ParamSet` member, keeping its slot; a nested set stays one member.
+fn flatten_set<'a, K>(
+    slot: Slot,
+    param: &'a ParamAccess<K>,
+    out: &mut Vec<(Slot, &'a ParamAccess<K>)>,
+) {
+    match param {
+        ParamAccess::Set(members) => {
+            for member in members {
+                flatten_set(slot, member, out);
+            }
+        }
+        _ => out.push((slot, param)),
+    }
 }
 
 fn query_description<K>(accesses: &[ComponentAccess<K>]) -> (String, bool) {
@@ -507,13 +585,13 @@ fn describe_access<K>(param: &ParamAccess<K>) -> Option<(ConflictCategory, Strin
             Some((ConflictCategory::Message, name.clone(), *mutable))
         }
         ParamAccess::World => Some((ConflictCategory::Component, "World".to_string(), true)),
-        ParamAccess::None => None,
+        ParamAccess::Set(_) | ParamAccess::None => None,
     }
 }
 
 /// One recorded access, so a later conflict can report what it asked for.
 struct Recorded<K> {
-    idx: usize,
+    slot: Slot,
     exclusive: bool,
     mutable: bool,
     name: String,
@@ -716,6 +794,83 @@ mod tests {
             name: format!("Message<{key}>"),
             mutable,
         }
+    }
+
+    #[test]
+    fn param_set_members_may_conflict_with_each_other() {
+        let params = [ParamAccess::Set(vec![
+            query(vec![comp("Transform", true)], QueryFilters::default()),
+            query(vec![comp("Transform", false)], QueryFilters::default()),
+            res(1, "Time", true),
+            res(1, "Time", false),
+            assets("Image", false),
+            assets("Image", true),
+            message("Tick", false),
+            message("Tick", true),
+        ])];
+        assert!(validate_access(&params).is_ok());
+    }
+
+    #[test]
+    fn param_set_member_conflicts_with_a_parameter_outside_the_set() {
+        let params = [
+            ParamAccess::Set(vec![
+                assets("Image", false),
+                query(vec![comp("Transform", true)], QueryFilters::default()),
+            ]),
+            query(vec![comp("Transform", false)], QueryFilters::default()),
+        ];
+        let error = validate_access(&params).unwrap_err();
+        assert_eq!((error.existing_idx, error.param_idx), (0, 1));
+
+        let upgraded = [
+            ParamAccess::Set(vec![assets("Image", false), assets("Image", true)]),
+            assets("Image", false),
+        ];
+        let error = validate_access(&upgraded).unwrap_err();
+        assert_eq!((error.existing_idx, error.param_idx), (0, 1));
+        assert!(error.existing_mut);
+    }
+
+    #[test]
+    fn separate_param_sets_conflict_with_each_other() {
+        let params = [
+            ParamAccess::Set(vec![res(1, "Time", true)]),
+            ParamAccess::Set(vec![res(1, "Time", false)]),
+        ];
+        assert!(validate_access(&params).is_err());
+    }
+
+    #[test]
+    fn one_parameter_conflicting_with_itself_is_rejected() {
+        let lone = [query(
+            vec![comp("Transform", true), comp("Transform", false)],
+            QueryFilters::default(),
+        )];
+        let error = validate_access(&lone).unwrap_err();
+        assert_eq!((error.existing_idx, error.param_idx), (0, 0));
+        assert!(error.existing_mut && !error.mutable);
+
+        let member = [ParamAccess::Set(vec![
+            res(1, "Time", false),
+            query(
+                vec![comp("Transform", true), comp("Transform", false)],
+                QueryFilters::default(),
+            ),
+        ])];
+        let error = validate_access(&member).unwrap_err();
+        assert_eq!((error.existing_idx, error.param_idx), (0, 0));
+        assert_eq!(error.comp_name, "Transform");
+    }
+
+    #[test]
+    fn world_conflicts_with_a_param_set() {
+        let params = [
+            ParamAccess::Set(vec![message("Tick", false)]),
+            ParamAccess::World,
+        ];
+        let error = validate_access(&params).unwrap_err();
+        assert_eq!((error.existing_idx, error.param_idx), (0, 1));
     }
 
     #[test]

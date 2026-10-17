@@ -7,7 +7,7 @@
 //! must finish before its originating system invocation returns.
 
 use std::{
-    mem,
+    mem, ptr,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -27,9 +27,10 @@ use pybevy_core::{
     registry::global_registry,
 };
 use pyo3::{
+    PyTraverseError, PyVisit,
     exceptions::{PyIndexError, PyRuntimeError, PyTypeError},
     prelude::*,
-    types::{PyBytes, PyList, PySlice},
+    types::{PyBytes, PyList, PySlice, PyType},
 };
 
 use crate::ecs::{
@@ -88,8 +89,8 @@ pub struct PyViewColumn {
     /// Test and standalone temporary columns use `None` and rely on the token.
     owner: Option<Arc<BatchColumn>>,
 
-    /// Component type for dynamic field resolution (None for primitive columns)
-    component_type: Option<*const pyo3::ffi::PyTypeObject>,
+    /// Strong Python type owner for custom field resolution (None for primitive columns).
+    component_type: Option<Py<PyType>>,
 
     /// Built-in component type for trait-based field access (None for custom/primitive columns)
     builtin_component_type: Option<PyComponentType>,
@@ -241,7 +242,7 @@ impl PyViewColumn {
     /// Create an ECS-backed custom component column from a neutral core capability.
     pub(crate) fn from_batch_column_with_type(
         column: BatchColumn,
-        component_type: *const pyo3::ffi::PyTypeObject,
+        component_type: &Bound<'_, PyType>,
     ) -> Self {
         let column = Arc::new(column);
         // SAFETY: this adapter retains `column` for the complete pointer lifetime
@@ -256,7 +257,7 @@ impl PyViewColumn {
             field_type: None,
             validity_token: Arc::new(AtomicBool::new(true)),
             owner: Some(column),
-            component_type: Some(component_type),
+            component_type: Some(component_type.clone().unbind()),
             builtin_component_type: None,
             validation: None,
             owned_data: None,
@@ -316,6 +317,43 @@ impl PyViewColumn {
         let ptr = unsafe { self.ptr.add(index * self.stride) };
         // Safety: ptr is aligned, valid, and not aliased for the duration of this write.
         unsafe { write_field_value(ptr, value, ft) }
+    }
+
+    fn exact_scalar_bytes(
+        value: &Bound<'_, PyAny>,
+        field_type: FieldType,
+    ) -> Option<(Vec<u8>, f64)> {
+        match field_type {
+            FieldType::I32 => value
+                .extract::<i32>()
+                .ok()
+                .map(|scalar| (scalar.to_ne_bytes().to_vec(), scalar.into())),
+            FieldType::I64 => value
+                .extract::<i64>()
+                .ok()
+                .map(|scalar| (scalar.to_ne_bytes().to_vec(), scalar as f64)),
+            FieldType::U8 => value
+                .extract::<u8>()
+                .ok()
+                .map(|scalar| (scalar.to_ne_bytes().to_vec(), scalar.into())),
+            FieldType::U32 => value
+                .extract::<u32>()
+                .ok()
+                .map(|scalar| (scalar.to_ne_bytes().to_vec(), scalar.into())),
+            FieldType::U64 => value
+                .extract::<u64>()
+                .ok()
+                .map(|scalar| (scalar.to_ne_bytes().to_vec(), scalar as f64)),
+            FieldType::Bool => value
+                .extract::<bool>()
+                .ok()
+                .map(|scalar| (vec![u8::from(scalar)], f64::from(u8::from(scalar)))),
+            FieldType::F32
+            | FieldType::F64
+            | FieldType::Vec2
+            | FieldType::Vec3
+            | FieldType::Vec4 => None,
+        }
     }
 
     /// Check validity and that this is a scalar field type. Returns the `FieldType` on success.
@@ -565,6 +603,13 @@ unsafe impl Sync for PyViewColumn {}
 
 #[pymethods]
 impl PyViewColumn {
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        if let Some(component_type) = &self.component_type {
+            visit.call(component_type)?;
+        }
+        Ok(())
+    }
+
     /// Block __array__ attribute access to prevent numpy conversion.
     #[getter(__array__)]
     fn get_array(&self) -> PyResult<()> {
@@ -730,19 +775,13 @@ impl PyViewColumn {
         }
 
         // Priority 2: Custom component with dynamic field access
-        if let Some(type_ptr) = self.component_type {
+        if let Some(component_type) = &self.component_type {
+            self.check_live()?;
             use crate::ecs::component_layout::{
                 ComponentLayout, ComponentLayoutExt, PrimitiveType, PrimitiveTypeExt,
             };
 
-            // Safety: `type_ptr` was captured from a live Python type object and the GIL
-            // is held here, so the pointer is valid for the duration of this call.
-            let py_type =
-                unsafe { pyo3::Bound::from_borrowed_ptr(py, type_ptr as *mut pyo3::ffi::PyObject) };
-
-            if let Ok(cls) = py_type.cast::<pyo3::types::PyType>()
-                && let Ok(layout) = ComponentLayout::from_annotations(cls)
-            {
+            if let Ok(layout) = ComponentLayout::from_annotations(component_type.bind(py)) {
                 // Find field in layout
                 for field in &layout.fields {
                     if field.name == name {
@@ -800,18 +839,29 @@ impl PyViewColumn {
             }
         }
 
-        // Priority 3: Fallback to hardcoded fields (for backwards compatibility and special cases)
+        let is_transform = matches!(
+            self.builtin_component_type,
+            Some(PyComponentType::Dynamic(type_ptr))
+                if global_registry::get_bridge_by_py_type(type_ptr)
+                    .is_some_and(|bridge| bridge.name() == "Transform")
+        );
+        let vector_lanes = match self.field_type {
+            Some(FieldType::Vec2) => 2,
+            Some(FieldType::Vec3) => 3,
+            Some(FieldType::Vec4) => 4,
+            _ => 0,
+        };
+
         let viewcolumn_accessors = py.import("pybevy.ecs.view_accessors")?;
 
         match name {
-            // Transform fields: offsets derived from the actual type, validated by layout_assertions.rs
-            "rotation" => {
+            "rotation" if is_transform => {
                 let quat_col = self
                     .at_offset_typed(mem::offset_of!(Transform, rotation), Some(FieldType::Vec4))?;
                 let quat_wrapper = viewcolumn_accessors.getattr("QuatViewColumn")?;
                 Ok(quat_wrapper.call1((quat_col,))?.into())
             }
-            "translation" => {
+            "translation" if is_transform => {
                 let vec3_col = self.at_offset_typed(
                     mem::offset_of!(Transform, translation),
                     Some(FieldType::Vec3),
@@ -819,17 +869,24 @@ impl PyViewColumn {
                 let vec3_wrapper = viewcolumn_accessors.getattr("Vec3ViewColumn")?;
                 Ok(vec3_wrapper.call1((vec3_col,))?.into())
             }
-            "scale" => {
+            "scale" if is_transform => {
                 let vec3_col =
                     self.at_offset_typed(mem::offset_of!(Transform, scale), Some(FieldType::Vec3))?;
                 let vec3_wrapper = viewcolumn_accessors.getattr("Vec3ViewColumn")?;
                 Ok(vec3_wrapper.call1((vec3_col,))?.into())
             }
-            // Vec2/Vec3/Vec4 scalar sub-fields
-            "x" => Ok(Py::new(py, self.at_offset_typed(0, Some(FieldType::F32))?)?.into()),
-            "y" => Ok(Py::new(py, self.at_offset_typed(4, Some(FieldType::F32))?)?.into()),
-            "z" => Ok(Py::new(py, self.at_offset_typed(8, Some(FieldType::F32))?)?.into()),
-            "w" => Ok(Py::new(py, self.at_offset_typed(12, Some(FieldType::F32))?)?.into()),
+            "x" if vector_lanes >= 1 => {
+                Ok(Py::new(py, self.at_offset_typed(0, Some(FieldType::F32))?)?.into())
+            }
+            "y" if vector_lanes >= 2 => {
+                Ok(Py::new(py, self.at_offset_typed(4, Some(FieldType::F32))?)?.into())
+            }
+            "z" if vector_lanes >= 3 => {
+                Ok(Py::new(py, self.at_offset_typed(8, Some(FieldType::F32))?)?.into())
+            }
+            "w" if vector_lanes >= 4 => {
+                Ok(Py::new(py, self.at_offset_typed(12, Some(FieldType::F32))?)?.into())
+            }
             _ => Err(pyo3::exceptions::PyAttributeError::new_err(format!(
                 "ViewColumn has no attribute '{}'",
                 name
@@ -1217,6 +1274,37 @@ impl PyViewColumn {
                 let values: Vec<f64> = (0..self.len).map(|i| src.read_f64_at(i)).collect();
                 self.validate_assignment_values(&values, 0)?;
             }
+            if self.field_type == src.field_type {
+                let field_type = self.field_type.expect("numeric columns have a field type");
+                let element_size = field_type.size_bytes();
+                let buffer_size = self.len.checked_mul(element_size).ok_or_else(|| {
+                    PyRuntimeError::new_err("ViewColumn copy size exceeds addressable memory")
+                })?;
+                let mut values = vec![0_u8; buffer_size];
+                for i in 0..self.len {
+                    let offset = i * element_size;
+                    // SAFETY: source rows are live under the operation guard and the destination is an exact non-overlapping buffer slice.
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            src.ptr.add(i * src.stride),
+                            values[offset..].as_mut_ptr(),
+                            element_size,
+                        );
+                    }
+                }
+                for i in 0..self.len {
+                    let offset = i * element_size;
+                    // SAFETY: the source is an exact buffer slice and the writable destination row is live under the operation guard.
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            values[offset..].as_ptr(),
+                            self.ptr.add(i * self.stride),
+                            element_size,
+                        );
+                    }
+                }
+                return Ok(());
+            }
             for i in 0..self.len {
                 self.write_f64_at(i, src.read_f64_at(i));
             }
@@ -1225,7 +1313,21 @@ impl PyViewColumn {
 
         // Scalar broadcast
         let _operation = self.enter_operation()?;
-        self.check_numeric()?;
+        let field_type = self.check_numeric()?;
+        if let Some((bytes, scalar)) = Self::exact_scalar_bytes(value, field_type) {
+            self.validate_assignment_values(&[scalar], 0)?;
+            for i in 0..self.len {
+                // SAFETY: the native scalar bytes match the checked field type and the writable destination row is live under the operation guard.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        self.ptr.add(i * self.stride),
+                        bytes.len(),
+                    );
+                }
+            }
+            return Ok(());
+        }
         let scalar: f64 = value.extract().map_err(|_| {
             PyRuntimeError::new_err("Cannot assign: value must be a ViewColumn or a number")
         })?;

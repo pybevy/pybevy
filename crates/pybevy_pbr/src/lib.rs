@@ -71,7 +71,6 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<forward_decal::PyForwardDecalMaterial>()?;
     m.add_class::<forward_decal::PyMeshMaterial3dForwardDecal>()?;
     m.add_class::<storage_shader_material::PyStorageShaderMaterial>()?;
-    m.add_class::<storage_shader_material::PyStorageShaderMaterialPlugin>()?;
     m.add_class::<storage_shader_material::PyMeshMaterial3dStorageShader>()?;
     m.add_class::<shader_material_py::PyShaderMaterial>()?;
     m.add_class::<shader_material_py::PyShaderMaterialPlugin>()?;

@@ -559,7 +559,7 @@ pub(crate) fn build_scheduled_system(
             ),
         ));
     }
-    let (schedule_system, handles) = if pipe_stages.is_empty() {
+    let (schedule_system, mut handles) = if pipe_stages.is_empty() {
         let dynamic_system = new_main_system(
             callable,
             generation,
@@ -604,6 +604,7 @@ pub(crate) fn build_scheduled_system(
             error_buffer.clone(),
             system_stage,
             &mut ticks,
+            &mut handles,
             state_machine_count,
         )?;
         config.run_if_dyn(condition);
@@ -620,6 +621,7 @@ pub(crate) fn build_scheduled_system(
             error_buffer.clone(),
             system_stage,
             &mut ticks,
+            &mut handles,
             state_machine_count,
         )?;
         config.run_if_dyn(condition);
@@ -786,6 +788,7 @@ fn condition_identity(expression: &ConditionExpr<Py<PyAny>>) -> PyResult<Conditi
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_condition_expr(
     expression: ConditionExpr<Py<PyAny>>,
     generation: u32,
@@ -793,6 +796,7 @@ fn build_condition_expr(
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
     ticks: &mut SystemTickRegistration,
+    handles: &mut Vec<DynamicSystemHandle>,
     state_machine_count: Option<usize>,
 ) -> PyResult<BoxedCondition> {
     match expression {
@@ -806,6 +810,7 @@ fn build_condition_expr(
                 state_machine_count,
             )?;
             ticks.leaves.push(condition.history());
+            handles.push(condition.handle().clone());
             Ok(Box::new(condition))
         }
         ConditionExpr::And(left, right) => {
@@ -816,6 +821,7 @@ fn build_condition_expr(
                 error_buffer.clone(),
                 system_stage,
                 ticks,
+                handles,
                 state_machine_count,
             )?;
             let right = build_condition_expr(
@@ -825,6 +831,7 @@ fn build_condition_expr(
                 error_buffer,
                 system_stage,
                 ticks,
+                handles,
                 state_machine_count,
             )?;
             Ok(Box::new(
@@ -839,6 +846,7 @@ fn build_condition_expr(
                 error_buffer.clone(),
                 system_stage,
                 ticks,
+                handles,
                 state_machine_count,
             )?;
             let right = build_condition_expr(
@@ -848,6 +856,7 @@ fn build_condition_expr(
                 error_buffer,
                 system_stage,
                 ticks,
+                handles,
                 state_machine_count,
             )?;
             Ok(Box::new(
@@ -862,6 +871,7 @@ fn build_condition_expr(
                 error_buffer,
                 system_stage,
                 ticks,
+                handles,
                 state_machine_count,
             )?;
             Ok(Box::new(not(ErasedConditionSystem::new(condition))))
@@ -875,16 +885,21 @@ fn build_persistent_condition_expr(
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
+    handles: &mut Vec<DynamicSystemHandle>,
 ) -> PyResult<BoxedCondition> {
     match expression {
-        ConditionExpr::Leaf(condition) => Ok(Box::new(new_main_persistent_condition(
-            condition,
-            generation,
-            error_state,
-            error_buffer,
-            system_stage,
-            None,
-        )?)),
+        ConditionExpr::Leaf(condition) => {
+            let condition = new_main_persistent_condition(
+                condition,
+                generation,
+                error_state,
+                error_buffer,
+                system_stage,
+                None,
+            )?;
+            handles.push(condition.handle().clone());
+            Ok(Box::new(condition))
+        }
         ConditionExpr::And(left, right) => {
             let left = build_persistent_condition_expr(
                 *left,
@@ -892,6 +907,7 @@ fn build_persistent_condition_expr(
                 error_state.clone(),
                 error_buffer.clone(),
                 system_stage,
+                handles,
             )?;
             let right = build_persistent_condition_expr(
                 *right,
@@ -899,6 +915,7 @@ fn build_persistent_condition_expr(
                 error_state,
                 error_buffer,
                 system_stage,
+                handles,
             )?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).and_then(ErasedConditionSystem::new(right)),
@@ -911,6 +928,7 @@ fn build_persistent_condition_expr(
                 error_state.clone(),
                 error_buffer.clone(),
                 system_stage,
+                handles,
             )?;
             let right = build_persistent_condition_expr(
                 *right,
@@ -918,6 +936,7 @@ fn build_persistent_condition_expr(
                 error_state,
                 error_buffer,
                 system_stage,
+                handles,
             )?;
             Ok(Box::new(
                 ErasedConditionSystem::new(left).or_else(ErasedConditionSystem::new(right)),
@@ -930,21 +949,24 @@ fn build_persistent_condition_expr(
                 error_state,
                 error_buffer,
                 system_stage,
+                handles,
             )?;
             Ok(Box::new(not(ErasedConditionSystem::new(condition))))
         }
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) fn build_set_config(
     value: &Bound<'_, PyAny>,
     generation: u32,
     error_state: Arc<Mutex<Vec<PyErr>>>,
     error_buffer: SystemErrorBuffer,
     system_stage: SystemStage,
-) -> PyResult<ScheduleConfigs<InternedSystemSet>> {
+) -> PyResult<(ScheduleConfigs<InternedSystemSet>, Vec<DynamicSystemHandle>)> {
     let (set, ordering, conditions) = system_set_config_parts(value)?;
 
+    let mut handles = Vec::new();
     let mut config = apply_set_ordering(set.label.intern().into_configs(), &ordering);
     for condition in conditions {
         let condition = build_persistent_condition_expr(
@@ -953,10 +975,11 @@ pub(crate) fn build_set_config(
             error_state.clone(),
             error_buffer.clone(),
             system_stage,
+            &mut handles,
         )?;
         config.run_if_dyn(condition);
     }
-    Ok(config)
+    Ok((config, handles))
 }
 
 pub(crate) fn system_set_config_identity(

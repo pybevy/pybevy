@@ -1,19 +1,20 @@
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, Weak},
 };
 
+use bevy::ecs::resource::Resource;
 use pybevy_core::{
     LogicalTypeId, PyAsset, PyComponent, PyMessage,
     public_error::{
         SYSTEM_CALLABLE_ROUTINE_REQUIRED, SystemParamRejection, SystemParamWrapper,
-        pipe_input_must_be_first, pipe_target_requires_input, system_annotations_unresolved,
-        system_param_rejection_message,
+        param_set_member_unsupported, pipe_input_must_be_first, pipe_target_requires_input,
+        system_annotations_unresolved, system_param_rejection_message,
     },
 };
 use pybevy_gizmos::gizmos::PyGizmos;
 use pyo3::{
-    PyTypeInfo,
+    PyTraverseError, PyTypeInfo, PyVisit,
     exceptions::{PyRuntimeError, PyTypeError},
     prelude::*,
     types::{PyAny, PyTuple, PyType, PyWeakrefMethods, PyWeakrefReference},
@@ -33,9 +34,11 @@ use crate::{
     assets::asset_type::PyAssetTypeParam,
     ecs::{
         component_type::PyComponentType,
+        dynamic_system::{DynamicSystemHandle, DynamicSystemInner},
         messages::{MessageType, PyMessageType},
         non_send_marker::PyNonSendMarker,
         observer::EventType,
+        param_set::PyParamSetParam,
         query::{query_param::PyQueryParam, single::PySingle},
         removed_components::PyRemovedComponentsParam,
         resource_type::{reject_state_type_as_resource, reject_unparameterized_button_input},
@@ -54,7 +57,7 @@ const STACK_PARAMS: usize = 8;
 struct SystemParamCacheEntry {
     code_ptr: usize,
     function: Py<PyWeakrefReference>,
-    params: Arc<SmallVec<[SystemParam; STACK_PARAMS]>>,
+    params: Weak<SmallVec<[SystemParam; STACK_PARAMS]>>,
 }
 
 /// Global cache for parsed system parameters, keyed by Python function address.
@@ -72,14 +75,14 @@ pub struct SystemFunction {
     pub func: Py<PyAny>,
 
     /// The parameters of the system function
-    pub params: SmallVec<[SystemParam; STACK_PARAMS]>,
+    pub params: Arc<SmallVec<[SystemParam; STACK_PARAMS]>>,
 }
 
 impl Clone for SystemFunction {
     fn clone(&self) -> Self {
         Python::attach(|py| Self {
             func: self.func.clone_ref(py),
-            params: self.params.clone(),
+            params: Arc::new(self.params.as_ref().clone()),
         })
     }
 }
@@ -242,6 +245,139 @@ fn unwrap_type_argument<'py>(alias: &Bound<'py, PyAny>) -> PyResult<Bound<'py, P
     }
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct SystemGcRegistry {
+    handles: Vec<Weak<Mutex<DynamicSystemInner>>>,
+    queries: Vec<Weak<PyQueryParam>>,
+}
+
+impl SystemGcRegistry {
+    pub(crate) fn register_handles(&mut self, handles: &[DynamicSystemHandle]) {
+        self.handles.retain(|handle| handle.strong_count() > 0);
+        self.handles.extend(handles.iter().map(Arc::downgrade));
+    }
+
+    pub(crate) fn register_queries<'a>(
+        &mut self,
+        queries: impl Iterator<Item = &'a Arc<PyQueryParam>>,
+    ) {
+        self.queries.retain(|param| param.strong_count() > 0);
+        self.queries.extend(queries.map(Arc::downgrade));
+    }
+
+    pub(crate) fn traverse(
+        &self,
+        owners: &mut SystemGcOwners,
+        visit: &PyVisit<'_>,
+    ) -> Result<(), PyTraverseError> {
+        for handle in &self.handles {
+            if let Some(handle) = handle.upgrade() {
+                owners.traverse_handle(&handle, visit)?;
+            }
+        }
+        for param in &self.queries {
+            if let Some(param) = param.upgrade() {
+                owners.traverse_query(&param, visit)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct SystemGcOwners {
+    handles: HashSet<usize>,
+    signatures: HashSet<usize>,
+    descriptors: HashSet<usize>,
+}
+
+impl SystemGcOwners {
+    pub(crate) fn traverse_handle(
+        &mut self,
+        handle: &DynamicSystemHandle,
+        visit: &PyVisit<'_>,
+    ) -> Result<(), PyTraverseError> {
+        if !self.handles.insert(Arc::as_ptr(handle) as usize) {
+            return Ok(());
+        }
+        let Ok(inner) = handle.try_lock() else {
+            return Ok(());
+        };
+        if let Some(func) = &inner.cached_func {
+            visit.call(func)?;
+        }
+        if let Some(func) = &inner.system_func {
+            visit.call(&func.func)?;
+            if self.signatures.insert(Arc::as_ptr(&func.params) as usize) {
+                for param in func.params.iter() {
+                    self.traverse_param(&param.ty, visit)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn traverse_query(
+        &mut self,
+        param: &Arc<PyQueryParam>,
+        visit: &PyVisit<'_>,
+    ) -> Result<(), PyTraverseError> {
+        if self.descriptors.insert(Arc::as_ptr(param) as usize) {
+            for class in &param.retained_types {
+                visit.call(class.as_ref())?;
+            }
+            for value in &param.retained_asset_params {
+                visit.call(value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn traverse_param(
+        &mut self,
+        param: &SystemParamType,
+        visit: &PyVisit<'_>,
+    ) -> Result<(), PyTraverseError> {
+        match param {
+            SystemParamType::PipeInput { value_type } => visit.call(value_type)?,
+            SystemParamType::Local(value) => visit.call(value)?,
+            SystemParamType::Resource { type_obj, .. } => visit.call(type_obj)?,
+            SystemParamType::Assets {
+                wrapper_class: Some(class),
+                ..
+            } => visit.call(class)?,
+            SystemParamType::Query { param } => self.traverse_query(param, visit)?,
+            SystemParamType::View { param } => {
+                if self.descriptors.insert(Arc::as_ptr(param) as usize) {
+                    for class in &param.retained_types {
+                        visit.call(class.as_ref())?;
+                    }
+                }
+            }
+            SystemParamType::RemovedComponents { param } => {
+                if self.descriptors.insert(Arc::as_ptr(param) as usize) {
+                    for class in &param.retained_types {
+                        visit.call(class.as_ref())?;
+                    }
+                }
+            }
+            SystemParamType::MessageWriter { message_type }
+            | SystemParamType::MessageReader { message_type }
+            | SystemParamType::MessageMutator { message_type } => message_type.traverse(visit)?,
+            SystemParamType::On { event_type, .. } => event_type.traverse(visit)?,
+            SystemParamType::ParamSet { members } => {
+                if self.descriptors.insert(Arc::as_ptr(members) as usize) {
+                    for member in members.iter() {
+                        self.traverse_param(&member.ty, visit)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 impl SystemFunction {
     /// Clear the global system parameter cache.
     /// This should be called when tearing down an app to prevent stale cache entries.
@@ -319,7 +455,7 @@ impl SystemFunction {
                     .bind(py)
                     .upgrade()
                     .filter(|cached_function| cached_function.is(&func))
-                    .map(|_| Arc::clone(&entry.params))
+                    .and_then(|_| entry.params.upgrade())
             });
 
             // Remove only the entry we inspected: another thread may have replaced
@@ -343,23 +479,7 @@ impl SystemFunction {
             if let Some(cached_params) = cached_params {
                 cached_params.as_ref().clone()
             } else {
-                let parsed_params = Self::parse_system_parameters(&func, py)?;
-                // A routine without weakref support remains valid but is not cached.
-                if let Ok(function) = PyWeakrefReference::new(&func) {
-                    let entry = Arc::new(SystemParamCacheEntry {
-                        code_ptr,
-                        function: function.unbind(),
-                        params: Arc::new(parsed_params.clone()),
-                    });
-                    let replaced_entry = {
-                        let mut cache_guard = SYSTEM_PARAM_CACHE.lock().unwrap();
-                        let cache = cache_guard.get_or_insert_with(HashMap::new);
-                        cache.insert(func_addr, entry)
-                    };
-                    drop(replaced_entry);
-                }
-
-                parsed_params
+                Self::parse_system_parameters(&func, py)?
             }
         } else {
             Self::parse_system_parameters(&func, py)?
@@ -381,6 +501,24 @@ impl SystemFunction {
             }
         }
 
+        let params = Arc::new(params);
+        if use_cache && let Ok(function) = PyWeakrefReference::new(&func) {
+            let entry = Arc::new(SystemParamCacheEntry {
+                code_ptr: func
+                    .getattr("__code__")
+                    .map(|code| code.as_ptr() as usize)
+                    .unwrap_or(0),
+                function: function.unbind(),
+                params: Arc::downgrade(&params),
+            });
+            let replaced = {
+                let mut cache = SYSTEM_PARAM_CACHE.lock().unwrap();
+                cache
+                    .get_or_insert_with(HashMap::new)
+                    .insert(func.as_ptr() as usize, entry)
+            };
+            drop(replaced);
+        }
         Ok(Self {
             func: func.unbind(),
             params,
@@ -478,218 +616,259 @@ impl SystemFunction {
                 ));
             }
 
-            let (optional_resource, raw_annotation) = unwrap_optional_param(&raw_annotation)?;
-
-            // Check if the raw annotation is a generic alias (e.g., Mut[Time], Res[Time], ResMut[Time])
-            // by checking if it has __origin__ attribute
-            let (wrapper, annotation) = if let Ok(origin) = raw_annotation.getattr("__origin__") {
-                // This is a generic type like Mut[Time], Res[Time], ResMut[Time], Assets[Mesh], etc.
-                if origin.is(PyMut::type_object(py)) {
-                    (
-                        SystemParamWrapper::Mut,
-                        unwrap_type_argument(&raw_annotation)?,
-                    )
-                } else if origin.is(PyRes::type_object(py)) {
-                    (
-                        SystemParamWrapper::Res,
-                        unwrap_type_argument(&raw_annotation)?,
-                    )
-                } else if origin.is(PyResMut::type_object(py)) {
-                    (
-                        SystemParamWrapper::ResMut,
-                        unwrap_type_argument(&raw_annotation)?,
-                    )
-                } else {
-                    // Other generic type (not Mut/Res/ResMut) - use as-is
-                    (SystemParamWrapper::Bare, raw_annotation.clone())
-                }
-            } else {
-                // Direct type annotation - immutable
-                (SystemParamWrapper::Bare, raw_annotation.clone())
-            };
-            if wrapper == SystemParamWrapper::Mut {
-                return Err(system_param_error(
-                    &name,
-                    &field_name,
-                    wrapper,
-                    &annotation,
-                    classify_system_param(wrapper, &annotation)?,
-                ));
-            }
-            let is_mutable = matches!(
-                wrapper,
-                SystemParamWrapper::Mut | SystemParamWrapper::ResMut
-            );
-            let is_wrapped_resource = matches!(
-                wrapper,
-                SystemParamWrapper::Res | SystemParamWrapper::ResMut
-            );
-
-            if is_wrapped_resource && let Ok(type_obj) = annotation.cast::<PyType>() {
-                reject_state_type_as_resource(type_obj)?;
-            }
-
-            let param_name = if annotation.is_instance_of::<PyType>() {
-                annotation.getattr("__name__")?.extract::<String>()?
-            } else {
-                annotation
-                    .get_type()
-                    .getattr("__name__")?
-                    .extract::<String>()?
-            };
-
-            let ty = if annotation.get_type().is(PyQueryParam::type_object(py)) {
-                let mut obj = annotation.extract::<PyQueryParam>()?;
-                obj.optional_single = optional_resource;
-                // For Query, mutability is determined by the component parameters (Mut[Component]),
-                // not by wrapping the entire Query parameter
-                SystemParamType::Query {
-                    param: Arc::new(obj),
-                }
-            } else if annotation.get_type().is(PyViewParam::type_object(py)) {
-                let obj = annotation.extract::<PyViewParam>()?;
-                // For View, mutability is determined by the component parameters (Mut[Component])
-                SystemParamType::View {
-                    param: Arc::new(obj),
-                }
-            } else if param_name == "View" || annotation.get_type().is(PyView::type_object(py)) {
-                // Plain View without type parameters - not currently supported
-                return Err(PyTypeError::new_err(format!(
-                    "System function `{}` uses View without type parameters. Use View[Mut[Component]] or View[Component]",
-                    name,
-                )));
-            } else if annotation.get_type().is(PyInParam::type_object(py)) {
-                let input = annotation.extract::<PyRef<PyInParam>>()?;
-                SystemParamType::PipeInput {
-                    value_type: input.value_type(py),
-                }
-            } else if annotation.hasattr("__origin__")? {
-                // Check if it's a View generic alias by checking __origin__.__name__
-                let origin_name = annotation
-                    .getattr("__origin__")
-                    .and_then(|origin| origin.getattr("__name__"))
-                    .and_then(|origin_name| origin_name.extract::<String>())
-                    .unwrap_or_default();
-                if origin_name == "View" {
-                    // This shouldn't happen anymore since __class_getitem__ returns PyViewParam
-                    return Err(PyTypeError::new_err(format!(
-                        "System function `{}` has unexpected View format. Use View[Mut[Component]] or View[Component]",
-                        name,
-                    )));
-                } else {
-                    return Err(system_param_error(
-                        &name,
-                        &field_name,
-                        wrapper,
-                        &annotation,
-                        classify_system_param(wrapper, &annotation)?,
-                    ));
-                }
-            } else if annotation.is_instance_of::<PyLocal>() {
-                SystemParamType::Local(annotation.clone().unbind())
-            } else if annotation.get_type().is(PyAssetTypeParam::type_object(py)) {
-                // Assets[T] - extract the asset type
-                let asset_param = annotation.extract::<PyAssetTypeParam>()?;
-                SystemParamType::Assets {
-                    type_ptr: AssetTypePtr(asset_param.type_ptr()),
-                    wrapper_class: asset_param.wrapper_class(py),
-                    logical_type_id: asset_param.logical_type_id(),
-                    logical_type_name: asset_param.logical_type_name().map(str::to_owned),
-                    mutable: is_mutable,
-                    optional: optional_resource,
-                }
-            } else if annotation.is(PyWorld::type_object(py)) {
-                SystemParamType::World
-            } else if annotation.is(PyCommands::type_object(py)) {
-                SystemParamType::Commands
-            } else if annotation.is(PyNonSendMarker::type_object(py)) {
-                SystemParamType::NonSendMarker
-            } else if annotation.is(PyGizmos::type_object(py)) {
-                SystemParamType::Gizmos
-            } else if annotation.get_type().is(MessageTypeParam::type_object(py)) {
-                // MessageWriter[T], MessageReader[T], or MessageMutator[T]
-                let message_param = annotation.extract::<MessageTypeParam>()?;
-                match message_param.ty {
-                    super::message::MessageClass::Writer => SystemParamType::MessageWriter {
-                        message_type: message_param.message_type,
-                    },
-                    super::message::MessageClass::Reader => SystemParamType::MessageReader {
-                        message_type: message_param.message_type,
-                    },
-                    super::message::MessageClass::Mutator => {
-                        if !matches!(message_param.message_type, MessageType::Custom(_)) {
-                            return Err(PyTypeError::new_err(
-                                "MessageMutator currently supports custom Python messages only; native message wrappers are snapshots and cannot be mutated in place",
-                            ));
-                        }
-                        SystemParamType::MessageMutator {
-                            message_type: message_param.message_type,
-                        }
-                    }
-                }
-            } else if annotation
-                .get_type()
-                .is(PyRemovedComponentsParam::type_object(py))
-            {
-                SystemParamType::RemovedComponents {
-                    param: Arc::new(annotation.extract::<PyRemovedComponentsParam>()?),
-                }
-            } else if annotation
-                .get_type()
-                .is(super::observer::PyOnTypeParam::type_object(py))
-            {
-                // On[E] or On[E, B] - extract event type and optional bundle filter
-                let on_param = annotation.extract::<super::observer::PyOnTypeParam>()?;
-                SystemParamType::On {
-                    event_type: on_param.event_type,
-                    bundle_filter: on_param.bundle_filter,
-                }
-            } else if annotation.is(PyResource::type_object(py)) {
-                return Err(PyTypeError::new_err(
-                    "Resource must be subclass of `Resource`".to_string(),
-                ));
-            } else if annotation.is_instance_of::<PyType>()
-                && annotation
-                    .cast::<PyType>()?
-                    .is_subclass_of::<PyResource>()?
-            {
-                // Validate the specialization before generating a resource remedy.
-                reject_unparameterized_button_input(annotation.cast::<PyType>()?)?;
-                if is_wrapped_resource {
-                    // Resource wrapped in Res[T] or ResMut[T] - allowed
-                    let type_obj = annotation.cast::<PyType>()?;
-                    SystemParamType::Resource {
-                        type_obj: type_obj.clone().unbind(),
-                        mutable: is_mutable,
-                        optional: optional_resource,
-                    }
-                } else {
-                    // Bare resources are not allowed - must use Res[T] or ResMut[T]
-                    return Err(system_param_error(
-                        &name,
-                        &field_name,
-                        wrapper,
-                        &annotation,
-                        SystemParamRejection::BareResource,
-                    ));
-                }
-            } else {
-                return Err(system_param_error(
-                    &name,
-                    &field_name,
-                    wrapper,
-                    &annotation,
-                    classify_system_param(wrapper, &annotation)?,
-                ));
-            };
-
-            result.push(SystemParam {
-                name: param_name,
-                ty,
-            });
+            result.push(Self::parse_annotation(
+                py,
+                &name,
+                &field_name,
+                &raw_annotation,
+            )?);
         }
 
         Ok(result)
+    }
+
+    /// Lower one resolved parameter annotation of system `name`.
+    fn parse_annotation(
+        py: Python,
+        name: &str,
+        field_name: &str,
+        raw_annotation: &Bound<'_, PyAny>,
+    ) -> PyResult<SystemParam> {
+        let (optional_resource, raw_annotation) = unwrap_optional_param(raw_annotation)?;
+
+        // Check if the raw annotation is a generic alias (e.g., Mut[Time], Res[Time], ResMut[Time])
+        // by checking if it has __origin__ attribute
+        let (wrapper, annotation) = if let Ok(origin) = raw_annotation.getattr("__origin__") {
+            // This is a generic type like Mut[Time], Res[Time], ResMut[Time], Assets[Mesh], etc.
+            if origin.is(PyMut::type_object(py)) {
+                (
+                    SystemParamWrapper::Mut,
+                    unwrap_type_argument(&raw_annotation)?,
+                )
+            } else if origin.is(PyRes::type_object(py)) {
+                (
+                    SystemParamWrapper::Res,
+                    unwrap_type_argument(&raw_annotation)?,
+                )
+            } else if origin.is(PyResMut::type_object(py)) {
+                (
+                    SystemParamWrapper::ResMut,
+                    unwrap_type_argument(&raw_annotation)?,
+                )
+            } else {
+                // Other generic type (not Mut/Res/ResMut) - use as-is
+                (SystemParamWrapper::Bare, raw_annotation.clone())
+            }
+        } else {
+            // Direct type annotation - immutable
+            (SystemParamWrapper::Bare, raw_annotation.clone())
+        };
+        if wrapper == SystemParamWrapper::Mut {
+            return Err(system_param_error(
+                name,
+                field_name,
+                wrapper,
+                &annotation,
+                classify_system_param(wrapper, &annotation)?,
+            ));
+        }
+        let is_mutable = matches!(
+            wrapper,
+            SystemParamWrapper::Mut | SystemParamWrapper::ResMut
+        );
+        let is_wrapped_resource = matches!(
+            wrapper,
+            SystemParamWrapper::Res | SystemParamWrapper::ResMut
+        );
+
+        if is_wrapped_resource && let Ok(type_obj) = annotation.cast::<PyType>() {
+            reject_state_type_as_resource(type_obj)?;
+        }
+
+        let param_name = if annotation.is_instance_of::<PyType>() {
+            annotation.getattr("__name__")?.extract::<String>()?
+        } else {
+            annotation
+                .get_type()
+                .getattr("__name__")?
+                .extract::<String>()?
+        };
+
+        let ty = if annotation.get_type().is(PyParamSetParam::type_object(py)) {
+            if optional_resource || wrapper != SystemParamWrapper::Bare {
+                return Err(PyTypeError::new_err(param_set_member_unsupported(
+                    &annotation_type_name(&raw_annotation),
+                )));
+            }
+            let descriptor = annotation.extract::<PyParamSetParam>()?;
+            let members = descriptor
+                .members()
+                .iter()
+                .enumerate()
+                .map(|(index, member)| {
+                    let member_name = format!("{field_name}.p{index}()");
+                    let param = Self::parse_annotation(py, name, &member_name, member.bind(py))?;
+                    if param.ty.allowed_in_param_set() {
+                        Ok(param)
+                    } else {
+                        Err(PyTypeError::new_err(param_set_member_unsupported(
+                            &annotation_type_name(member.bind(py)),
+                        )))
+                    }
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+            SystemParamType::ParamSet {
+                members: Arc::new(members),
+            }
+        } else if annotation.get_type().is(PyQueryParam::type_object(py)) {
+            let mut obj = annotation.extract::<PyQueryParam>()?;
+            obj.optional_single = optional_resource;
+            // For Query, mutability is determined by the component parameters (Mut[Component]),
+            // not by wrapping the entire Query parameter
+            SystemParamType::Query {
+                param: Arc::new(obj),
+            }
+        } else if annotation.get_type().is(PyViewParam::type_object(py)) {
+            let obj = annotation.extract::<PyViewParam>()?;
+            // For View, mutability is determined by the component parameters (Mut[Component])
+            SystemParamType::View {
+                param: Arc::new(obj),
+            }
+        } else if param_name == "View" || annotation.get_type().is(PyView::type_object(py)) {
+            // Plain View without type parameters - not currently supported
+            return Err(PyTypeError::new_err(format!(
+                "System function `{}` uses View without type parameters. Use View[Mut[Component]] or View[Component]",
+                name,
+            )));
+        } else if annotation.get_type().is(PyInParam::type_object(py)) {
+            let input = annotation.extract::<PyRef<PyInParam>>()?;
+            SystemParamType::PipeInput {
+                value_type: input.value_type(py),
+            }
+        } else if annotation.hasattr("__origin__")? {
+            // Check if it's a View generic alias by checking __origin__.__name__
+            let origin_name = annotation
+                .getattr("__origin__")
+                .and_then(|origin| origin.getattr("__name__"))
+                .and_then(|origin_name| origin_name.extract::<String>())
+                .unwrap_or_default();
+            if origin_name == "View" {
+                // This shouldn't happen anymore since __class_getitem__ returns PyViewParam
+                return Err(PyTypeError::new_err(format!(
+                    "System function `{}` has unexpected View format. Use View[Mut[Component]] or View[Component]",
+                    name,
+                )));
+            } else {
+                return Err(system_param_error(
+                    name,
+                    field_name,
+                    wrapper,
+                    &annotation,
+                    classify_system_param(wrapper, &annotation)?,
+                ));
+            }
+        } else if annotation.is_instance_of::<PyLocal>() {
+            SystemParamType::Local(annotation.clone().unbind())
+        } else if annotation.get_type().is(PyAssetTypeParam::type_object(py)) {
+            // Assets[T] - extract the asset type
+            let asset_param = annotation.extract::<PyAssetTypeParam>()?;
+            SystemParamType::Assets {
+                type_ptr: AssetTypePtr(asset_param.type_ptr()),
+                wrapper_class: asset_param.wrapper_class(py),
+                logical_type_id: asset_param.logical_type_id(),
+                logical_type_name: asset_param.logical_type_name().map(str::to_owned),
+                mutable: is_mutable,
+                optional: optional_resource,
+            }
+        } else if annotation.is(PyWorld::type_object(py)) {
+            SystemParamType::World
+        } else if annotation.is(PyCommands::type_object(py)) {
+            SystemParamType::Commands
+        } else if annotation.is(PyNonSendMarker::type_object(py)) {
+            SystemParamType::NonSendMarker
+        } else if annotation.is(PyGizmos::type_object(py)) {
+            SystemParamType::Gizmos
+        } else if annotation.get_type().is(MessageTypeParam::type_object(py)) {
+            // MessageWriter[T], MessageReader[T], or MessageMutator[T]
+            let message_param = annotation.extract::<MessageTypeParam>()?;
+            match message_param.ty {
+                super::message::MessageClass::Writer => SystemParamType::MessageWriter {
+                    message_type: message_param.message_type,
+                },
+                super::message::MessageClass::Reader => SystemParamType::MessageReader {
+                    message_type: message_param.message_type,
+                },
+                super::message::MessageClass::Mutator => {
+                    if !matches!(message_param.message_type, MessageType::Custom(_)) {
+                        return Err(PyTypeError::new_err(
+                            "MessageMutator currently supports custom Python messages only; native message wrappers are snapshots and cannot be mutated in place",
+                        ));
+                    }
+                    SystemParamType::MessageMutator {
+                        message_type: message_param.message_type,
+                    }
+                }
+            }
+        } else if annotation
+            .get_type()
+            .is(PyRemovedComponentsParam::type_object(py))
+        {
+            SystemParamType::RemovedComponents {
+                param: Arc::new(annotation.extract::<PyRemovedComponentsParam>()?),
+            }
+        } else if annotation
+            .get_type()
+            .is(super::observer::PyOnTypeParam::type_object(py))
+        {
+            // On[E] or On[E, B] - extract event type and optional bundle filter
+            let on_param = annotation.extract::<super::observer::PyOnTypeParam>()?;
+            SystemParamType::On {
+                event_type: on_param.event_type,
+                bundle_filter: on_param.bundle_filter,
+            }
+        } else if annotation.is(PyResource::type_object(py)) {
+            return Err(PyTypeError::new_err(
+                "Resource must be subclass of `Resource`".to_string(),
+            ));
+        } else if annotation.is_instance_of::<PyType>()
+            && annotation
+                .cast::<PyType>()?
+                .is_subclass_of::<PyResource>()?
+        {
+            // Validate the specialization before generating a resource remedy.
+            reject_unparameterized_button_input(annotation.cast::<PyType>()?)?;
+            if is_wrapped_resource {
+                // Resource wrapped in Res[T] or ResMut[T] - allowed
+                let type_obj = annotation.cast::<PyType>()?;
+                SystemParamType::Resource {
+                    type_obj: type_obj.clone().unbind(),
+                    mutable: is_mutable,
+                    optional: optional_resource,
+                }
+            } else {
+                // Bare resources are not allowed - must use Res[T] or ResMut[T]
+                return Err(system_param_error(
+                    name,
+                    field_name,
+                    wrapper,
+                    &annotation,
+                    SystemParamRejection::BareResource,
+                ));
+            }
+        } else {
+            return Err(system_param_error(
+                name,
+                field_name,
+                wrapper,
+                &annotation,
+                classify_system_param(wrapper, &annotation)?,
+            ));
+        };
+
+        Ok(SystemParam {
+            name: param_name,
+            ty,
+        })
     }
 }
 
@@ -752,6 +931,10 @@ pub enum SystemParamType {
     MessageMutator {
         message_type: MessageType,
     },
+    /// Members borrowed one at a time through `p0()` to `p7()`.
+    ParamSet {
+        members: Arc<Vec<SystemParam>>,
+    },
     RemovedComponents {
         param: Arc<PyRemovedComponentsParam>,
     },
@@ -768,10 +951,10 @@ impl Clone for SystemParamType {
                 value_type: value_type.clone_ref(py),
             },
             SystemParamType::Query { param } => SystemParamType::Query {
-                param: Arc::clone(param),
+                param: Arc::new(param.as_ref().clone()),
             },
             SystemParamType::View { param } => SystemParamType::View {
-                param: Arc::clone(param),
+                param: Arc::new(param.as_ref().clone()),
             },
             SystemParamType::Local(l) => SystemParamType::Local(l.clone_ref(py)),
             SystemParamType::Resource {
@@ -811,8 +994,11 @@ impl Clone for SystemParamType {
             SystemParamType::MessageMutator { message_type } => SystemParamType::MessageMutator {
                 message_type: message_type.clone(),
             },
+            SystemParamType::ParamSet { members } => SystemParamType::ParamSet {
+                members: Arc::clone(members),
+            },
             SystemParamType::RemovedComponents { param } => SystemParamType::RemovedComponents {
-                param: Arc::clone(param),
+                param: Arc::new(param.as_ref().clone()),
             },
             SystemParamType::On {
                 event_type,
@@ -823,4 +1009,33 @@ impl Clone for SystemParamType {
             },
         })
     }
+}
+
+impl SystemParamType {
+    /// Whether a `ParamSet` may contain this parameter: each member is built
+    /// on demand for one borrow, so it must not need the call frame itself.
+    fn allowed_in_param_set(&self) -> bool {
+        matches!(
+            self,
+            SystemParamType::Query { .. }
+                | SystemParamType::View { .. }
+                | SystemParamType::Resource { .. }
+                | SystemParamType::Assets { .. }
+                | SystemParamType::MessageReader { .. }
+                | SystemParamType::MessageWriter { .. }
+                | SystemParamType::MessageMutator { .. }
+        )
+    }
+}
+
+/// The parameters in signature order with every `ParamSet` replaced by its
+/// members, the order in which run state such as query caches is built.
+pub(crate) fn param_leaves(params: &[SystemParam]) -> Vec<&SystemParam> {
+    params
+        .iter()
+        .flat_map(|param| match &param.ty {
+            SystemParamType::ParamSet { members } => members.iter().collect(),
+            _ => vec![param],
+        })
+        .collect()
 }

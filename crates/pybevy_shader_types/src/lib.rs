@@ -17,7 +17,6 @@ use material_shader_variants::{
 };
 pub use storage_material::{
     ShaderMaterialPlugin, StorageShaderMaterial, StorageShaderMaterialExtension,
-    StorageShaderMaterialPlugin,
 };
 
 use std::{

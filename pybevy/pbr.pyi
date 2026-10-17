@@ -1056,10 +1056,6 @@ class ShaderMaterial(Material):
     def clear_texture(self, slot: int) -> None:
         """Clear a texture slot (set to None)."""
 
-class StorageShaderMaterialPlugin(Plugin):
-    """Compatibility entry point; prefer ShaderMaterialPlugin for all custom materials."""
-    def __init__(self) -> None: ...
-
 class StorageShaderMaterial(Material):
     """Custom 3D material with typed storage arrays and sampled texture layouts.
 

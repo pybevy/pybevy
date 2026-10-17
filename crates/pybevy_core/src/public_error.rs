@@ -539,6 +539,7 @@ pub const IS_RESOURCE_COMPONENT_REMOVE: &str =
     "IsResource cannot be removed; use remove_resource() to remove the resource";
 pub const RESOURCE_VIEW_DATA: &str = "resources are supported by Query, not View";
 pub const RESOURCE_VIEW_FILTER: &str = "resource filters are supported by Query, not View";
+pub const VIEW_DATA_REQUIRED: &str = "View requires at least one component data argument";
 pub const VIEW_COLUMN_READ_ONLY_ASSIGNMENT: &str =
     "Cannot assign through a read-only View column; use column_mut() with View[Mut[T]]";
 pub const NEXT_STATE_CONSTRUCTION: &str = "NextState cannot be constructed directly; access `world.resource(NextState[MyState])` or declare `next_state: ResMut[NextState[MyState]]` in a system";
@@ -1221,6 +1222,24 @@ pub fn read_only_message_attribute(name: &str) -> String {
     format!(
         "Cannot set attribute '{name}' on a message read through MessageReader - use MessageMutator instead"
     )
+}
+
+pub const PARAM_SET_EXPECTS_TUPLE: &str =
+    "ParamSet[...] expects tuple[P0, ...], for example ParamSet[tuple[Query[Mut[A]], Query[A]]]";
+pub const PARAM_SET_MEMBER_COUNT: &str = "ParamSet supports between 1 and 8 parameters";
+pub const PARAM_SET_OUTSIDE_SYSTEM: &str =
+    "ParamSet can only be accessed while its system is running";
+pub const PARAM_SET_IN_OBSERVER: &str =
+    "ParamSet is supported in systems and run conditions, not in observers";
+
+pub fn param_set_member_unsupported(member: &str) -> String {
+    format!(
+        "ParamSet members must be Query, Single, View, Res, ResMut, Assets, MessageReader, MessageWriter or MessageMutator parameters, got {member}"
+    )
+}
+
+pub fn param_set_member_unavailable(len: usize, index: usize) -> String {
+    format!("ParamSet has {len} members; p{index}() is unavailable")
 }
 
 pub fn injected_system_parameter(type_name: &str, example: &str) -> String {

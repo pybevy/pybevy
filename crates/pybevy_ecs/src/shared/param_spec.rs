@@ -135,6 +135,9 @@ pub struct AssetComponentSpec<K: BackendKeys> {
 
 /// Backend-neutral shape of one system parameter.
 pub enum ParamSpec<K: BackendKeys> {
+    /// Members borrowed one at a time, so they may conflict with each other;
+    /// the set declares the union of their access.
+    ParamSet(Vec<ParamSpec<K>>),
     /// Value supplied by the previous stage of a compound pipe; no World access.
     Input,
     Query(QuerySpec<K>),
@@ -303,171 +306,185 @@ pub fn build_declared_access<K: BackendKeys>(
     let mut param_accesses: Vec<FilteredAccess> = Vec::new();
     let mut resources_to_read: Vec<ComponentId> = Vec::new();
     let mut resources_to_write: Vec<ComponentId> = Vec::new();
-    let needs_world = params.iter().any(|param| matches!(param, ParamSpec::World));
+    let needs_world = params
+        .iter()
+        .flat_map(param_set_leaves)
+        .any(|param| matches!(param, ParamSpec::World));
     let resource_marker = resolver.resource_marker_id(world);
     let mut resolved_parameters = Vec::with_capacity(params.len());
 
-    for param in params {
-        let mut direct = FilteredAccessSet::default();
-        let mut direct_reads = Vec::new();
-        let mut direct_writes = Vec::new();
-        let mut auxiliary_reads = Vec::new();
-        match param {
-            ParamSpec::Query(spec) | ParamSpec::View(spec) => {
-                let mut access = QueryParamAccess::default();
+    for outer in params {
+        let mut parameter_direct = FilteredAccessSet::default();
+        let mut parameter_auxiliary = FilteredAccessSet::default();
+        let mut self_conflict = false;
+        // Each set member is checked against its own auxiliary reads only,
+        // since members are borrowed one at a time.
+        for param in param_set_leaves(outer) {
+            let mut direct = FilteredAccessSet::default();
+            let mut direct_reads = Vec::new();
+            let mut direct_writes = Vec::new();
+            let mut auxiliary_reads = Vec::new();
+            match param {
+                ParamSpec::ParamSet(_) => unreachable!("parameter sets are expanded above"),
+                ParamSpec::Query(spec) | ParamSpec::View(spec) => {
+                    let mut access = QueryParamAccess::default();
 
-                for comp in &spec.components {
-                    let Some(id) = resolver.component_id(world, &comp.key) else {
-                        continue;
-                    };
-                    let scheduler_access = resolver.component_scheduler_access(
-                        world,
-                        &comp.key,
-                        id,
-                        comp.scheduler_access,
-                        comp.materializes,
-                        comp.mutable,
-                    );
-                    // A required component gates the access, so it also
-                    // contributes a `With` (added by `build`). An optional
-                    // component may be absent while the query still matches,
-                    // so it contributes access without a `With`.
-                    match (scheduler_access.is_exclusive(), comp.optional) {
-                        (true, false) => access.writes.push(id),
-                        (false, false) => access.reads.push(id),
-                        (true, true) => access.optional_writes.push(id),
-                        (false, true) => access.optional_reads.push(id),
-                    }
-                }
-                for asset in &spec.asset_components {
-                    let resolved = resolver.asset_ids(world, &asset.key);
-                    if let Some(id) = resolved.primary {
-                        match (asset.mutable, asset.optional) {
+                    for comp in &spec.components {
+                        let Some(id) = resolver.component_id(world, &comp.key) else {
+                            continue;
+                        };
+                        let scheduler_access = resolver.component_scheduler_access(
+                            world,
+                            &comp.key,
+                            id,
+                            comp.scheduler_access,
+                            comp.materializes,
+                            comp.mutable,
+                        );
+                        // A required component gates the access, so it also
+                        // contributes a `With` (added by `build`). An optional
+                        // component may be absent while the query still matches,
+                        // so it contributes access without a `With`.
+                        match (scheduler_access.is_exclusive(), comp.optional) {
                             (true, false) => access.writes.push(id),
                             (false, false) => access.reads.push(id),
                             (true, true) => access.optional_writes.push(id),
                             (false, true) => access.optional_reads.push(id),
                         }
                     }
+                    for asset in &spec.asset_components {
+                        let resolved = resolver.asset_ids(world, &asset.key);
+                        if let Some(id) = resolved.primary {
+                            match (asset.mutable, asset.optional) {
+                                (true, false) => access.writes.push(id),
+                                (false, false) => access.reads.push(id),
+                                (true, true) => access.optional_writes.push(id),
+                                (false, true) => access.optional_reads.push(id),
+                            }
+                        }
+                        for id in resolved.aux_reads {
+                            push_unique(&mut auxiliary_reads, id);
+                        }
+                    }
+                    for f in &spec.with {
+                        if let Some(id) = resolver.component_id(world, &f.key) {
+                            access.with.push(id);
+                        }
+                    }
+                    for f in &spec.without {
+                        if let Some(id) = resolver.component_id(world, &f.key) {
+                            access.without.push(id);
+                        }
+                    }
+                    // Changed/Added archetypally imply the component is present,
+                    // and the tick check reads its change ticks, so declare reads.
+                    for f in &spec.changed {
+                        if let Some(id) = resolver.component_id(world, &f.key) {
+                            access.reads.push(id);
+                        }
+                    }
+                    for f in &spec.added {
+                        if let Some(id) = resolver.component_id(world, &f.key) {
+                            access.reads.push(id);
+                        }
+                    }
+                    // Has: no access, no filter (see `QuerySpec::resolve_only`).
+                    for key in &spec.resolve_only {
+                        let _ = resolver.component_id(world, key);
+                    }
+
+                    let access = access.build();
+                    direct.add(access.clone());
+                    param_accesses.push(access);
+                }
+                ParamSpec::Res {
+                    key,
+                    scheduler_access,
+                    ..
+                } => {
+                    let resolved = resolver.resource_ids(world, key);
+                    if let Some(id) = resolved.primary {
+                        if scheduler_access.is_exclusive() {
+                            push_unique(&mut direct_writes, id);
+                        } else {
+                            push_unique(&mut direct_reads, id);
+                        }
+                    }
                     for id in resolved.aux_reads {
                         push_unique(&mut auxiliary_reads, id);
                     }
                 }
-                for f in &spec.with {
-                    if let Some(id) = resolver.component_id(world, &f.key) {
-                        access.with.push(id);
+                ParamSpec::Assets { key, mutable, .. } => {
+                    let resolved = resolver.asset_ids(world, key);
+                    if let Some(id) = resolved.primary {
+                        if *mutable {
+                            push_unique(&mut direct_writes, id);
+                        } else {
+                            push_unique(&mut direct_reads, id);
+                        }
+                    }
+                    for id in resolved.aux_reads {
+                        push_unique(&mut auxiliary_reads, id);
                     }
                 }
-                for f in &spec.without {
-                    if let Some(id) = resolver.component_id(world, &f.key) {
-                        access.without.push(id);
+                ParamSpec::MessageReader {
+                    key,
+                    scheduler_access,
+                } => {
+                    let write = scheduler_access.is_exclusive();
+                    let resolved = resolver.message_ids(world, key, write);
+                    for id in resolved.writes {
+                        push_unique(&mut direct_writes, id);
+                    }
+                    for id in resolved.reads {
+                        push_unique(&mut direct_reads, id);
                     }
                 }
-                // Changed/Added archetypally imply the component is present,
-                // and the tick check reads its change ticks, so declare reads.
-                for f in &spec.changed {
-                    if let Some(id) = resolver.component_id(world, &f.key) {
-                        access.reads.push(id);
+                ParamSpec::MessageWriter { key } | ParamSpec::MessageMutator { key } => {
+                    let write = true;
+                    let resolved = resolver.message_ids(world, key, write);
+                    for id in resolved.writes {
+                        push_unique(&mut direct_writes, id);
+                    }
+                    for id in resolved.reads {
+                        push_unique(&mut direct_reads, id);
                     }
                 }
-                for f in &spec.added {
-                    if let Some(id) = resolver.component_id(world, &f.key) {
-                        access.reads.push(id);
-                    }
-                }
-                // Has: no access, no filter (see `QuerySpec::resolve_only`).
-                for key in &spec.resolve_only {
+                ParamSpec::RemovedComponents { key } => {
                     let _ = resolver.component_id(world, key);
                 }
-
-                let access = access.build();
-                direct.add(access.clone());
-                param_accesses.push(access);
+                ParamSpec::World => {}
+                ParamSpec::Gizmos { .. } => {
+                    push_unique(&mut direct_reads, resolver.gizmo_config_id(world));
+                }
+                // A `Commands` param defers every structural mutation into its
+                // queue (applied at apply_deferred); entity reservation goes
+                // through the atomic entity allocator. Local and Observer carry no
+                // world access. All three declare nothing.
+                ParamSpec::Input
+                | ParamSpec::Commands
+                | ParamSpec::Local
+                | ParamSpec::NonSendMarker
+                | ParamSpec::Observer => {}
             }
-            ParamSpec::Res {
-                key,
-                scheduler_access,
-                ..
-            } => {
-                let resolved = resolver.resource_ids(world, key);
-                if let Some(id) = resolved.primary {
-                    if scheduler_access.is_exclusive() {
-                        push_unique(&mut direct_writes, id);
-                    } else {
-                        push_unique(&mut direct_reads, id);
-                    }
-                }
-                for id in resolved.aux_reads {
-                    push_unique(&mut auxiliary_reads, id);
-                }
+            for access in build_resource_accesses(&direct_reads, &direct_writes, resource_marker) {
+                direct.add(access);
             }
-            ParamSpec::Assets { key, mutable, .. } => {
-                let resolved = resolver.asset_ids(world, key);
-                if let Some(id) = resolved.primary {
-                    if *mutable {
-                        push_unique(&mut direct_writes, id);
-                    } else {
-                        push_unique(&mut direct_reads, id);
-                    }
-                }
-                for id in resolved.aux_reads {
-                    push_unique(&mut auxiliary_reads, id);
-                }
+            let mut auxiliary = FilteredAccessSet::default();
+            for access in build_resource_accesses(&auxiliary_reads, &[], resource_marker) {
+                auxiliary.add(access);
             }
-            ParamSpec::MessageReader {
-                key,
-                scheduler_access,
-            } => {
-                let write = scheduler_access.is_exclusive();
-                let resolved = resolver.message_ids(world, key, write);
-                for id in resolved.writes {
-                    push_unique(&mut direct_writes, id);
-                }
-                for id in resolved.reads {
-                    push_unique(&mut direct_reads, id);
-                }
+            self_conflict |= !direct.get_conflicts(&auxiliary).is_empty();
+            for &id in direct_reads.iter().chain(&auxiliary_reads) {
+                push_unique(&mut resources_to_read, id);
             }
-            ParamSpec::MessageWriter { key } | ParamSpec::MessageMutator { key } => {
-                let write = true;
-                let resolved = resolver.message_ids(world, key, write);
-                for id in resolved.writes {
-                    push_unique(&mut direct_writes, id);
-                }
-                for id in resolved.reads {
-                    push_unique(&mut direct_reads, id);
-                }
+            for &id in &direct_writes {
+                push_unique(&mut resources_to_write, id);
             }
-            ParamSpec::RemovedComponents { key } => {
-                let _ = resolver.component_id(world, key);
-            }
-            ParamSpec::World => {}
-            ParamSpec::Gizmos { .. } => {
-                push_unique(&mut direct_reads, resolver.gizmo_config_id(world));
-            }
-            // A `Commands` param defers every structural mutation into its
-            // queue (applied at apply_deferred); entity reservation goes
-            // through the atomic entity allocator. Local and Observer carry no
-            // world access. All three declare nothing.
-            ParamSpec::Input
-            | ParamSpec::Commands
-            | ParamSpec::Local
-            | ParamSpec::NonSendMarker
-            | ParamSpec::Observer => {}
+            parameter_direct.extend(direct);
+            parameter_auxiliary.extend(auxiliary);
         }
-        for access in build_resource_accesses(&direct_reads, &direct_writes, resource_marker) {
-            direct.add(access);
-        }
-        let mut auxiliary = FilteredAccessSet::default();
-        for access in build_resource_accesses(&auxiliary_reads, &[], resource_marker) {
-            auxiliary.add(access);
-        }
-        for &id in direct_reads.iter().chain(&auxiliary_reads) {
-            push_unique(&mut resources_to_read, id);
-        }
-        for &id in &direct_writes {
-            push_unique(&mut resources_to_write, id);
-        }
-        resolved_parameters.push((direct, auxiliary));
+        resolved_parameters.push((parameter_direct, parameter_auxiliary, self_conflict));
     }
 
     for id in resolver.infrastructure_reads(world) {
@@ -507,12 +524,23 @@ pub struct ResolvedParameterConflict {
     pub existing_parameter: usize,
 }
 
+/// A `ParamSet` expands to its members; any other parameter is its own leaf.
+pub fn param_set_leaves<K: BackendKeys>(param: &ParamSpec<K>) -> Vec<&ParamSpec<K>> {
+    match param {
+        ParamSpec::ParamSet(members) => members.iter().flat_map(param_set_leaves).collect(),
+        _ => vec![param],
+    }
+}
+
+/// Each entry is a parameter's direct and auxiliary access, and whether a
+/// single parameter (or one `ParamSet` member) conflicts with its own
+/// auxiliary access.
 fn resolved_alias_conflict(
-    parameters: Vec<(FilteredAccessSet, FilteredAccessSet)>,
+    parameters: Vec<(FilteredAccessSet, FilteredAccessSet, bool)>,
 ) -> Option<ResolvedParameterConflict> {
     let mut combined = Vec::with_capacity(parameters.len());
-    for (parameter, (mut direct, auxiliary)) in parameters.into_iter().enumerate() {
-        if !direct.get_conflicts(&auxiliary).is_empty() {
+    for (parameter, (mut direct, auxiliary, self_conflict)) in parameters.into_iter().enumerate() {
+        if self_conflict {
             return Some(ResolvedParameterConflict {
                 parameter,
                 existing_parameter: parameter,
@@ -556,22 +584,44 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
     resource_marker_vkey: VK,
     mut message_vkey: impl FnMut(&K::MessageKey) -> (String, String),
 ) -> Vec<ParamAccess<VK>> {
-    params
-        .iter()
-        .map(|param| match param {
+    let mut lowerer = AccessLowerer {
+        component_vkey: &mut component_vkey,
+        resource_vkey: &mut resource_vkey,
+        asset_vkey: &mut asset_vkey,
+        resource_marker_vkey,
+        message_vkey: &mut message_vkey,
+    };
+    params.iter().map(|param| lowerer.lower(param)).collect()
+}
+
+/// The vkey callbacks of [`to_param_accesses`], shared by a set's members.
+struct AccessLowerer<'a, K: BackendKeys, VK> {
+    component_vkey: &'a mut dyn FnMut(&K::ComponentKey) -> VK,
+    resource_vkey: &'a mut dyn FnMut(&K::ResourceKey) -> VK,
+    asset_vkey: &'a mut dyn FnMut(&K::AssetKey) -> VK,
+    resource_marker_vkey: VK,
+    message_vkey: &'a mut dyn FnMut(&K::MessageKey) -> (String, String),
+}
+
+impl<K: BackendKeys, VK: Hash + Eq + Clone> AccessLowerer<'_, K, VK> {
+    fn lower(&mut self, param: &ParamSpec<K>) -> ParamAccess<VK> {
+        match param {
+            ParamSpec::ParamSet(members) => {
+                ParamAccess::Set(members.iter().map(|member| self.lower(member)).collect())
+            }
             ParamSpec::Query(spec) | ParamSpec::View(spec) => {
                 let mut accesses = spec
                     .components
                     .iter()
                     .map(|c| ComponentAccess {
-                        key: component_vkey(&c.key),
+                        key: (self.component_vkey)(&c.key),
                         name: c.name.clone(),
                         exclusive: c.scheduler_access.is_exclusive(),
                         mutable: c.mutable,
                     })
                     .collect::<Vec<_>>();
                 accesses.extend(spec.asset_components.iter().map(|asset| ComponentAccess {
-                    key: asset_vkey(&asset.key),
+                    key: (self.asset_vkey)(&asset.key),
                     name: format!("Assets[{}]", asset.name),
                     exclusive: asset.mutable,
                     mutable: asset.mutable,
@@ -581,9 +631,9 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 let mut markers = Vec::new();
                 for c in &spec.components {
                     if !c.optional {
-                        filters.with.insert(component_vkey(&c.key));
+                        filters.with.insert((self.component_vkey)(&c.key));
                         markers.push(QueryMarker {
-                            key: component_vkey(&c.key),
+                            key: (self.component_vkey)(&c.key),
                             name: c.name.clone(),
                             explicit_with: false,
                         });
@@ -591,24 +641,24 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 }
                 for asset in &spec.asset_components {
                     if !asset.optional {
-                        filters.with.insert(asset_vkey(&asset.key));
+                        filters.with.insert((self.asset_vkey)(&asset.key));
                     }
                 }
                 for f in &spec.with {
-                    filters.with.insert(component_vkey(&f.key));
+                    filters.with.insert((self.component_vkey)(&f.key));
                     markers.push(QueryMarker {
-                        key: component_vkey(&f.key),
+                        key: (self.component_vkey)(&f.key),
                         name: f.label.clone(),
                         explicit_with: true,
                     });
                 }
                 for f in &spec.without {
-                    filters.without.insert(component_vkey(&f.key));
+                    filters.without.insert((self.component_vkey)(&f.key));
                 }
                 for f in spec.changed.iter().chain(&spec.added) {
-                    filters.with.insert(component_vkey(&f.key));
+                    filters.with.insert((self.component_vkey)(&f.key));
                     markers.push(QueryMarker {
-                        key: component_vkey(&f.key),
+                        key: (self.component_vkey)(&f.key),
                         name: f.label.clone(),
                         explicit_with: false,
                     });
@@ -628,8 +678,8 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 scheduler_access,
                 ..
             } => ParamAccess::Resource {
-                key: resource_vkey(key),
-                marker: resource_marker_vkey.clone(),
+                key: (self.resource_vkey)(key),
+                marker: self.resource_marker_vkey.clone(),
                 name: name.clone(),
                 exclusive: scheduler_access.is_exclusive() || *mutable,
                 mutable: *mutable,
@@ -642,8 +692,8 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 backing_name,
                 mutable,
             } => ParamAccess::Assets {
-                key: asset_vkey(key),
-                marker: resource_marker_vkey.clone(),
+                key: (self.asset_vkey)(key),
+                marker: self.resource_marker_vkey.clone(),
                 name: name.clone(),
                 backing_name: backing_name.clone(),
                 mutable: *mutable,
@@ -652,7 +702,7 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 key,
                 scheduler_access,
             } => {
-                let (key, name) = message_vkey(key);
+                let (key, name) = (self.message_vkey)(key);
                 ParamAccess::Message {
                     key,
                     name,
@@ -660,7 +710,7 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
                 }
             }
             ParamSpec::MessageWriter { key } | ParamSpec::MessageMutator { key } => {
-                let (key, name) = message_vkey(key);
+                let (key, name) = (self.message_vkey)(key);
                 ParamAccess::Message {
                     key,
                     name,
@@ -669,8 +719,8 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
             }
             ParamSpec::World => ParamAccess::World,
             ParamSpec::Gizmos { key, name } => ParamAccess::Resource {
-                key: resource_vkey(key),
-                marker: resource_marker_vkey.clone(),
+                key: (self.resource_vkey)(key),
+                marker: self.resource_marker_vkey.clone(),
                 name: name.clone(),
                 exclusive: false,
                 mutable: false,
@@ -681,8 +731,8 @@ pub fn to_param_accesses<K: BackendKeys, VK: Hash + Eq + Clone>(
             | ParamSpec::NonSendMarker
             | ParamSpec::Observer
             | ParamSpec::RemovedComponents { .. } => ParamAccess::None,
-        })
-        .collect()
+        }
+    }
 }
 
 /// The user-facing conflict message, identical on both backends.
@@ -769,6 +819,7 @@ pub fn condition_param_rejection<K: BackendKeys>(
     param: &ParamSpec<K>,
 ) -> Option<ConditionRejection> {
     match param {
+        ParamSpec::ParamSet(members) => members.iter().find_map(condition_param_rejection),
         ParamSpec::Input => Some(ConditionRejection::Input),
         ParamSpec::World => Some(ConditionRejection::World),
         ParamSpec::Commands => Some(ConditionRejection::Commands),
@@ -839,6 +890,9 @@ pub fn describe_param_specs<K: BackendKeys>(params: &[ParamSpec<K>]) -> Vec<Stri
     params
         .iter()
         .map(|param| match param {
+            ParamSpec::ParamSet(members) => {
+                format!("param_set[{}]", describe_param_specs(members).join(", "))
+            }
             ParamSpec::Input => "input".to_string(),
             ParamSpec::Query(spec) => describe_query_spec("query", spec),
             ParamSpec::View(spec) => describe_query_spec("view", spec),
@@ -1726,6 +1780,121 @@ mod tests {
             components: vec![comp(key, true, false)],
             ..extra
         })
+    }
+
+    #[test]
+    fn param_set_declares_the_union_and_validates_as_one_parameter() {
+        let (mut world, mut resolver) = setup();
+        let t_id = resolver.components["T"];
+        let params = [
+            ParamSpec::<MockKeys>::ParamSet(vec![
+                mut_query("T", QuerySpec::default()),
+                ParamSpec::Query(QuerySpec {
+                    components: vec![comp("T", false, false)],
+                    ..Default::default()
+                }),
+            ]),
+            ParamSpec::Local,
+        ];
+        let declared = build_declared_access(&mut world, &params, &mut resolver);
+        assert!(declared.set.combined_access().has_write(t_id));
+        assert!(declared.alias_conflict.is_none());
+
+        let accesses = to_param_accesses(
+            &params,
+            |k| *k,
+            |k| *k,
+            |k| *k,
+            "resource marker",
+            |k| ((*k).to_string(), (*k).to_string()),
+        );
+        assert!(validate_access(&accesses).is_ok());
+        assert_eq!(
+            describe_param_specs(&params),
+            [
+                "param_set[query components=[T(mut)] with=0 without=0 changed=0 added=0 \
+                 resolve_only=0, query components=[T(read)] with=0 without=0 changed=0 added=0 \
+                 resolve_only=0]",
+                "local",
+            ]
+        );
+    }
+
+    #[test]
+    fn param_set_conflicts_with_an_outside_alias() {
+        let (mut world, mut resolver) = setup();
+        let params = [
+            ParamSpec::<MockKeys>::ParamSet(vec![mut_query("T", QuerySpec::default())]),
+            ParamSpec::Query(QuerySpec {
+                components: vec![comp("T", false, false)],
+                ..Default::default()
+            }),
+        ];
+        let declared = build_declared_access(&mut world, &params, &mut resolver);
+        assert_eq!(
+            declared.alias_conflict,
+            Some(ResolvedParameterConflict {
+                parameter: 1,
+                existing_parameter: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn param_set_alias_check_exempts_only_different_members() {
+        let (mut world, mut resolver) = setup();
+        let shared = world.register_component::<R1>();
+        let other = world.register_component::<R2>();
+        for (key, primary, aux_reads) in [
+            ("writer", shared, vec![]),
+            ("aux_reader", other, vec![shared]),
+            ("self_alias", shared, vec![shared]),
+        ] {
+            resolver.resources.insert(
+                key,
+                ResolvedResource {
+                    primary: Some(primary),
+                    aux_reads,
+                },
+            );
+        }
+
+        let members = [ParamSpec::<MockKeys>::ParamSet(vec![
+            res("writer", 1, true),
+            res("aux_reader", 2, false),
+        ])];
+        let declared = build_declared_access(&mut world, &members, &mut resolver);
+        assert_eq!(declared.alias_conflict, None);
+
+        let own_member = [ParamSpec::<MockKeys>::ParamSet(vec![
+            res("aux_reader", 2, false),
+            res("self_alias", 3, true),
+        ])];
+        let lone = [res("self_alias", 3, true)];
+        for params in [&own_member[..], &lone[..]] {
+            assert_eq!(
+                build_declared_access(&mut world, params, &mut resolver).alias_conflict,
+                Some(ResolvedParameterConflict {
+                    parameter: 0,
+                    existing_parameter: 0,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn param_set_condition_rejection_follows_its_members() {
+        assert!(
+            condition_param_rejection(&ParamSpec::<MockKeys>::ParamSet(vec![ParamSpec::Local]))
+                .is_none()
+        );
+        assert_eq!(
+            condition_param_rejection(&ParamSpec::<MockKeys>::ParamSet(vec![
+                ParamSpec::Local,
+                mut_query("T", QuerySpec::default()),
+            ])),
+            Some(ConditionRejection::MutableQuery)
+        );
     }
 
     #[test]

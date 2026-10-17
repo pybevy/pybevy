@@ -208,15 +208,15 @@ class AccessibilityNode(Component):
     Example:
         ```python
         # Create an accessibility node for a button
-        commands.spawn((
+        commands.spawn(
             Button(),
             AccessibilityNode(Role.Button),
-        ))
+        )
 
         # Create a list item with a label
         node = AccessibilityNode(Role.ListItem)
         node.set_label("Item 1")
-        commands.spawn((Text("Item 1"), node))
+        commands.spawn(Text("Item 1"), node)
         ```
     """
 

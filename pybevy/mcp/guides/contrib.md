@@ -143,18 +143,17 @@ For hot-reload compatibility, you can import individual components and systems f
 ```python
 from pybevy.app import App, DefaultPlugins, Update
 from pybevy.decorators import entrypoint
-from pybevy.contrib.orbit_camera import OrbitCamera, orbit_camera_control_system, OrbitCameraState
+from pybevy.contrib.orbit_camera import orbit_camera_control_system
 
 @entrypoint
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
-        .insert_resource(OrbitCameraState())
         .add_systems(Update, orbit_camera_control_system)
     )
 ```
 
-This gives you finer control over which systems are registered and allows mixing contrib systems with your own camera logic. Reinsert the resource in the entrypoint so full reload initializes it again. `OrbitCameraState` is empty; `FlyCameraState` stores only `right_mouse_pressed`. Shift state comes from `ButtonInput[KeyCode]`.
+This gives you finer control over which systems are registered and allows mixing contrib systems with your own camera logic. The orbit camera keeps no resource; `FlyCameraState` stores only `right_mouse_pressed`. Shift state comes from `ButtonInput[KeyCode]`.
 
 ## See Also
 

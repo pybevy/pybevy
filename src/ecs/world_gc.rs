@@ -20,7 +20,7 @@ const TRAVERSING: usize = usize::MAX;
 
 static WORLD_GC_STATES: OnceLock<Mutex<HashMap<WorldId, Weak<TraversalState>>>> = OnceLock::new();
 
-/// Only owned Python Worlds register this state; borrowed adapters share it.
+/// Python World and App owners register this state; borrowed adapters share it.
 #[derive(Clone, Debug)]
 pub(crate) struct WorldGcState(WorldId, Arc<TraversalState>);
 

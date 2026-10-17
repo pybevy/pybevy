@@ -41,10 +41,10 @@ class Font(Asset):
         >>> # Load a custom font
         >>> def setup(asset_server: Res[AssetServer]):
         >>>     font_handle = asset_server.load("fonts/custom.ttf", asset_type=Font)
-        >>>     commands.spawn((
+        >>>     commands.spawn(
         >>>         Text2d("Custom Font!"),
         >>>         TextFont(font=font_handle, font_size=48.0),
-        >>>     ))
+        >>>     )
         >>>
         >>> # Create font from bytes
         >>> font_data = open("fonts/custom.ttf", "rb").read()
@@ -197,10 +197,10 @@ class LineHeight(Component):
         >>> from pybevy.sprite import Text2d
         >>>
         >>> # Absolute pixel line height
-        >>> commands.spawn((Text2d("Hello!"), LineHeight.Px(24.0)))
+        >>> commands.spawn(Text2d("Hello!"), LineHeight.Px(24.0))
         >>>
         >>> # Relative to font size (1.5x)
-        >>> commands.spawn((Text2d("Hello!"), LineHeight.RelativeToFont(1.5)))
+        >>> commands.spawn(Text2d("Hello!"), LineHeight.RelativeToFont(1.5))
     """
 
     class Px(LineHeight):
@@ -889,19 +889,19 @@ class TextSpan(Component):
         >>> # Create multi-style text
         >>> def setup(commands: Commands):
         >>>     # Root text entity
-        >>>     root = commands.spawn((
+        >>>     root = commands.spawn(
         >>>         Text2d("Hello "),
         >>>         TextFont.from_font_size(32.0),
         >>>         TextColor(Color.WHITE),
-        >>>     ))
+        >>>     )
         >>>
         >>>     # Add bold red child span
-        >>>     commands.spawn((
+        >>>     commands.spawn(
         >>>         TextSpan("World!"),
         >>>         TextFont.from_font_size(48.0),
         >>>         TextColor(Color.srgb(1.0, 0.0, 0.0)),
         >>>         ChildOf(root),
-        >>>     ))
+        >>>     )
     """
 
     text: str
@@ -925,10 +925,10 @@ class TextBackgroundColor(Component):
         >>> from pybevy.color import (Color, Hsla, Hsva, Hwba, Laba, Lcha, LinearRgba, Oklaba, Oklcha, Srgba, Xyza)
         >>>
         >>> # Create highlighted text
-        >>> commands.spawn((
+        >>> commands.spawn(
         >>>     Text2d("Highlighted!"),
         >>>     TextBackgroundColor(Color.srgb(1.0, 1.0, 0.0)),  # Yellow
-        >>> ))
+        >>> )
     """
 
     BLACK: ClassVar[TextBackgroundColor]

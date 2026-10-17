@@ -36,7 +36,7 @@ pub enum PyNormalizedRenderTarget {
         #[py_type(PyManualTextureViewHandle)]
         value: ManualTextureViewHandle,
     },
-    #[pyo3(name = "None_")]
+    #[pyo3(name = "None_", constructor = (*, width, height))]
     None { width: u32, height: u32 },
 }
 

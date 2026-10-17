@@ -867,6 +867,29 @@ def read_b(q: Query[Transform, With[B]]) -> None: ...
 
 Query data implies `With` for required components. Reciprocal `Without` filters prove exclusion. For Query/Res resource-entity collisions, use `Without[IsResource]` as the query filter where representable, or split systems.
 
+When one system needs parameters that overlap, put them in a
+`ParamSet[tuple[...]]` and borrow one member at a time, as in Bevy:
+
+```python
+from pybevy.prelude import *
+
+@system
+def adjust_and_inspect(
+    params: ParamSet[tuple[Query[Mut[Transform]], Query[Transform]]],
+) -> None:
+    for transform in params.p0():
+        transform.translation.x += 1.0
+    for transform in params.p1():
+        print(transform.translation)
+```
+
+A set holds one to eight Query, Single, View, Res, ResMut, Assets or message
+parameters. Each `pN()` call ends the borrow returned by the previous call, so
+use a member before borrowing the next one; values read from an earlier member
+raise `RuntimeError` afterwards. Parameters outside the set still conflict
+with every member. Use `ParamSet` in systems and run conditions; observers
+take ordinary parameters.
+
 **Change detection note:** Direct field assignments trigger `Changed[T]` for both
 wrapper and Python-object storage. Wrapper-backed `Vec2` and `Vec3` setters also
 mark their owning component. For Python-object storage under `Mut[T]`, reaching a

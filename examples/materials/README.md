@@ -11,8 +11,7 @@ python examples/materials/independent_samplers.py
 ```
 
 All assets are generated in Python. Use `ShaderMaterialPlugin()` for all custom
-material layouts; older examples using `StorageShaderMaterialPlugin()` remain
-supported. Each example imports its generated material bindings in the matching
+material layouts. Each example imports its generated material bindings in the matching
 [WGSL shaders](../../assets/shaders/examples/).
 
 | Scene | What to inspect |

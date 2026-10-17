@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from typing import cast
 
 from ..app import App, Plugin, Update
-from ..decorators import component, plugin, resource
-from ..ecs import Component, MessageReader, Mut, Query, Res, Resource, system
+from ..decorators import component, plugin
+from ..ecs import Component, MessageReader, Mut, Query, Res, system
 from ..input import (
     ButtonInput,
     KeyCode,
@@ -64,11 +64,6 @@ class OrbitCamera(Component):
                     f"(got {low!r} and {high!r})"
                 )
         object.__setattr__(self, name, value)
-
-
-@resource
-class OrbitCameraState(Resource):
-    """Compatibility resource; modifiers are read directly from ButtonInput."""
 
 
 @system
@@ -174,7 +169,6 @@ class OrbitCameraPlugin(Plugin):
     """
 
     def build(self, app: "App") -> None:
-        """Add orbit camera systems and resources to the app."""
+        """Add orbit camera systems to the app."""
 
-        app.init_resource(OrbitCameraState)
         app.add_systems(Update, orbit_camera_control_system)

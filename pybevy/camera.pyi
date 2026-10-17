@@ -1107,18 +1107,18 @@ class RenderLayers(Component):
 
     Examples:
         >>> # Create entity on layer 1 (hidden from default camera)
-        >>> commands.spawn((
+        >>> commands.spawn(
         ...     Mesh3d(cube_handle),
         ...     RenderLayers.layer(1)
-        ... ))
+        ... )
         >>>
         >>> # Create camera that only sees layer 1
-        >>> commands.spawn((
+        >>> commands.spawn(
         ...     Camera3d(),
         ...     Camera(),
         ...     Transform.from_translation(Vec3(0.0, 2.0, 5.0)),
         ...     RenderLayers.layer(1)
-        ... ))
+        ... )
         >>>
         >>> # Multi-layer setup (see layers 0 and 1)
         >>> layers = RenderLayers.layer(0).with_(1)
@@ -1819,7 +1819,7 @@ class NormalizedRenderTarget:
         def width(self) -> int: ...
         @property
         def height(self) -> int: ...
-        def __init__(self, width: int, height: int) -> None: ...
+        def __init__(self, *, width: int, height: int) -> None: ...
 
     def __eq__(self, other: object) -> bool: ...
 

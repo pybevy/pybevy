@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from pybevy.material import StorageBinding
 from pybevy.mesh import MeshTag
-from pybevy.pbr import StorageShaderMaterialPlugin
+from pybevy.pbr import ShaderMaterialPlugin
 from pybevy.prelude import *
 from pybevy.render import ShaderBuffer
 
@@ -74,7 +74,7 @@ def animate(
 def main(app: App) -> App:
     return (
         app.add_plugins(DefaultPlugins)
-        .add_plugins(StorageShaderMaterialPlugin())
+        .add_plugins(ShaderMaterialPlugin())
         .add_systems(Startup, setup)
         .add_systems(Update, animate)
     )

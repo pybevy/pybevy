@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
+    ptr::NonNull,
     sync::{Arc, Mutex},
 };
 
@@ -17,9 +18,9 @@ use bevy::{
 use pybevy_core::{
     AssetAccessRegistry, BorrowableStorage, FieldStorage, ensure_asset_access_registry,
     public_error::{
-        GIZMOS_PLUGIN_REQUIRED, ambiguous_bare_state_resource, pipe_input_must_be_first,
-        pipe_input_outside_pipe, pipe_target_requires_input, system_ambiguous_bare_state_resource,
-        system_resource_not_found,
+        GIZMOS_PLUGIN_REQUIRED, PARAM_SET_IN_OBSERVER, ambiguous_bare_state_resource,
+        pipe_input_must_be_first, pipe_input_outside_pipe, pipe_target_requires_input,
+        system_ambiguous_bare_state_resource, system_resource_not_found,
     },
     registry::global_registry,
     resource_initializer,
@@ -63,6 +64,7 @@ use crate::{
         mutable::PyMut,
         non_send_marker::PyNonSendMarker,
         observer::PyOn,
+        param_set::{ParamSetMember, PyParamSet},
         python_message::{
             PythonMessageClassTable, PythonMessageStore, resolve_from_cell, resolve_from_world,
         },
@@ -74,7 +76,7 @@ use crate::{
         removed_components::PyRemovedComponents,
         resource_type::{PyResourceType, ResourceRegistry},
         state::{PyStateMachineRegistry, is_typed_state_resource, untyped_state_resource_kind},
-        system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType},
+        system::{AssetTypePtr, SystemFunction, SystemParam, SystemParamType, param_leaves},
         view::{cached_view::CachedPyView, view::PyView, view_param::ViewParamType},
         world::PyWorld,
     },
@@ -503,6 +505,12 @@ pub(crate) fn lower_param_type(ty: &SystemParamType, py: Python<'_>) -> ParamSpe
         SystemParamType::MessageMutator { message_type } => ParamSpec::MessageMutator {
             key: message_type.clone(),
         },
+        SystemParamType::ParamSet { members } => ParamSpec::ParamSet(
+            members
+                .iter()
+                .map(|member| lower_param_type(&member.ty, py))
+                .collect(),
+        ),
         SystemParamType::RemovedComponents { param } => ParamSpec::RemovedComponents {
             key: param.component_type,
         },
@@ -540,7 +548,7 @@ pub(crate) fn validate_registered_state_topology(
     let Some(machine_count) = machine_count else {
         return Ok(());
     };
-    for param in params {
+    for param in param_leaves(params) {
         let SystemParamType::Resource { type_obj, .. } = &param.ty else {
             continue;
         };
@@ -1131,6 +1139,54 @@ pub(crate) unsafe fn build_run_args<'w, 'c1, 'c2>(
                 let obj = Py::new(py, py_mutator).expect("Failed to create PyMessageMutator");
                 args_buffer.push(obj.into_any());
             }
+            SystemParamType::ParamSet { members } => {
+                let mut runtime_members = Vec::with_capacity(members.len());
+                for member in members.iter() {
+                    let mut query_cache = None;
+                    let mut view_cache = None;
+                    let mut message_cursor = None;
+                    match member.ty {
+                        SystemParamType::Query { .. } => {
+                            query_cache = Some(NonNull::from(&query_caches[query_cache_idx]));
+                            query_cache_idx += 1;
+                        }
+                        SystemParamType::View { .. } => {
+                            view_cache = Some(NonNull::from(&view_caches[view_cache_idx]));
+                            view_cache_idx += 1;
+                        }
+                        SystemParamType::MessageReader { .. }
+                        | SystemParamType::MessageMutator { .. } => {
+                            message_cursor =
+                                message_cursor_storage.get(message_reader_idx).cloned();
+                            message_reader_idx += 1;
+                        }
+                        _ => {}
+                    }
+                    runtime_members.push(ParamSetMember {
+                        query_cache,
+                        view_cache,
+                        message_cursor,
+                    });
+                }
+                // SAFETY: the caches live in the scheduled run state, which
+                // only `initialize` rebuilds, and the cell belongs to this run;
+                // the run invalidates `validity` before either ends.
+                let param_set = unsafe {
+                    PyParamSet::new(
+                        members,
+                        runtime_members,
+                        world,
+                        validity.clone(),
+                        last_run,
+                        this_run,
+                        func_name.to_string(),
+                        command_error_sink.clone(),
+                        parity_trace.clone(),
+                    )
+                };
+                let obj = Py::new(py, param_set).expect("Failed to create ParamSet");
+                args_buffer.push(obj.into_any());
+            }
             SystemParamType::RemovedComponents { .. } => {
                 let cursor = message_cursor_storage
                     .get(message_reader_idx)
@@ -1624,6 +1680,9 @@ pub(crate) unsafe fn execute_prepared_observer(
                 );
                 let obj = Py::new(py, py_mutator).expect("Failed to create PyMessageMutator");
                 args_buffer.push(obj.into_any());
+            }
+            SystemParamType::ParamSet { .. } => {
+                return Err(PyTypeError::new_err(PARAM_SET_IN_OBSERVER));
             }
             SystemParamType::RemovedComponents { param } => {
                 let cursor = message_cursor_storage

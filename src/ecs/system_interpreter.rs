@@ -67,7 +67,7 @@ use super::{
         query_runtime::{CachedQuery, PyQueryIter},
         single_runtime::PySingleQuery,
     },
-    system::{SystemFunction, SystemParam, SystemParamType},
+    system::{SystemFunction, SystemGcRegistry, SystemParam, SystemParamType, param_leaves},
     view::cached_view::CachedPyView,
     world_commands,
 };
@@ -101,7 +101,7 @@ pub(crate) struct MainParamPlan {
 
 pub(crate) struct MainPreparedCall {
     callable: Py<PyAny>,
-    params: SmallVec<[SystemParam; 8]>,
+    params: Arc<SmallVec<[SystemParam; 8]>>,
     message_cursors: Vec<CursorStorage>,
 }
 
@@ -208,9 +208,8 @@ fn prepare_callable(
             state_machine_count,
         )
     })?;
-    let message_reader_count = system_func
-        .params
-        .iter()
+    let message_reader_count = param_leaves(&system_func.params)
+        .into_iter()
         .filter(|param| {
             matches!(
                 param.ty,
@@ -432,9 +431,8 @@ pub(crate) fn new_main_observer(
         }
         (module, name)
     });
-    let message_reader_count = system_func
-        .params
-        .iter()
+    let message_reader_count = param_leaves(&system_func.params)
+        .into_iter()
         .filter(|param| {
             matches!(
                 param.ty,
@@ -721,7 +719,8 @@ unsafe impl SystemInterpreter for MainInterpreter {
         #[allow(clippy::arc_with_non_send_sync)]
         let snapshot = Arc::new(custom_component_ids.clone());
         let (query_caches, view_caches, removed_component_ids) = Python::attach(|py| {
-            let query_caches: Vec<CachedQuery> = params
+            let leaves = param_leaves(&params);
+            let query_caches: Vec<CachedQuery> = leaves
                 .iter()
                 .filter_map(|param| match &param.ty {
                     SystemParamType::Query { param } => Some(CachedQuery::build(
@@ -733,7 +732,10 @@ unsafe impl SystemInterpreter for MainInterpreter {
                     _ => None,
                 })
                 .collect();
-            let view_caches = params
+            world
+                .get_resource_or_insert_with(SystemGcRegistry::default)
+                .register_queries(query_caches.iter().map(|cached| &cached.param));
+            let view_caches = leaves
                 .iter()
                 .filter_map(|param| match &param.ty {
                     SystemParamType::View { param: view } => {

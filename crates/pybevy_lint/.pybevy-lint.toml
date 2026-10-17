@@ -3518,6 +3518,20 @@ path = "animation.AnimationGraphNode"
 
 [[validation.exceptions]]
 code = "W038"
+reason = "Bevy generates ParamSet's p0() to p7() accessors with all_tuples_enumerated!(impl_param_set, 1, 8, P, p) in bevy_ecs system_param.rs, which the source scan does not expand"
+paths = [
+    "ecs.ParamSet.p0",
+    "ecs.ParamSet.p1",
+    "ecs.ParamSet.p2",
+    "ecs.ParamSet.p3",
+    "ecs.ParamSet.p4",
+    "ecs.ParamSet.p5",
+    "ecs.ParamSet.p6",
+    "ecs.ParamSet.p7",
+]
+
+[[validation.exceptions]]
+code = "W038"
 reason = "Python views of Bevy's Image.data: Option<Vec<u8>> field, which cannot be lent to Python as a Rust slice: data()/data_mut() borrow the buffer as read-only/writable arrays under asset authority, data_copy() returns an owned array, and data_len() reads the length without acquiring a view (the ShaderBuffer data accessor family)"
 paths = [
     "image.Image.data_copy",
@@ -3833,11 +3847,6 @@ paths = [
 code = "E013"
 path = "pbr.StorageShaderMaterial"
 reason = "PyBevy's native Material with per-instance typed storage layouts and StandardMaterial delegation; no matching upstream constructor"
-
-[[validation.exceptions]]
-code = "E013"
-path = "pbr.StorageShaderMaterialPlugin"
-reason = "PyBevy's opt-in material plugin installs native material pipelines, shader synchronization and storage dependency refresh"
 
 [[validation.exceptions]]
 code = "E018"

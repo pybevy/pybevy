@@ -39,6 +39,7 @@ pub mod mutable;
 pub mod non_send_marker;
 pub mod observer;
 pub mod observer_registry;
+pub(crate) mod param_set;
 pub(crate) mod parity_trace;
 pub(crate) mod python_message;
 pub mod query;
@@ -104,6 +105,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<message::PyReadOnlyMessage>()?;
     ecs.add_class::<non_send_marker::PyNonSendMarker>()?;
     ecs.add_class::<removed_components::PyRemovedComponents>()?;
+    ecs.add_class::<param_set::PyParamSet>()?;
     ecs.add_class::<messages::PyMessageType>()?;
     ecs.add_class::<messages::PyMessageTypeParam>()?;
     ecs.add_class::<messages::PyMessages>()?;

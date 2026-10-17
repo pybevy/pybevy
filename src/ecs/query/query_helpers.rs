@@ -604,7 +604,7 @@ fn is_filter_tuple_alias(py: Python<'_>, item: &Bound<'_, PyAny>) -> bool {
     !tuple_args.is_empty() && tuple_args.iter().all(|arg| is_query_filter(&arg))
 }
 
-fn is_filter_position_argument(py: Python<'_>, item: &Bound<'_, PyAny>) -> bool {
+pub(crate) fn is_filter_position_argument(py: Python<'_>, item: &Bound<'_, PyAny>) -> bool {
     is_query_filter(item) || is_filter_tuple_alias(py, item)
 }
 
