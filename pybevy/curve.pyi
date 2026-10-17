@@ -359,10 +359,10 @@ class EaseFunction:
     class Elastic(EaseFunction):
         """`f(omega, t) = 1 - (1 - t)^2 (2 sin(omega t) / omega + cos(omega t))`."""
 
-        __match_args__: ClassVar[tuple[Literal["omega"]]]
+        __match_args__: ClassVar[tuple[Literal["value"]]]
         @property
-        def omega(self) -> float: ...
-        def __init__(self, omega: float) -> None: ...
+        def value(self) -> float: ...
+        def __init__(self, value: float) -> None: ...
 
 class CubicCurve2d:
     """A 2D cubic curve composed of cubic segments.

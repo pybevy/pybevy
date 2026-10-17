@@ -1081,6 +1081,7 @@ mod tests {
                 added_filters: Vec::new(),
                 anyof_groups: Vec::new(),
                 or_filters: Vec::new(),
+                archetypal: Vec::new(),
             },
         )
     }

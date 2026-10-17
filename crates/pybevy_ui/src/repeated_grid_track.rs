@@ -4,7 +4,7 @@ use bevy::{
 };
 use pybevy_core::{
     FieldStorage,
-    domain::{FINITE, check_for},
+    domain::{FINITE, IntegerInput, check_for},
     public_error::{REPEATED_GRID_TRACK_EMPTY, grid_template_track_type},
 };
 use pyo3::{
@@ -15,7 +15,9 @@ use pyo3::{
 
 use crate::{
     grid_track::{PyGridTrack, grid_track_factory},
-    grid_track_repetition::{PyGridTrackRepetition, extract_grid_track_repetition_from_any},
+    grid_track_repetition::{
+        PyGridTrackRepetition, checked_repetition_count, extract_grid_track_repetition_from_any,
+    },
     track_sizing_function::{
         PyMaxTrackSizingFunction, PyMinTrackSizingFunction, checked_max, checked_min,
     },
@@ -184,58 +186,61 @@ impl PyRepeatedGridTrack {
     }
 
     #[staticmethod]
-    pub fn fr(repetition: u16, value: f32) -> PyResult<Self> {
+    pub fn fr(repetition: IntegerInput<u16>, value: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::fr(repetition, check_for::<Self, _>("fr", value, FINITE)?),
+            inner: RepeatedGridTrack::fr(
+                checked_repetition_count(repetition)?,
+                check_for::<Self, _>("fr", value, FINITE)?,
+            ),
         })
     }
 
     #[staticmethod]
-    pub fn flex(repetition: u16, value: f32) -> PyResult<Self> {
+    pub fn flex(repetition: IntegerInput<u16>, value: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::flex(
-                repetition,
+                checked_repetition_count(repetition)?,
                 check_for::<Self, _>("flex", value, FINITE)?,
             ),
         })
     }
 
     #[staticmethod]
-    pub fn auto(repetition: u16) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::auto(repetition),
-        }
+    pub fn auto(repetition: IntegerInput<u16>) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::auto(checked_repetition_count(repetition)?),
+        })
     }
 
     #[staticmethod]
-    pub fn min_content(repetition: u16) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::min_content(repetition),
-        }
+    pub fn min_content(repetition: IntegerInput<u16>) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::min_content(checked_repetition_count(repetition)?),
+        })
     }
 
     #[staticmethod]
-    pub fn max_content(repetition: u16) -> Self {
-        PyRepeatedGridTrack {
-            inner: RepeatedGridTrack::max_content(repetition),
-        }
+    pub fn max_content(repetition: IntegerInput<u16>) -> PyResult<Self> {
+        Ok(PyRepeatedGridTrack {
+            inner: RepeatedGridTrack::max_content(checked_repetition_count(repetition)?),
+        })
     }
 
     #[staticmethod]
-    pub fn fit_content_px(repetition: u16, limit: f32) -> PyResult<Self> {
+    pub fn fit_content_px(repetition: IntegerInput<u16>, limit: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_px(
-                repetition,
+                checked_repetition_count(repetition)?,
                 check_for::<Self, _>("fit_content_px", limit, FINITE)?,
             ),
         })
     }
 
     #[staticmethod]
-    pub fn fit_content_percent(repetition: u16, limit: f32) -> PyResult<Self> {
+    pub fn fit_content_percent(repetition: IntegerInput<u16>, limit: f32) -> PyResult<Self> {
         Ok(PyRepeatedGridTrack {
             inner: RepeatedGridTrack::fit_content_percent(
-                repetition,
+                checked_repetition_count(repetition)?,
                 check_for::<Self, _>("fit_content_percent", limit, FINITE)?,
             ),
         })

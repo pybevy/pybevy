@@ -1,8 +1,9 @@
 use bevy::pbr::wireframe::WireframeTopology;
 use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_macros::{pyenum, pywrap};
 use pyo3::prelude::*;
 
+#[pyenum(WireframeTopology, manual)]
 #[pywrap(WireframeTopology, bridge, copy)]
 #[pyclass(name = "WireframeTopology", module = "pybevy.pbr", extends = PyComponent, frozen, eq, skip_from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

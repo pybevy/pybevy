@@ -1,9 +1,17 @@
 use bevy::camera::ImageRenderTarget;
 use pybevy_core::{
-    PyHandle, extract_handle_from_any,
+    PyHandle,
+    domain::{FieldDomain, check_for},
+    extract_handle_from_any,
     repr::{float_repr, object_repr},
 };
 use pyo3::prelude::*;
+
+// UiScale's range: tiny factors make the logical size infinite, huge ones overflow glyph rasterization.
+const SCALE_FACTOR_DOMAIN: &[FieldDomain] = &[FieldDomain::RangeInclusive {
+    lo: 1.0 / 64.0,
+    hi: 64.0,
+}];
 
 #[pyclass(
     name = "ImageRenderTarget",
@@ -35,6 +43,7 @@ impl PyImageRenderTarget {
     #[new]
     #[pyo3(signature = (*, handle, scale_factor = 1.0))]
     pub fn new(handle: &Bound<'_, PyAny>, scale_factor: f32) -> PyResult<Self> {
+        let scale_factor = check_for::<Self, _>("scale_factor", scale_factor, SCALE_FACTOR_DOMAIN)?;
         let handle = extract_handle_from_any(handle)?;
         Ok(Self {
             inner: ImageRenderTarget {

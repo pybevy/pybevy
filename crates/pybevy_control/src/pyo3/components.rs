@@ -41,7 +41,7 @@ use crate::{
                 validate_annotated_field_value,
             },
         },
-        inspect::native_component_fields,
+        inspect::{native_component_fields, read_native_component_fields, reflected_type_is_enum},
         names::{ComponentTarget, resolve_component},
         to_json::py_value_to_json,
     },
@@ -646,6 +646,13 @@ pub fn set_component(
             bridge.as_ref(),
         ) {
             Ok(new_values) => {
+                // An enum component echoes its whole stored value; report it as
+                // get_component does so the echo replays like a readback.
+                let new_values = if reflected_type_is_enum(world, type_id) {
+                    read_native_component_fields(world, entity, bridge).unwrap_or(new_values)
+                } else {
+                    new_values
+                };
                 return Ok(serde_json::json!({
                     "entity_id": entity_id,
                     "component": component,

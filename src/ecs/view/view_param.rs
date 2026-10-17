@@ -22,6 +22,8 @@ pub struct PyViewParam {
     pub(crate) changed_filters: SmallVec<[PyComponentType; 4]>,
     /// Added filter component types (Added[T] pattern)
     pub(crate) added_filters: SmallVec<[PyComponentType; 4]>,
+    /// Disabling components the View opts into matching (Allow[T] pattern)
+    pub(crate) allow_filters: SmallVec<[PyComponentType; 4]>,
     /// Whether Entity was requested in the View type parameters
     pub(crate) has_entity: bool,
     /// Strong references backing the `PyComponentType::Custom` pointers above.
@@ -42,7 +44,7 @@ impl PyViewParam {
     pub(crate) fn retain_custom_types(
         py: Python<'_>,
         parameters: &[ViewParamType],
-        filters: [&[PyComponentType]; 4],
+        filters: [&[PyComponentType]; 5],
     ) -> SmallVec<[Arc<Py<PyType>>; 4]> {
         let from_data = parameters.iter().map(|param| match param {
             ViewParamType::Component { comp_type, .. } => *comp_type,
@@ -62,6 +64,7 @@ impl Clone for PyViewParam {
             without_filters: self.without_filters.clone(),
             changed_filters: self.changed_filters.clone(),
             added_filters: self.added_filters.clone(),
+            allow_filters: self.allow_filters.clone(),
             has_entity: self.has_entity,
             retained_types: clone_retained_classes(py, &self.retained_types),
         })
@@ -77,6 +80,7 @@ impl PartialEq for PyViewParam {
             && self.without_filters == other.without_filters
             && self.changed_filters == other.changed_filters
             && self.added_filters == other.added_filters
+            && self.allow_filters == other.allow_filters
             && self.has_entity == other.has_entity
     }
 }
@@ -124,6 +128,11 @@ impl PyViewParam {
             self.added_filters
                 .iter()
                 .map(|ct| format!("Added[{}]", ct.display_name(py))),
+        );
+        names.extend(
+            self.allow_filters
+                .iter()
+                .map(|ct| format!("Allow[{}]", ct.display_name(py))),
         );
         names
     }

@@ -343,7 +343,7 @@ class Expr:
         """Greater than or equal: self >= other"""
         return Expr(op="ge", args=[self, other])
 
-    def __and__(self, other: Expr | float | int) -> Expr:
+    def __and__(self, other: Expr | bool) -> Expr:
         """Logical AND: self & other
 
         Combines two boolean expressions with AND logic.
@@ -356,7 +356,11 @@ class Expr:
         """
         return Expr(op="and", args=[self, other])
 
-    def __or__(self, other: Expr | float | int) -> Expr:
+    def __rand__(self, other: bool) -> Expr:
+        """Logical AND with a bool on the left: other & self"""
+        return Expr(op="and", args=[other, self])
+
+    def __or__(self, other: Expr | bool) -> Expr:
         """Logical OR: self | other
 
         Combines two boolean expressions with OR logic.
@@ -368,6 +372,10 @@ class Expr:
             >>> vulnerable = health_low | shield_down  # Either is dangerous
         """
         return Expr(op="or", args=[self, other])
+
+    def __ror__(self, other: bool) -> Expr:
+        """Logical OR with a bool on the left: other | self"""
+        return Expr(op="or", args=[other, self])
 
     def __invert__(self) -> Expr:
         """Logical NOT: ~self

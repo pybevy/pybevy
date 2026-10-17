@@ -48,8 +48,8 @@ use crate::{
     AssetAccessRegistry, AssetAccessScope, AssetPath, AssetResourceReadGuard, AssetResourceState,
     AssetResourceWriteGuard, BorrowableStorage, ErasedResolvedMut, ErasedResolvedRef,
     ErasedRevalidatingSource, FromBorrowedStorage, PendingViewClaim, ReadField, ReadVariant,
-    ReadViewClaim, RevalidatingSource, StorageMut, StorageRef, ValidityFlag, ValidityFlagWithMode,
-    ViewCounters, WriteField,
+    ReadViewClaim, RevalidatingSource, StorageMut, StorageRef, ValidateField, ValidityFlag,
+    ValidityFlagWithMode, ViewCounters, WriteField,
     asset_path::{SourceIdentity, SourceReadGuard, SourceWriteGuard},
     borrowed::{BorrowedMut, BorrowedRef, checked_field_offset},
     storage_error::StorageError,
@@ -1077,6 +1077,45 @@ impl<T: Asset> AssetStorage<T> {
         W: FromBorrowedStorage<S>,
     {
         Ok(W::from_borrowed(self.borrow_field(read, write)?))
+    }
+
+    /// Borrow a field whose every nested write must pass `validate`.
+    ///
+    /// Tracked and pointer-backed assets yield a checked path that stages each
+    /// child write on a copy of the field and commits it only when `validate`
+    /// accepts the result. Owned assets yield a read-only snapshot.
+    pub fn borrow_validated_field_as<F: Clone + 'static, S, W>(
+        &self,
+        read: ReadField<T, F>,
+        write: WriteField<T, F>,
+        validate: ValidateField<F>,
+    ) -> Result<W, StorageError>
+    where
+        S: BorrowableStorage<F>,
+        W: FromBorrowedStorage<S>,
+    {
+        let source = if self.resolver.is_some() {
+            read(&*self.as_ref()?);
+            self.root_source()?.validated_field(read, write, validate)
+        } else {
+            match &self.inner {
+                AssetStorageInner::Owned(Some(asset)) | AssetStorageInner::OwnedReadOnly(asset) => {
+                    return Ok(W::from_borrowed(S::snapshot(read(asset))));
+                }
+                AssetStorageInner::Owned(None) => return Err(StorageError::AssetConsumed),
+                AssetStorageInner::Source(source) => {
+                    read(&*source.resolve_ref()?);
+                    source.validated_field(read, write, validate)
+                }
+                AssetStorageInner::BorrowedRef { .. } | AssetStorageInner::BorrowedMut { .. } => {
+                    read(&*self.as_ref()?);
+                    RevalidatingSource::from_borrowed_asset(self)
+                        .ok_or(StorageError::InvalidAccess)?
+                        .validated_field(read, write, validate)
+                }
+            }
+        };
+        Ok(W::from_borrowed(S::revalidating_source(source)))
     }
 
     /// Materialize an explicit read-only snapshot of an asset field.

@@ -59,7 +59,7 @@ impl PyPhaseFunction {
             PhaseFunction::Curve(_) => "PhaseFunction.Curve(...)".to_string(),
             PhaseFunction::ChromaticCurve(_) => "PhaseFunction.ChromaticCurve(...)".to_string(),
             PhaseFunction::ChromaticTexture(_) => {
-                "PhaseFunction.ChromaticTexture(image=...)".to_string()
+                "PhaseFunction.ChromaticTexture(value=...)".to_string()
             }
         }
     }
@@ -196,12 +196,12 @@ impl PyPhaseFunctionChromaticTexture {
 
     #[classattr]
     fn __match_args__() -> (&'static str,) {
-        ("image",)
+        ("value",)
     }
 
     #[new]
-    pub fn new(image: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let image: Handle<Image> = extract_handle_from_any(image)?.try_into()?;
+    pub fn new(value: &Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let image: Handle<Image> = extract_handle_from_any(value)?.try_into()?;
         Ok(
             PyClassInitializer::from(PyPhaseFunction(PhaseFunction::ChromaticTexture(image)))
                 .add_subclass(Self),
@@ -209,7 +209,7 @@ impl PyPhaseFunctionChromaticTexture {
     }
 
     #[getter]
-    pub fn image(slf: PyRef<'_, Self>) -> PyHandle {
+    pub fn value(slf: PyRef<'_, Self>) -> PyHandle {
         let base = slf.into_super();
         match &base.0 {
             PhaseFunction::ChromaticTexture(image) => PyHandle::from(image),

@@ -2276,6 +2276,15 @@ pub(crate) fn validate_stack_effects(
                     stack.push(StackKind::Float);
                     continue;
                 }
+                Op::PushBool(_) => {
+                    stack.push(StackKind::Bool);
+                    continue;
+                }
+                Op::Eq | Op::Ne if stack.ends_with(&[StackKind::Bool; 2]) => {
+                    stack.truncate(stack.len() - 2);
+                    stack.push(StackKind::Bool);
+                    continue;
+                }
                 Op::StoreField(index) => {
                     // A Bool destination accepts either kind (the VM stores
                     // whether a number is nonzero); numeric ones require a float.
@@ -2677,6 +2686,7 @@ pub(crate) fn check_integer_types(
                 stack.push(TrackedValue::Numeric(0, Some(IntLiteral::Exact(value))));
             }
             Op::PushFloatConst(_) | Op::Random(_) => stack.push(TrackedValue::numeric(TYPE_F64)),
+            Op::PushBool(_) => stack.push(TrackedValue::Bool),
             Op::StoreField(index) => {
                 let value = stack.pop().expect("stack already validated");
                 let destination = bytecode.field_map[usize::from(index)].field_type;
@@ -3855,6 +3865,39 @@ mod tests {
                 instruction: "PushInput",
                 index: 0,
                 field_count: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn bool_literals_combine_with_logic_and_compare_only_with_bools() {
+        let component_id = ComponentId::new(1);
+        let runtime = runtime(component_id, true);
+        let program = |bytecode: Vec<Op>| {
+            runtime.validate_program(
+                Arc::new(CompiledBytecode {
+                    bytecode,
+                    constants: vec![0.0],
+                    integers: Vec::new(),
+                    field_map: Vec::new(),
+                }),
+                ProgramIntent::ReadOnly,
+            )
+        };
+        let comparison = [Op::PushConst(0), Op::PushConst(0), Op::Gt];
+
+        let and = program([&comparison[..], &[Op::PushBool(true), Op::And]].concat());
+        assert!(and.is_ok());
+        let eq = program([&comparison[..], &[Op::PushBool(true), Op::Eq]].concat());
+        assert!(eq.is_ok());
+        let mixed = program(vec![Op::PushConst(0), Op::PushBool(true), Op::Eq]);
+        assert!(matches!(
+            mixed,
+            Err(ViewRuntimeError::StackTypeMismatch {
+                instruction_index: 2,
+                instruction: "Eq",
+                expected: "float",
+                actual: "bool",
             })
         ));
     }

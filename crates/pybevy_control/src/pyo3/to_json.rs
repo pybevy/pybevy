@@ -601,14 +601,32 @@ pub(crate) fn extract_bridge_fields(
     if !reflected_enum {
         return fields;
     }
+    let payload = enum_payload_field_names(bound);
     let Ok(owned) = bound.call_method0("__copy__") else {
         if fields.contains_key("variant") {
-            fields.retain(|name, _| name == "variant");
+            fields.retain(|name, _| name == "variant" || payload.contains(name));
         }
         return fields;
     };
-    fields.retain(|name, _| name == "variant" || accepts_own_value(&owned, name));
+    fields.retain(|name, _| {
+        name == "variant" || payload.contains(name) || accepts_own_value(&owned, name)
+    });
     fields
+}
+
+/// The payload fields a nested enum variant declares in `__match_args__`.
+/// Frozen payloads have no setter but are still part of the value; derived
+/// properties such as `is_*` predicates are not listed there.
+pub(crate) fn enum_payload_field_names(bound: &Bound<'_, PyAny>) -> Vec<String> {
+    let py_type = bound.get_type();
+    if pyo3_complex_enum_variant_name(&py_type).is_none() {
+        return Vec::new();
+    }
+    py_type
+        .getattr("__match_args__")
+        .ok()
+        .and_then(|names| names.extract::<Vec<String>>().ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

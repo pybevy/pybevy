@@ -16,11 +16,11 @@ pub enum PyTimeUpdateStrategy {
     },
     #[py_bevy(tuple)]
     ManualDuration {
-        duration: Duration,
+        value: Duration,
     },
     #[py_bevy(tuple)]
     FixedTimesteps {
-        steps: u32,
+        value: u32,
     },
 }
 

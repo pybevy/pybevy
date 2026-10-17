@@ -1,6 +1,6 @@
 use bevy::ecs::{
     component::ComponentId,
-    query::{QueryBuilder, QueryData, QueryState},
+    query::{FilteredAccess, QueryBuilder, QueryData, QueryState},
     world::{FilteredEntityMut, FilteredEntityRef, World},
 };
 
@@ -40,6 +40,9 @@ pub struct QueryBuildSpec {
     pub anyof_groups: Vec<Vec<ComponentId>>,
     /// Groups of conjunctive branches; every group is ANDed and its branches are ORed.
     pub or_filters: Vec<Vec<QueryFilterBranch>>,
+    /// `Has` and `Allow` component IDs. Archetypal access reads nothing and
+    /// narrows nothing, but it exempts the component from `DefaultQueryFilters`.
+    pub archetypal: Vec<ComponentId>,
 }
 
 impl QueryBuildSpec {
@@ -51,6 +54,12 @@ impl QueryBuildSpec {
 
 /// Apply with/without/changed/added/anyof filters to any QueryBuilder.
 fn apply_filters<D: QueryData>(builder: &mut QueryBuilder<D>, spec: &QueryBuildSpec) {
+    for &id in &spec.archetypal {
+        let mut access = FilteredAccess::default();
+        access.access_mut().add_archetypal(id);
+        builder.extend_access(access);
+    }
+
     for &id in &spec.with_filters {
         builder.with_id(id);
     }
@@ -185,7 +194,7 @@ pub fn build_query_state_ref<'a>(
 
 #[cfg(test)]
 mod tests {
-    use bevy::ecs::component::Component;
+    use bevy::ecs::{component::Component, entity_disabling::Disabled, query::Has};
 
     use super::*;
 
@@ -213,6 +222,7 @@ mod tests {
             added_filters: vec![],
             anyof_groups: vec![],
             or_filters: vec![],
+            archetypal: vec![],
         }
     }
 
@@ -300,6 +310,7 @@ mod tests {
             added_filters: vec![],
             anyof_groups: vec![],
             or_filters: vec![],
+            archetypal: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -327,6 +338,7 @@ mod tests {
             added_filters: vec![],
             anyof_groups: vec![],
             or_filters: vec![],
+            archetypal: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -401,6 +413,7 @@ mod tests {
             added_filters: vec![],
             anyof_groups: vec![vec![b_id, c_id]],
             or_filters: vec![],
+            archetypal: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -442,6 +455,7 @@ mod tests {
             added_filters: vec![],
             anyof_groups: vec![vec![a_id, b_id], vec![c_id]],
             or_filters: vec![],
+            archetypal: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
@@ -480,10 +494,41 @@ mod tests {
                     ..Default::default()
                 },
             ]],
+            archetypal: vec![],
         };
         let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
         configure_ref_query(&mut builder, &spec);
         let mut state = builder.build();
         assert_eq!(state.iter(&world).count(), 3);
+    }
+
+    #[test]
+    fn archetypal_access_lifts_the_default_disabled_filter_like_has() {
+        let mut world = World::new();
+        let (a_id, _, _) = ids(&mut world);
+        let disabled_id = world.register_component::<Disabled>();
+        world.spawn(A);
+        world.spawn((A, Disabled));
+        let native = world.query::<(&A, Has<Disabled>)>().iter(&world).count();
+
+        let mut spec = spec_with(vec![QueryComponent {
+            id: a_id,
+            optional: false,
+            mutable: false,
+        }]);
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        configure_ref_query(&mut builder, &spec);
+        let mut state = builder.build();
+        assert_eq!(state.iter(&world).count(), 1);
+
+        spec.archetypal.push(disabled_id);
+        let mut builder = QueryBuilder::<FilteredEntityRef>::new(&mut world);
+        configure_ref_query(&mut builder, &spec);
+        let mut state = builder.build();
+        assert_eq!(state.iter(&world).count(), native);
+        assert_eq!(native, 2);
+        let access = state.component_access().access();
+        assert!(access.has_archetypal(disabled_id));
+        assert!(!access.has_read(disabled_id));
     }
 }

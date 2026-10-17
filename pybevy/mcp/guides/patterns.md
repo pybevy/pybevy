@@ -72,9 +72,9 @@ if __name__ == "__main__":
 - `@entrypoint` requires a synchronous `def main(app: App) -> App:` that returns the configured App.
 - Return the `app` you were given, not a new `App()`: hot reload and tests read the configuration from the App they pass in.
 - End with `if __name__ == "__main__": main().run()` for direct `python scene.py` execution. The CLI and MCP loaders invoke the entrypoint themselves.
-- `App.run()` returns `AppExit.Success()` or `AppExit.Error(code)`. The `pybevy run`
+- `App.run()` returns `AppExit.Success()` or `AppExit.Error(value)`. The `pybevy run`
   and `pybevy dev` commands use an error code as their process status. A direct
-  Python script must call `sys.exit(result.code)` itself if it needs that status.
+  Python script must call `sys.exit(result.value)` itself if it needs that status.
 - Decorate every system with `@system`, every run condition with `@condition`, and every observer with `@observer` (from `pybevy.ecs`, also in the prelude); `add_systems`, `run_if`, and `add_observer` raise `TypeError` for a plain function
 - Register systems with `app.add_systems(Stage, fn)` - there is no `@app.system()` decorator
 - Systems and observers must be synchronous functions with positional injected parameters; generator functions and keyword-only injected parameters are rejected at registration.

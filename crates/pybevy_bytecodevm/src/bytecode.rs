@@ -565,6 +565,9 @@ pub enum Op {
     /// u16 is an index into the integers array
     PushInt(u16),
 
+    /// Push a Python `bool` literal onto the stack
+    PushBool(bool),
+
     /// Pop two values, add them, push result
     Add,
 
@@ -1452,6 +1455,7 @@ impl VM {
                     StackValue::int_literal(value)
                 });
             }
+            Op::PushBool(value) => self.stack.push(StackValue::Bool(*value)),
 
             Op::Add => {
                 let b = self.stack.pop().expect("Stack underflow on Add");

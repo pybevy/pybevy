@@ -76,6 +76,7 @@ pybevy_audio = { path = "./crates/pybevy_audio", version = "=0.3.0-rc.1" }
 pybevy_transform = { path = "./crates/pybevy_transform", version = "=0.3.0-rc.1" }
 pybevy_a11y = { path = "./crates/pybevy_a11y", version = "=0.3.0-rc.1" }
 pybevy_input = { path = "./crates/pybevy_input", version = "=0.3.0-rc.1" }
+pybevy_input_focus = { path = "./crates/pybevy_input_focus", version = "=0.3.0-rc.1" }
 pybevy_time = { path = "./crates/pybevy_time", version = "=0.3.0-rc.1" }
 pybevy_window = { path = "./crates/pybevy_window", version = "=0.3.0-rc.1" }
 pybevy_winit = { path = "./crates/pybevy_winit", version = "=0.3.0-rc.1" }
@@ -114,6 +115,7 @@ pybevy_audio = { workspace = true }
 pybevy_transform = { workspace = true }
 pybevy_a11y = { workspace = true }
 pybevy_input = { workspace = true }
+pybevy_input_focus = { workspace = true }
 pybevy_time = { workspace = true }
 pybevy_window = { workspace = true }
 pybevy_winit = { workspace = true }

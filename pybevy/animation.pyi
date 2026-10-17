@@ -45,10 +45,10 @@ class AnimatedField:
 
 class AnimationNodeType:
     class Clip(AnimationNodeType):
-        __match_args__: ClassVar[tuple[Literal["handle"]]]
+        __match_args__: ClassVar[tuple[Literal["value"]]]
         @property
-        def handle(self) -> Handle[AnimationClip]: ...
-        def __init__(self, handle: Handle[AnimationClip]) -> None: ...
+        def value(self) -> Handle[AnimationClip]: ...
+        def __init__(self, value: Handle[AnimationClip]) -> None: ...
 
     class Blend(AnimationNodeType):
         __match_args__: ClassVar[tuple[()]]
@@ -303,7 +303,7 @@ class AnimationGraphHandle(Component):
         """Get the underlying asset handle."""
 
 class AnimationTargetId(Component):
-    def __init__(self, uuid: UUID) -> None: ...
+    def __init__(self, value: UUID) -> None: ...
     @staticmethod
     def from_name(name: str) -> AnimationTargetId:
         """Creates a new AnimationTargetId by hashing a single name.

@@ -100,6 +100,7 @@ pub(crate) fn construct_view_class_item(
     let mut without_filters: SmallVec<[PyComponentType; 4]> = SmallVec::new();
     let mut changed_filters: SmallVec<[PyComponentType; 4]> = SmallVec::new();
     let mut added_filters: SmallVec<[PyComponentType; 4]> = SmallVec::new();
+    let mut allow_filters: SmallVec<[PyComponentType; 4]> = SmallVec::new();
     let mut has_entity = false;
 
     for param in param_types {
@@ -158,6 +159,12 @@ pub(crate) fn construct_view_class_item(
                     }
                     added_filters.push(added.component_type);
                 }
+                QueryFilter::Allow(allow) => {
+                    if matches!(allow.component_type, PyComponentType::Resource(_)) {
+                        return Err(PyRuntimeError::new_err(RESOURCE_VIEW_FILTER));
+                    }
+                    allow_filters.push(allow.component_type);
+                }
                 QueryFilter::Or(_) => {
                     return Err(PyRuntimeError::new_err(OR_VIEW_UNSUPPORTED));
                 }
@@ -192,6 +199,7 @@ pub(crate) fn construct_view_class_item(
                 &without_filters,
                 &changed_filters,
                 &added_filters,
+                &allow_filters,
             ],
         ),
         parameters: components,
@@ -199,6 +207,7 @@ pub(crate) fn construct_view_class_item(
         without_filters,
         changed_filters,
         added_filters,
+        allow_filters,
         has_entity,
     }
     .into_py_any(py)

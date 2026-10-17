@@ -316,7 +316,7 @@ def spawn_debug_light(commands: Commands) -> None:
 
 Available color strategies are:
 
-- `LightGizmoColor.Manual(color)`
+- `LightGizmoColor.Manual(value)`
 - `LightGizmoColor.Varied()`
 - `LightGizmoColor.MatchLightColor()`
 - `LightGizmoColor.ByLightType()`

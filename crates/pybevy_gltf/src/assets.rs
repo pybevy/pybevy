@@ -801,7 +801,7 @@ impl PyGltfMesh {
 
     pub fn asset_label(&self) -> PyResult<PyGltfAssetLabel> {
         Ok(PyGltfAssetLabel::Mesh {
-            index: self.storage.as_ref()?.index,
+            value: self.storage.as_ref()?.index,
         })
     }
 }
@@ -902,7 +902,7 @@ impl PyGltfNode {
 
     pub fn asset_label(&self) -> PyResult<PyGltfAssetLabel> {
         Ok(PyGltfAssetLabel::Node {
-            index: self.storage.as_ref()?.index,
+            value: self.storage.as_ref()?.index,
         })
     }
 }
@@ -1076,7 +1076,7 @@ impl PyGltfSkin {
 
     pub fn asset_label(&self) -> PyResult<PyGltfAssetLabel> {
         Ok(PyGltfAssetLabel::Skin {
-            index: self.storage.as_ref()?.index,
+            value: self.storage.as_ref()?.index,
         })
     }
 }

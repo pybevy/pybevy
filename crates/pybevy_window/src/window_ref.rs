@@ -20,7 +20,7 @@ pub enum PyWindowRef {
     #[py_bevy(tuple)]
     Entity {
         #[py_type(PyEntity)]
-        entity: Entity,
+        value: Entity,
     },
 }
 
@@ -43,7 +43,7 @@ impl PyWindowRef {
     fn __repr__(&self) -> String {
         match self {
             Self::Primary() => "WindowRef.Primary()".to_string(),
-            Self::Entity { entity } => {
+            Self::Entity { value: entity } => {
                 let entity: PyEntity = *entity;
                 format!("WindowRef.Entity({})", entity.__repr__())
             }

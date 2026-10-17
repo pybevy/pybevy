@@ -23,7 +23,9 @@ use crate::{
     pyo3::{
         asset_reference::reference_fields_for_value,
         names::{ComponentTarget, custom_component_name, resolve_component},
-        to_json::{extract_bridge_fields, extract_custom_component_fields},
+        to_json::{
+            enum_payload_field_names, extract_bridge_fields, extract_custom_component_fields,
+        },
     },
     scene::{entity::resolve_entity, spatial::entity_label, summary::entity_component_breakdown},
 };
@@ -274,7 +276,8 @@ fn native_value_fields(
     }
     if let Some(variant) = reflected_variant {
         if value.call_method0("__copy__").is_err() {
-            fields.clear();
+            let payload = enum_payload_field_names(value);
+            fields.retain(|name, _| payload.contains(name));
         }
         fields.insert("variant".to_string(), serde_json::Value::String(variant));
     }
@@ -304,6 +307,30 @@ pub(crate) fn native_component_fields(
         value,
         (reflected_enum, reflected_variant),
     )
+}
+
+/// A native component's current fields, read the way `get_component` reports them.
+pub(crate) fn read_native_component_fields(
+    world: &mut World,
+    entity: Entity,
+    bridge: &Arc<dyn ComponentBridge>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    Python::attach(|py| {
+        let (_read_window, validity) = ValidityGuard::read();
+        // SAFETY: `world` is a live &mut World; the pointer is valid for this call.
+        let value = unsafe {
+            bridge.extract_from_entity_ref(entity, world as *mut World, validity.clone(), py)
+        }
+        .ok()
+        .flatten()?;
+        Some(native_component_fields(
+            py,
+            world,
+            entity,
+            bridge,
+            value.bind(py),
+        ))
+    })
 }
 
 pub fn get_component(

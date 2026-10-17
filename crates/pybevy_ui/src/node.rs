@@ -30,7 +30,7 @@ use crate::{
         min_height => [finite],
         max_width => [finite],
         max_height => [finite],
-        aspect_ratio => [finite],
+        aspect_ratio => [positive],
         margin => [finite],
         padding => [finite, non_negative],
         border => [finite, non_negative],

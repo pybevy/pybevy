@@ -143,6 +143,7 @@ pub fn init_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     pybevy_gizmos::add_module(m)?;
     pybevy_image::add_module(m)?;
     pybevy_input::add_module(m)?;
+    pybevy_input_focus::add_module(m)?;
     pybevy_light::add_module(m)?;
     pybevy_material::add_module(m)?;
     pybevy_math::add_module(m)?;

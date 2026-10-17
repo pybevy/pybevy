@@ -24,7 +24,7 @@ pub enum PyLightGizmoColor {
     #[py_bevy(tuple)]
     Manual {
         #[py_type(OwnedColorValue)]
-        color: Color,
+        value: Color,
     },
     Varied(),
     MatchLightColor(),
@@ -35,7 +35,7 @@ pub enum PyLightGizmoColor {
 impl PyLightGizmoColor {
     fn __repr__(&self) -> PyResult<String> {
         Ok(match self {
-            Self::Manual { color } => {
+            Self::Manual { value: color } => {
                 let color: PyColor = color.0.into();
                 format!("LightGizmoColor.Manual({})", color.__repr__()?)
             }

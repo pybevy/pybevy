@@ -366,6 +366,7 @@ mod tests {
             added_filters: Vec::new(),
             anyof_groups: Vec::new(),
             or_filters: Vec::new(),
+            archetypal: Vec::new(),
         }
     }
 
@@ -405,6 +406,7 @@ mod tests {
                 added_filters: Vec::new(),
                 anyof_groups: Vec::new(),
                 or_filters: Vec::new(),
+                archetypal: Vec::new(),
             },
         );
         assert!(!no_filters.has_tick_filters());

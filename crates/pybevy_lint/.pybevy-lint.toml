@@ -166,6 +166,7 @@ animation = "bevy_animation"
 audio = "bevy_audio"
 image = "bevy_image"
 input = "bevy_input"
+input_focus = "bevy_input_focus"
 ui = "bevy_ui"
 text = "bevy_text"
 a11y = "bevy_a11y"
@@ -3545,16 +3546,6 @@ paths = [
 code = "W038"
 reason = "FontAtlasSet derefs to HashMap<FontAtlasKey, Vec<FontAtlas>>; Python reads that map through the mapping protocol (__iter__ over keys, __len__, items() for key/atlas pairs) instead of Rust's HashMap iterator methods"
 path = "text.FontAtlasSet.items"
-
-[[validation.exceptions]]
-code = "W040"
-reason = "Unit-only Bevy enum component: PyO3 enums cannot extend PyComponent, so the variants are compact class attributes of a pywrap struct (the reviewed Visibility/Interaction shape) rather than a #[pyclass] enum"
-paths = [
-    "render.Tonemapping",
-    "pbr.WireframeTopology",
-    "render.Msaa",
-    "render.DebandDither",
-]
 
 # API drift (W037-W041) that existed when the checks landed. Delete entries
 # as the drift is fixed or moved to a durable reason.

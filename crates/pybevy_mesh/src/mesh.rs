@@ -349,14 +349,25 @@ macro_rules! mesh_with_mut {
     }};
 }
 
-/// Normalize the external-array fallback to a contiguous `(N, 3)` f32 array.
-fn asarray_2d_f32<'py>(
-    py: Python<'py>,
-    obj: &Bound<'py, PyAny>,
-) -> PyResult<PyReadonlyArray2<'py, f32>> {
+/// Convert any array-like to `[f32; 3]` rows, rejecting every other shape with
+/// `shape_error` before the rank-2 view is extracted.
+fn asarray_f32x3(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    shape_error: &'static str,
+) -> PyResult<Vec<[f32; 3]>> {
     let np = py.import("numpy")?;
     let arr = np.call_method1("ascontiguousarray", (obj, np.getattr("float32")?))?;
-    Ok(arr.extract::<PyReadonlyArray2<f32>>()?)
+    let shape: Vec<usize> = arr.getattr("shape")?.extract()?;
+    if shape.len() != 2 || shape[1] != 3 {
+        return Err(PyValueError::new_err(shape_error));
+    }
+    let arr = arr.extract::<PyReadonlyArray2<f32>>()?;
+    Ok(arr
+        .as_slice()?
+        .chunks_exact(3)
+        .map(|row| [row[0], row[1], row[2]])
+        .collect())
 }
 
 fn portable_f32x3(
@@ -1173,16 +1184,7 @@ impl PyMesh {
             if let Some(values) = portable_f32x3(positions, "Positions must have shape (N, 3)")? {
                 values
             } else {
-                let positions = asarray_2d_f32(py, positions)?;
-                let shape = positions.shape();
-                if shape.len() != 2 || shape[1] != 3 {
-                    return Err(PyValueError::new_err("Positions must have shape (N, 3)"));
-                }
-                positions
-                    .as_slice()?
-                    .chunks_exact(3)
-                    .map(|row| [row[0], row[1], row[2]])
-                    .collect()
+                asarray_f32x3(py, positions, "Positions must have shape (N, 3)")?
             };
         mesh_with_mut!(self, |mesh: &mut Mesh| {
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, values);
@@ -1195,16 +1197,7 @@ impl PyMesh {
             if let Some(values) = portable_f32x3(normals, "Normals must have shape (N, 3)")? {
                 values
             } else {
-                let normals = asarray_2d_f32(py, normals)?;
-                let shape = normals.shape();
-                if shape.len() != 2 || shape[1] != 3 {
-                    return Err(PyValueError::new_err("Normals must have shape (N, 3)"));
-                }
-                normals
-                    .as_slice()?
-                    .chunks_exact(3)
-                    .map(|row| [row[0], row[1], row[2]])
-                    .collect()
+                asarray_f32x3(py, normals, "Normals must have shape (N, 3)")?
             };
         mesh_with_mut!(self, |mesh: &mut Mesh| {
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, values);

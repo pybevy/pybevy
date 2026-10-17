@@ -321,6 +321,68 @@ impl PyHas {
     }
 }
 
+#[pyclass(name = "Allow", module = "pybevy.ecs", from_py_object)]
+#[derive(Debug)]
+pub struct PyAllow {
+    pub(crate) component_type: PyComponentType,
+    /// Keeps `component_type` alive while this descriptor is reachable.
+    pub(crate) retained: RetainedClasses,
+}
+
+impl Clone for PyAllow {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            component_type: self.component_type,
+            retained: clone_retained_classes(py, &self.retained),
+        })
+    }
+}
+
+/// Retention is derived from `component_type`, so it carries no identity of its own.
+impl PartialEq for PyAllow {
+    fn eq(&self, other: &Self) -> bool {
+        self.component_type == other.component_type
+    }
+}
+
+impl PyAllow {
+    pub(crate) fn new(py: Python<'_>, component_type: PyComponentType) -> Self {
+        Self {
+            retained: retain_custom_classes(py, [component_type]),
+            component_type,
+        }
+    }
+
+    /// Raw-only copy for holders whose owner retains the classes separately.
+    pub(crate) fn detached(&self) -> Self {
+        Self {
+            component_type: self.component_type,
+            retained: SmallVec::new(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyAllow {
+    #[classmethod]
+    #[pyo3(signature = (key, /))]
+    pub fn __class_getitem__(
+        cls: &Bound<'_, PyType>,
+        key: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let py = cls.py();
+        let component_type = parse_single_component_filter(py, key)?;
+        PyAllow::new(py, component_type).into_py_any(py)
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        for class in &self.retained {
+            visit.call(class.as_ref())?;
+        }
+        Ok(())
+    }
+}
+
 #[pyclass(name = "AnyOf", module = "pybevy.ecs", from_py_object)]
 #[derive(Debug)]
 pub struct PyAnyOf {

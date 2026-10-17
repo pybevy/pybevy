@@ -30,10 +30,10 @@ class LightGizmoColor:
 
 
     class Manual(LightGizmoColor):
-        __match_args__: ClassVar[tuple[Literal["color"]]] = ("color",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
         @property
-        def color(self) -> Color: ...
-        def __init__(self, color: Color) -> None: ...
+        def value(self) -> Color: ...
+        def __init__(self, value: Color) -> None: ...
 
     class Varied(LightGizmoColor):
         __match_args__: ClassVar[tuple[()]]
@@ -701,7 +701,8 @@ class AtmosphereEnvironmentMapLight(Component):
     Args:
         intensity: Controls how bright the atmosphere's environment lighting is.
         affects_lightmapped_mesh_diffuse: Whether diffuse affects lightmapped meshes.
-        size: Cubemap resolution in pixels (must be power-of-two).
+        size: Cubemap resolution in pixels. Bevy rounds each side up to a power of
+            two; the result must be square and at most 8192, otherwise ValueError.
     """
     def __init__(
         self,
@@ -964,10 +965,10 @@ class PhaseFunction:
 
     class ChromaticTexture(PhaseFunction):
         """Chromatic phase function sampled from an Nx1 Rgba32Float texture."""
-        __match_args__: ClassVar[tuple[Literal["image"]]]
+        __match_args__: ClassVar[tuple[Literal["value"]]]
         @property
-        def image(self) -> Handle[Image]: ...
-        def __init__(self, image: Handle[Image]) -> None: ...
+        def value(self) -> Handle[Image]: ...
+        def __init__(self, value: Handle[Image]) -> None: ...
 
 class ScatteringTerm:
     """An individual element of a ScatteringMedium."""

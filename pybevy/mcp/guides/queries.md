@@ -120,6 +120,35 @@ def batch_with_entities(view: View[tuple[Entity, Mut[Transform]]], commands: Com
 View commonly ranges from about 5x faster for conditional work to 20–25x for
 pure column math. Measure the actual workload; see `guide://performance`.
 
+## Disabled Entities
+
+Every Query and View skips entities that carry `Disabled`, as Bevy's default
+query filters do. To include them, name `Disabled` in the query:
+`Allow[Disabled]` matches enabled and disabled entities alike,
+`Has[Disabled]` does the same and reports which ones are disabled, and
+`With[Disabled]` matches only the disabled ones.
+
+<!-- pybevy-snippet: typecheck -->
+```python
+from pybevy.ecs import Allow, Commands, Disabled, Entity, Has, Name, Query, With, system
+
+@system
+def wake_sleepers(
+    commands: Commands,
+    query: Query[tuple[Entity, Name, Has[Disabled]], With[Name]],
+) -> None:
+    for entity, name, disabled in query:
+        if disabled and str(name).startswith("sleeper"):
+            commands.entity(entity).remove(Disabled)
+
+@system
+def count_everything(query: Query[Entity, tuple[With[Name], Allow[Disabled]]]) -> None:
+    print(len(query))
+```
+
+`Allow` works in View filters too. It names one component and goes in the
+filter position, outside `Or[...]`.
+
 ## Common MCP Workflow
 
 1. `query_entities {"with": ["Transform"]}` - Find entities

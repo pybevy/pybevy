@@ -15,7 +15,8 @@ impl FromPyObject<'_, '_> for AppExitCode {
 
     fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
         let code = value.extract::<IntegerInput<u32>>()?;
-        let code = check_for::<PyAppExit, _>("Error.code", code, ERROR_CODE_DOMAIN)?.stored() as u8;
+        let code =
+            check_for::<PyAppExit, _>("Error.value", code, ERROR_CODE_DOMAIN)?.stored() as u8;
         Ok(Self(
             NonZero::new(code).expect("validated nonzero exit code"),
         ))
@@ -47,14 +48,14 @@ impl<'py> IntoPyObject<'py> for AppExitCode {
 #[derive(Debug, Clone, PartialEq)]
 enum AppExitValue {
     Success,
-    Error { code: NonZero<u8> },
+    Error { value: NonZero<u8> },
 }
 
 impl From<&AppExit> for AppExitValue {
     fn from(value: &AppExit) -> Self {
         match value {
             AppExit::Success => Self::Success,
-            AppExit::Error(code) => Self::Error { code: *code },
+            AppExit::Error(code) => Self::Error { value: *code },
         }
     }
 }
@@ -63,7 +64,7 @@ impl From<AppExitValue> for AppExit {
     fn from(value: AppExitValue) -> Self {
         match value {
             AppExitValue::Success => Self::Success,
-            AppExitValue::Error { code } => Self::Error(code),
+            AppExitValue::Error { value: code } => Self::Error(code),
         }
     }
 }
@@ -75,7 +76,7 @@ pub enum PyAppExit {
     #[py_bevy(tuple)]
     Error {
         #[py_type(AppExitCode)]
-        code: NonZero<u8>,
+        value: NonZero<u8>,
     },
 }
 

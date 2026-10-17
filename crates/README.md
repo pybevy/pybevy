@@ -39,6 +39,7 @@ PyBevy is split into modular feature crates.
 | [`pybevy_gltf`](pybevy_gltf/) | GLTF loading |
 | [`pybevy_image`](pybevy_image/) | Image, TextureAtlas, TextureAtlasLayout |
 | [`pybevy_input`](pybevy_input/) | Keyboard, mouse, gamepad, touch input |
+| [`pybevy_input_focus`](pybevy_input_focus/) | Input focus and tab navigation |
 | [`pybevy_light`](pybevy_light/) | Point/Directional/Spot lights, shadows, fog |
 | [`pybevy_material`](pybevy_material/) | Shared material types (AlphaMode, OpaqueRendererMethod) |
 | [`pybevy_math`](pybevy_math/) | Vec2/3/4, Quat, Mat3/4, Dir, Rot2, Rect, isometries |

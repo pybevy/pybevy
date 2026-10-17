@@ -17,12 +17,12 @@ pub enum PyMonitorSelection {
     Primary(),
     #[py_bevy(tuple)]
     Index {
-        index: usize,
+        value: usize,
     },
     #[py_bevy(tuple)]
     Entity {
         #[py_type(PyEntity)]
-        entity: Entity,
+        value: Entity,
     },
 }
 
@@ -32,8 +32,10 @@ impl PyMonitorSelection {
         match self {
             PyMonitorSelection::Current() => "MonitorSelection.Current()".to_string(),
             PyMonitorSelection::Primary() => "MonitorSelection.Primary()".to_string(),
-            PyMonitorSelection::Index { index } => format!("MonitorSelection.Index({index})"),
-            PyMonitorSelection::Entity { entity } => {
+            PyMonitorSelection::Index { value: index } => {
+                format!("MonitorSelection.Index({index})")
+            }
+            PyMonitorSelection::Entity { value: entity } => {
                 format!("MonitorSelection.Entity({})", entity.__repr__())
             }
         }

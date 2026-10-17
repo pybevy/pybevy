@@ -1,8 +1,9 @@
 use bevy::render::view::Tonemapping;
 use pybevy_core::PyComponent;
-use pybevy_macros::pywrap;
+use pybevy_macros::{pyenum, pywrap};
 use pyo3::prelude::*;
 
+#[pyenum(Tonemapping, manual)]
 #[pywrap(Tonemapping, bridge)]
 #[pyclass(name = "Tonemapping", module = "pybevy.render", extends = PyComponent, eq, hash, frozen, skip_from_py_object)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

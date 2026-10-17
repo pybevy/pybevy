@@ -205,8 +205,9 @@ def update_score_display(
 
 A text input field is a UI node with both `EditableText`, which holds the text
 and cursor state, and the `TextInput` widget from `pybevy.ui_widgets`, which
-handles typing, cursor movement, selection, and clipboard; click the field to
-focus it. `EditableText` without `TextInput` is display-only state that only
+handles typing, cursor movement, selection, and clipboard. Give the field a
+`TabIndex` from `pybevy.input_focus` so a click focuses it; typing goes to the
+focused field. `EditableText` without `TextInput` is display-only state that only
 changes through queued edits.
 There is no built-in submit event: read `.value` from a system, then call
 `.clear()` through a mutable query to reset the field.
@@ -220,6 +221,7 @@ expose Bevy's `UiPlugin` separately, so the supported public setup is
 `DefaultPlugins` with `EditableText` and `TextInput` on a UI `Node`.
 
 ```python
+from pybevy.input_focus import TabIndex
 from pybevy.text import EditableText
 from pybevy.ui_widgets import TextInput
 from pybevy.ecs import system
@@ -228,6 +230,7 @@ from pybevy.ecs import system
 commands.spawn(
     EditableText("type here", max_characters=64),
     TextInput(),
+    TabIndex(0),
     Node(width=320.0, height=40.0),  # bare floats are pixels
     TextFont.from_font_size(24.0),
     BackgroundColor(Color.srgb(0.15, 0.15, 0.2)),
@@ -247,7 +250,8 @@ Options worth knowing:
 - `cursor_blink_period` accepts a `timedelta` or plain seconds (`0.5`); `cursor_width` is relative to the font size.
 - `max_characters=None` (the default) means unlimited.
 - Scroll a field with `queue_edit(TextEdit.ScrollBy(Vec2(...)))`, `TextEdit.ScrollTo(point)`, or `TextEdit.ScrollByLines(n)`; `field.viewport.offset` is the current scroll position. `cursor_margin` sets how close the caret may get to the viewport edges before typing scrolls it.
-- Focus follows clicks. Tab-navigation and auto-focus components are not wrapped yet, so make each field's node large enough to click comfortably.
+- Focus follows clicks on entities with a `TabIndex`. For Tab and Shift+Tab, add `TabNavigationPlugin()` and a `TabGroup()` on an ancestor of the fields; fields are visited in ascending `TabIndex` order. `AutoFocus()` focuses a field when it spawns.
+- `InputFocus` (a resource) names the focused entity: `focus.get()`, `focus.set(entity, FocusCause.Navigated)` and `focus.clear()` through `ResMut[InputFocus]`.
 
 ## Fading Text
 

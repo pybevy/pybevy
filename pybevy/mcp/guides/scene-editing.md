@@ -180,9 +180,13 @@ Finite fields returned by `get_component` can be replayed with `set_component`
 for editable components. `set_component` echoes each written field under that
 same Python spelling, so a response replays unchanged; a Bevy field named after
 a Python keyword carries a trailing underscore, such as `global_`.
-For a top-level enum component, `new_values` is the complete stored enum value,
-including payload fields omitted from a partial request. Writing only the
-already-active `variant` keeps its existing payload rather than resetting it.
+For a top-level enum component, `new_values` is the complete stored enum value
+in the form `get_component` reports, including payload fields omitted from a
+partial request. Reads and echoes include frozen payloads and the enums nested
+in them, such as `{"variant": "Window", "value": {"variant": "Entity", "value": 4294967242}}`
+for a `RenderTarget`. Writing only the already-active `variant` keeps its
+existing payload rather than resetting it; an explicit `null` or incomplete
+nested payload is rejected and leaves the component unchanged.
 `GlobalTransform` reports only computed world-space `translation`, `rotation`,
 and `scale`; these fields are read-only. In Python they return independent
 computed values, so editing the returned vector or quaternion does not change
@@ -564,7 +568,7 @@ def draw_axes(gizmos: Gizmos) -> None:
 ```
 
 Add `ShowAabbGizmo()` to one entity to visualize its bounding box. Add
-`ShowLightGizmo()` to a light entity; pass `LightGizmoColor.Manual(color)` or
+`ShowLightGizmo()` to a light entity; pass `LightGizmoColor.Manual(value)` or
 another `LightGizmoColor` strategy when the default light color is unsuitable.
 See `guide://gizmos` for the complete drawing API and setup requirements.
 

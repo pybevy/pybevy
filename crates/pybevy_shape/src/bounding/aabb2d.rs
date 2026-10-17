@@ -200,10 +200,17 @@ impl PyAabb2d {
     pub fn shrink(&self, amount: PyVec2) -> PyResult<PyAabb2d> {
         let amount: Vec2 = amount.try_into()?;
         let bounds = self.as_ref()?;
-        if !(bounds.max - amount).cmpge(bounds.min + amount).all() {
+        let (min, max) = (bounds.min + amount, bounds.max - amount);
+        if min.is_nan() || max.is_nan() || !amount.cmple(bounds.half_size()).all() {
             return Err(PyValueError::new_err(bounding_shrink("Aabb2d")));
         }
-        Ok(PyAabb2d::from_aabb2d(bounds.shrink(amount)))
+        // Shrinking by the half size can cross by one rounding step; meet at the centre.
+        let crossed = min.cmpgt(max);
+        let center = (min + max) * 0.5;
+        Ok(PyAabb2d::from_aabb2d(Aabb2d {
+            min: Vec2::select(crossed, center, min),
+            max: Vec2::select(crossed, center, max),
+        }))
     }
 
     pub fn scale_around_center(&self, scale: PyVec2) -> PyResult<PyAabb2d> {

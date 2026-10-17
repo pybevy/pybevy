@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use filters::{PyAdded, PyChanged, PyOr, PyWith, PyWithout};
+use filters::{PyAdded, PyAllow, PyChanged, PyOr, PyWith, PyWithout};
 use pybevy_core::public_error::{
     multi_component_filter_tuple_required, parenthesized_component_filter,
 };
@@ -28,6 +28,8 @@ pub(crate) enum QueryFilter {
     Changed(PyChanged),
     /// Components that have been added
     Added(PyAdded),
+    /// A disabling component the query opts into matching
+    Allow(PyAllow),
     /// At least one of the nested query filters
     Or(PyOr),
 }
@@ -45,6 +47,7 @@ impl QueryFilter {
                 .collect(),
             Self::Changed(filter) => smallvec![filter.component_type],
             Self::Added(filter) => smallvec![filter.component_type],
+            Self::Allow(filter) => smallvec![filter.component_type],
         }
     }
 
@@ -56,6 +59,7 @@ impl QueryFilter {
             Self::Without(filter) => Self::Without(filter.detached()),
             Self::Changed(filter) => Self::Changed(filter.detached()),
             Self::Added(filter) => Self::Added(filter.detached()),
+            Self::Allow(filter) => Self::Allow(filter.detached()),
             Self::Or(filter) => Self::Or(PyOr {
                 values: filter.values.iter().map(Self::clone_detached).collect(),
             }),
@@ -76,6 +80,7 @@ impl QueryFilter {
                 .collect(),
             Self::Changed(filter) => filter.retained.iter().collect(),
             Self::Added(filter) => filter.retained.iter().collect(),
+            Self::Allow(filter) => filter.retained.iter().collect(),
         }
     }
 }
@@ -119,7 +124,7 @@ pub(crate) fn parse_multi_component_filter(
 
 /// Helper function to parse a single component type from a filter parameter.
 ///
-/// Used by filters that accept only one component: Changed, Added, Has
+/// Used by filters that accept only one component: Changed, Added, Allow, Has
 pub(crate) fn parse_single_component_filter(
     py: Python,
     key: &Bound<'_, PyAny>,

@@ -141,6 +141,7 @@ pub(crate) fn add_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecs.add_class::<filter::filters::PyChanged>()?;
     ecs.add_class::<filter::filters::PyAdded>()?;
     ecs.add_class::<filter::filters::PyHas>()?;
+    ecs.add_class::<filter::filters::PyAllow>()?;
     ecs.add_class::<filter::filters::PyAnyOf>()?;
     ecs.add_class::<filter::filters::PyOr>()?;
     ecs.add_class::<query::PyQuery>()?;

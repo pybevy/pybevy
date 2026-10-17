@@ -5,6 +5,10 @@ High-performance per-entity loops using `iter_batches()` + `@numba.jit` kernels.
 For 100k+ entities where the View expression API isn't fast enough, Numba compiles
 Python loops to native LLVM code with zero-copy access to Bevy's archetype storage.
 
+PyBevy registers `ViewColumn` typing the first time a kernel receives one, so
+Numba works whether it is imported before or after `pybevy`, including a Numba
+that only the script's directory provides.
+
 ## When to Use
 
 See `guide://performance` for the full strategy comparison table. Use Numba when:

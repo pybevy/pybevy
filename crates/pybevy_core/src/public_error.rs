@@ -1878,6 +1878,30 @@ pub fn image_pixel_access_unsupported_format(format: impl Debug) -> String {
     )
 }
 
+pub fn atmosphere_environment_map_size(width: u32, height: u32) -> String {
+    format!(
+        "AtmosphereEnvironmentMapLight.size must be square and at most 8192 after rounding each \
+         side up to a power of two (got {width}x{height})"
+    )
+}
+
+pub fn image_multi_planar_format(format: impl Debug) -> String {
+    format!(
+        "Image.texture_descriptor.format cannot be {format:?}: a multi-planar format cannot be \
+         sampled as a whole texture"
+    )
+}
+
+pub fn image_one_dimensional_extent(width: u32, height: u32, depth: u32) -> String {
+    format!(
+        "a TextureDimension.D1 image must be one texel tall and one layer deep \
+         (got {width}x{height}x{depth})"
+    )
+}
+
+pub const IMAGE_TEXTURE_USAGE_EMPTY: &str =
+    "Image.texture_descriptor.usage cannot be empty: the GPU creates no texture without a usage";
+
 pub fn image_aspect_ratio_zero(width: u32, height: u32) -> String {
     format!("Image.aspect_ratio needs a non-zero width and height (got {width}x{height})")
 }

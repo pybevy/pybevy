@@ -24,7 +24,7 @@ use crate::{
         component_type::PyComponentType,
         filter::{
             QueryFilter,
-            filters::{PyAdded, PyAnyOf, PyChanged, PyHas, PyOr, PyWith, PyWithout},
+            filters::{PyAdded, PyAllow, PyAnyOf, PyChanged, PyHas, PyOr, PyWith, PyWithout},
         },
         mutable::PyMut,
         query::{
@@ -172,6 +172,8 @@ pub(crate) fn extract_param_type_from_query_param(
         ok_single(QueryFilter::Changed(key.extract::<PyChanged>()?).into())
     } else if key.is_instance_of::<PyAdded>() {
         ok_single(QueryFilter::Added(key.extract::<PyAdded>()?).into())
+    } else if key.is_instance_of::<PyAllow>() {
+        ok_single(QueryFilter::Allow(key.extract::<PyAllow>()?).into())
     } else if key.is_instance_of::<PyHas>() {
         ok_single(ParamType::Has(key.extract::<PyHas>()?))
     } else if key.is_instance_of::<PyAnyOf>() {
@@ -201,6 +203,7 @@ fn query_row_shape(py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Option<Qu
         || key.is_instance_of::<PyWithout>()
         || key.is_instance_of::<PyChanged>()
         || key.is_instance_of::<PyAdded>()
+        || key.is_instance_of::<PyAllow>()
         || key.is_instance_of::<PyOr>()
     {
         return Ok(None);
@@ -575,6 +578,7 @@ fn is_query_filter(item: &Bound<'_, PyAny>) -> bool {
         || item.is_instance_of::<PyWithout>()
         || item.is_instance_of::<PyChanged>()
         || item.is_instance_of::<PyAdded>()
+        || item.is_instance_of::<PyAllow>()
         || item.is_instance_of::<PyOr>()
 }
 
@@ -639,6 +643,9 @@ fn filter_label(py: Python, filter: &QueryFilter) -> String {
         }
         QueryFilter::Added(added) => {
             format!("Added[{}]", added.component_type.display_name(py))
+        }
+        QueryFilter::Allow(allow) => {
+            format!("Allow[{}]", allow.component_type.display_name(py))
         }
         QueryFilter::Or(ort) => {
             let inner = ort
