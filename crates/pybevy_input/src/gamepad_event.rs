@@ -2,9 +2,9 @@ use bevy::input::gamepad::{
     GamepadAxisChangedEvent, GamepadButtonChangedEvent, GamepadConnectionEvent, GamepadEvent,
     RawGamepadAxisChangedEvent, RawGamepadButtonChangedEvent, RawGamepadEvent,
 };
-use pybevy_core::PyMessage;
+use pybevy_core::message_payload;
 use pybevy_macros::pyenum;
-use pyo3::{Borrowed, prelude::*};
+use pyo3::prelude::*;
 
 use crate::{
     gamepad_events::{
@@ -12,45 +12,6 @@ use crate::{
     },
     gamepad_raw_events::{PyRawGamepadAxisChangedEvent, PyRawGamepadButtonChangedEvent},
 };
-
-// Message subclasses need their complete Python initializer at the payload boundary.
-macro_rules! message_payload {
-    ($payload:ident, $native:ty, $wrapper:ty) => {
-        pub struct $payload($native);
-
-        impl From<$native> for $payload {
-            fn from(value: $native) -> Self {
-                Self(value)
-            }
-        }
-
-        impl From<$payload> for $native {
-            fn from(value: $payload) -> Self {
-                value.0
-            }
-        }
-
-        impl<'py> IntoPyObject<'py> for $payload {
-            type Target = $wrapper;
-            type Output = Bound<'py, $wrapper>;
-            type Error = PyErr;
-
-            fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-                Py::new(py, (<$wrapper>::from(&self.0), PyMessage))
-                    .map(|value| value.into_bound(py))
-            }
-        }
-
-        impl FromPyObject<'_, '_> for $payload {
-            type Error = PyErr;
-
-            fn extract(value: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
-                let wrapper = value.extract::<PyRef<'_, $wrapper>>()?;
-                <$native>::try_from(&*wrapper).map(Self)
-            }
-        }
-    };
-}
 
 message_payload!(
     ConnectionPayload,

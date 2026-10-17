@@ -182,27 +182,35 @@ impl FromPyObject<'_, '_> for WaitInput {
         assert_eq!(code, expected, "{summary}");
         assert_eq!(summary["mismatched_variants"], expected, "{summary}");
     }
-    let fixture = Fixture::new(
-        r#"
-#[pyenum(WindowEvent, manual)]
-#[pyclass(name = "WindowEvent", module = "pybevy.window")]
-enum PyWindowEvent { CursorEntered { window: PyEntity } }
-"#,
-        "class WindowEvent: ...\n",
-        "[bevy.crate_mappings]\nwindow = 'bevy_window'\n",
-    );
-    let (code, output) = fixture.run(&[
-        "validate",
-        "-c",
-        "W042",
-        "--deny-warnings",
-        "--bevy-path",
-        bevy.to_str().unwrap(),
-    ]);
-    assert_eq!(
-        code, 0,
-        "manual event flattening has a separate conversion contract: {output}"
-    );
+    for (variant, flattened) in [
+        ("CursorEntered { window: PyEntity }", false),
+        (
+            "CursorMoved { position: Vec2, window: PyEntity, delta: Option<Vec2> }",
+            true,
+        ),
+    ] {
+        let fixture = Fixture::new(
+            &format!(
+                "#[pyenum(WindowEvent, manual)]\n#[pyclass(name = \"WindowEvent\", module = \"pybevy.window\")]\nenum PyWindowEvent {{ {variant} }}\n"
+            ),
+            "class WindowEvent: ...\n",
+            "[bevy.crate_mappings]\nwindow = 'bevy_window'\n",
+        );
+        let (code, output) = fixture.run(&[
+            "validate",
+            "-c",
+            "W042",
+            "--deny-warnings",
+            "--bevy-path",
+            bevy.to_str().unwrap(),
+        ]);
+        if flattened {
+            assert_eq!(code, 1, "a flattened tuple payload must fail: {output}");
+            assert!(output.contains("WindowEvent.CursorMoved"), "{output}");
+        } else {
+            assert_eq!(code, 0, "naming a positional field is allowed: {output}");
+        }
+    }
 }
 
 #[test]

@@ -27,3 +27,9 @@ pub enum PyIme {
         window: Entity,
     },
 }
+
+impl From<&PyIme> for Ime {
+    fn from(value: &PyIme) -> Self {
+        value.clone().into()
+    }
+}

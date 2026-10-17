@@ -22,6 +22,7 @@ pub mod video_mode_selection;
 pub mod window;
 pub mod window_close_requested;
 pub mod window_event;
+pub mod window_events;
 pub mod window_focused;
 pub mod window_level;
 pub mod window_mode;
@@ -54,6 +55,7 @@ pub mod prelude {
         resize_constraints::PyWindowResizeConstraints,
         video_mode_selection::PyVideoModeSelection,
         window::PyWindow,
+        window_events::PyWindowMoved,
         window_plugin::PyWindowPlugin,
         window_position::PyWindowPosition,
         window_ref::{PyNormalizedWindowRef, PyWindowRef},
@@ -103,6 +105,14 @@ pub fn add_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<request_redraw::PyRequestRedraw>()?;
     m.add_class::<window_close_requested::PyWindowCloseRequested>()?;
     m.add_class::<window_event::PyWindowEvent>()?;
+    window_event::register_window_event_variants(&m)?;
+    m.add_class::<window_events::PyWindowBackendScaleFactorChanged>()?;
+    m.add_class::<window_events::PyWindowCreated>()?;
+    m.add_class::<window_events::PyWindowDestroyed>()?;
+    m.add_class::<window_events::PyWindowMoved>()?;
+    m.add_class::<window_events::PyWindowOccluded>()?;
+    m.add_class::<window_events::PyWindowScaleFactorChanged>()?;
+    m.add_class::<window_events::PyWindowThemeChanged>()?;
     m.add_class::<window_focused::PyWindowFocused>()?;
     m.add_class::<window_resized::PyWindowResized>()?;
 

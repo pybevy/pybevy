@@ -25,6 +25,12 @@ impl From<&PinchGesture> for PyPinchGesture {
     }
 }
 
+impl From<&PyPinchGesture> for PinchGesture {
+    fn from(value: &PyPinchGesture) -> Self {
+        PinchGesture(value.0)
+    }
+}
+
 #[pymethods]
 impl PyPinchGesture {
     #[new]
@@ -56,6 +62,12 @@ impl PyRotationGesture {
 impl From<&RotationGesture> for PyRotationGesture {
     fn from(event: &RotationGesture) -> Self {
         PyRotationGesture(event.0)
+    }
+}
+
+impl From<&PyRotationGesture> for RotationGesture {
+    fn from(value: &PyRotationGesture) -> Self {
+        RotationGesture(value.0)
     }
 }
 
@@ -93,6 +105,12 @@ impl From<&DoubleTapGesture> for PyDoubleTapGesture {
     }
 }
 
+impl From<&PyDoubleTapGesture> for DoubleTapGesture {
+    fn from(_value: &PyDoubleTapGesture) -> Self {
+        DoubleTapGesture
+    }
+}
+
 #[pymethods]
 impl PyDoubleTapGesture {
     #[new]
@@ -119,6 +137,12 @@ impl PyPanGesture {
 impl From<&PanGesture> for PyPanGesture {
     fn from(event: &PanGesture) -> Self {
         PyPanGesture(event.0)
+    }
+}
+
+impl From<&PyPanGesture> for PanGesture {
+    fn from(value: &PyPanGesture) -> Self {
+        PanGesture(value.0)
     }
 }
 

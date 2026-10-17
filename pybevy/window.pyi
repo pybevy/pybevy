@@ -6,11 +6,16 @@ from pybevy.app import App, Plugin
 from pybevy.ecs import Batchable, Component, Entity, Message, SystemSet
 from pybevy.ecs import Entity as _EcsEntity
 from pybevy.input import (
-    ButtonState,
+    DoubleTapGesture,
+    KeyboardFocusLost,
     KeyboardInput,
-    MouseButton,
-    MouseScrollUnit,
-    TouchPhase,
+    MouseButtonInput,
+    MouseMotion,
+    MouseWheel,
+    PanGesture,
+    PinchGesture,
+    RotationGesture,
+    TouchInput,
 )
 from pybevy.math import CompassOctant, IVec2, UVec2, Vec2
 
@@ -1721,294 +1726,284 @@ class RequestRedraw(Message):
     def __init__(self) -> None: ...
 
 
-class WindowEvent:
-    """Window event union type.
+class WindowCreated(Message):
+    """A window was created. Read it with `MessageReader[WindowCreated]`."""
 
-    A unified event type that wraps all window-related events, allowing you to
-    receive all events through a single MessageReader and pattern match on types.
+    def __init__(self, *, window: Entity) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The new window entity."""
 
-    `MessageWriter[WindowEvent]` writes the canonical stream that Bevy's picking
-    reads, so its `CursorMoved` and `MouseButtonInput` variants can hover and
-    click UI from a script or headless test. As in Bevy, only winit
-    splits window events into the specific streams such as `CursorMoved`; a
-    written `WindowEvent` does not reach `MessageReader[CursorMoved]`. A written
-    `MouseWheel` has phase `TouchPhase.Moved`, and a `TouchInput` force is
-    normalized. `write_default()` raises `TypeError`.
 
-    This is a PyO3 enum - use Python's pattern matching to handle different event types.
+class WindowDestroyed(Message):
+    """A window was destroyed. Read it with `MessageReader[WindowDestroyed]`."""
 
-    Supported variants:
-        - AppLifecycle(lifecycle: AppLifecycle)
-        - CursorEntered(window: Entity)
-        - CursorLeft(window: Entity)
-        - CursorMoved(position: Vec2, window: Entity, delta: Vec2 | None)
-        - FileDragAndDrop(window: Entity, path: str | None)
-        - Ime(window: Entity)
-        - RequestRedraw()
-        - WindowCloseRequested(window: Entity)
-        - WindowFocused(focused: bool, window: Entity)
-        - WindowResized(width: float, height: float, window: Entity)
-        - MouseButtonInput(button: MouseButton, state: ButtonState, window: Entity)
-        - MouseMotion(delta: Vec2)
-        - MouseWheel(unit: MouseScrollUnit, x: float, y: float, window: Entity)
-        - PinchGesture(value: float)
-        - RotationGesture(value: float)
-        - DoubleTapGesture()
-        - PanGesture(x: float, y: float)
-        - TouchInput(phase: TouchPhase, position: Vec2, id: int, window: Entity, force: float | None)
-        - KeyboardFocusLost()
-        - WindowCreated(window: Entity)
-        - WindowDestroyed(window: Entity)
-        - WindowMoved(position: IVec2, window: Entity)
-        - WindowOccluded(occluded: bool, window: Entity)
-        - WindowScaleFactorChanged(scale_factor: float, window: Entity)
-        - WindowBackendScaleFactorChanged(scale_factor: float, window: Entity)
-        - WindowThemeChanged(theme: WindowTheme, window: Entity)
-        - KeyboardInput(value: KeyboardInput)
+    def __init__(self, *, window: Entity) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The destroyed window entity."""
+
+
+class WindowMoved(Message):
+    """A window moved on screen."""
+
+    def __init__(self, *, window: Entity, position: IVec2) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The window that moved."""
+
+    @property
+    def position(self) -> IVec2:
+        """The window's new physical position."""
+
+
+class WindowOccluded(Message):
+    """A window was hidden from view or revealed."""
+
+    def __init__(self, *, window: Entity, occluded: bool) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The window whose visibility changed."""
+
+    @property
+    def occluded(self) -> bool:
+        """Whether the window is now fully hidden."""
+
+
+class WindowScaleFactorChanged(Message):
+    """A window's effective scale factor changed."""
+
+    def __init__(self, *, window: Entity, scale_factor: float) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The window whose scale factor changed."""
+
+    @property
+    def scale_factor(self) -> float:
+        """The new scale factor."""
+
+
+class WindowBackendScaleFactorChanged(Message):
+    """The scale factor reported by the windowing backend changed."""
+
+    def __init__(self, *, window: Entity, scale_factor: float) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The window whose backend scale factor changed."""
+
+    @property
+    def scale_factor(self) -> float:
+        """The new backend scale factor."""
+
+
+class WindowThemeChanged(Message):
+    """A window's system theme changed."""
+
+    def __init__(self, *, window: Entity, theme: WindowTheme) -> None: ...
+    @property
+    def window(self) -> Entity:
+        """The window whose theme changed."""
+
+    @property
+    def theme(self) -> WindowTheme:
+        """The new theme."""
+
+
+class WindowEvent(Message):
+    """Every window and input message in one stream, as Bevy's `WindowEvent`.
+
+    Each variant wraps the message of the same name, so
+    `WindowEvent.CursorMoved(event)` carries the `CursorMoved` that
+    `MessageReader[CursorMoved]` reads. Writing a `WindowEvent` feeds the
+    canonical stream that Bevy's picking reads, so `CursorMoved` and
+    `MouseButtonInput` variants can hover and click UI from a script or
+    headless test. As in Bevy, only winit splits window events into the
+    specific streams; a written `WindowEvent` does not reach
+    `MessageReader[CursorMoved]`.
 
     Example:
         ```python
         from pybevy.ecs import MessageReader
+        from pybevy.input import MouseButtonInput
         from pybevy.window import WindowEvent
 
         @system
         def handle_window_events(events: MessageReader[WindowEvent]) -> None:
             for event in events:
                 match event:
-                    case WindowEvent.MouseButtonInput(button=b, state=s, window=w):
+                    case WindowEvent.MouseButtonInput(MouseButtonInput(button=b)):
                         print(f"Mouse button: {b}")
-                    case WindowEvent.CursorMoved(position=pos, window=w):
-                        print(f"Cursor at: {pos}")
-                    case WindowEvent.WindowResized(width=w, height=h):
-                        print(f"Window resized to: {w}x{h}")
+                    case WindowEvent.CursorMoved(moved):
+                        print(f"Cursor at: {moved.position}")
+                    case WindowEvent.WindowResized(resized):
+                        print(f"Window resized to: {resized.width}x{resized.height}")
         ```
     """
 
+    def __copy__(self) -> WindowEvent: ...
+    def __deepcopy__(self, memo: object) -> WindowEvent: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+    def __ne__(self, other: object) -> bool: ...
+
     class AppLifecycle(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["lifecycle"]]] = ("lifecycle",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: AppLifecycle) -> None: ...
         @property
-        def lifecycle(self) -> AppLifecycle: ...
-        def __init__(self, lifecycle: AppLifecycle) -> None: ...
+        def value(self) -> AppLifecycle: ...
 
     class CursorEntered(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"]]] = ("window",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: CursorEntered) -> None: ...
         @property
-        def window(self) -> Entity: ...
-        def __init__(self, window: Entity) -> None: ...
+        def value(self) -> CursorEntered: ...
 
     class CursorLeft(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"]]] = ("window",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: CursorLeft) -> None: ...
         @property
-        def window(self) -> Entity: ...
-        def __init__(self, window: Entity) -> None: ...
+        def value(self) -> CursorLeft: ...
 
     class CursorMoved(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[Literal["position"], Literal["window"], Literal["delta"]]
-        ] = ("position", "window", "delta")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: CursorMoved) -> None: ...
         @property
-        def position(self) -> Vec2: ...
-        @property
-        def window(self) -> Entity: ...
-        @property
-        def delta(self) -> Vec2 | None: ...
-        def __init__(
-            self, position: Vec2, window: Entity, delta: Vec2 | None = None
-        ) -> None: ...
+        def value(self) -> CursorMoved: ...
 
     class FileDragAndDrop(WindowEvent):
         __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: FileDragAndDrop) -> None: ...
         @property
         def value(self) -> FileDragAndDrop: ...
-        def __init__(self, value: FileDragAndDrop) -> None: ...
 
     class Ime(WindowEvent):
         __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: Ime) -> None: ...
         @property
         def value(self) -> Ime: ...
-        def __init__(self, value: Ime) -> None: ...
 
     class RequestRedraw(WindowEvent):
-        __match_args__: ClassVar[tuple[()]] = ()
-        def __init__(self) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: RequestRedraw) -> None: ...
+        @property
+        def value(self) -> RequestRedraw: ...
+
+    class WindowBackendScaleFactorChanged(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowBackendScaleFactorChanged) -> None: ...
+        @property
+        def value(self) -> WindowBackendScaleFactorChanged: ...
 
     class WindowCloseRequested(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"]]] = ("window",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowCloseRequested) -> None: ...
         @property
-        def window(self) -> Entity: ...
-        def __init__(self, window: Entity) -> None: ...
+        def value(self) -> WindowCloseRequested: ...
+
+    class WindowCreated(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowCreated) -> None: ...
+        @property
+        def value(self) -> WindowCreated: ...
+
+    class WindowDestroyed(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowDestroyed) -> None: ...
+        @property
+        def value(self) -> WindowDestroyed: ...
 
     class WindowFocused(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["focused"], Literal["window"]]] = ("focused", "window")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowFocused) -> None: ...
         @property
-        def focused(self) -> bool: ...
+        def value(self) -> WindowFocused: ...
+
+    class WindowMoved(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowMoved) -> None: ...
         @property
-        def window(self) -> Entity: ...
-        def __init__(self, focused: bool, window: Entity) -> None: ...
+        def value(self) -> WindowMoved: ...
+
+    class WindowOccluded(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowOccluded) -> None: ...
+        @property
+        def value(self) -> WindowOccluded: ...
 
     class WindowResized(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[Literal["width"], Literal["height"], Literal["window"]]
-        ] = ("width", "height", "window")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowResized) -> None: ...
         @property
-        def width(self) -> float: ...
+        def value(self) -> WindowResized: ...
+
+    class WindowScaleFactorChanged(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowScaleFactorChanged) -> None: ...
         @property
-        def height(self) -> float: ...
+        def value(self) -> WindowScaleFactorChanged: ...
+
+    class WindowThemeChanged(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: WindowThemeChanged) -> None: ...
         @property
-        def window(self) -> Entity: ...
-        def __init__(self, width: float, height: float, window: Entity) -> None: ...
+        def value(self) -> WindowThemeChanged: ...
 
     class MouseButtonInput(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[Literal["button"], Literal["state"], Literal["window"]]
-        ] = ("button", "state", "window")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: MouseButtonInput) -> None: ...
         @property
-        def button(self) -> MouseButton: ...
-        @property
-        def state(self) -> ButtonState: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(
-            self, button: MouseButton, state: ButtonState, window: Entity
-        ) -> None: ...
+        def value(self) -> MouseButtonInput: ...
 
     class MouseMotion(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["delta"]]] = ("delta",)
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: MouseMotion) -> None: ...
         @property
-        def delta(self) -> Vec2: ...
-        def __init__(self, delta: Vec2) -> None: ...
+        def value(self) -> MouseMotion: ...
 
     class MouseWheel(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[Literal["unit"], Literal["x"], Literal["y"], Literal["window"]]
-        ] = ("unit", "x", "y", "window")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: MouseWheel) -> None: ...
         @property
-        def unit(self) -> MouseScrollUnit: ...
-        @property
-        def x(self) -> float: ...
-        @property
-        def y(self) -> float: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(
-            self, unit: MouseScrollUnit, x: float, y: float, window: Entity
-        ) -> None: ...
+        def value(self) -> MouseWheel: ...
 
     class PinchGesture(WindowEvent):
         __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: PinchGesture) -> None: ...
         @property
-        def value(self) -> float: ...
-        def __init__(self, value: float) -> None: ...
+        def value(self) -> PinchGesture: ...
 
     class RotationGesture(WindowEvent):
         __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: RotationGesture) -> None: ...
         @property
-        def value(self) -> float: ...
-        def __init__(self, value: float) -> None: ...
+        def value(self) -> RotationGesture: ...
 
     class DoubleTapGesture(WindowEvent):
-        __match_args__: ClassVar[tuple[()]] = ()
-        def __init__(self) -> None: ...
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: DoubleTapGesture) -> None: ...
+        @property
+        def value(self) -> DoubleTapGesture: ...
 
     class PanGesture(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["x"], Literal["y"]]] = ("x", "y")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: PanGesture) -> None: ...
         @property
-        def x(self) -> float: ...
-        @property
-        def y(self) -> float: ...
-        def __init__(self, x: float, y: float) -> None: ...
+        def value(self) -> PanGesture: ...
 
     class TouchInput(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[
-                Literal["phase"],
-                Literal["position"],
-                Literal["id"],
-                Literal["window"],
-                Literal["force"],
-            ]
-        ] = ("phase", "position", "id", "window", "force")
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: TouchInput) -> None: ...
         @property
-        def phase(self) -> TouchPhase: ...
-        @property
-        def position(self) -> Vec2: ...
-        @property
-        def id(self) -> int: ...
-        @property
-        def window(self) -> Entity: ...
-        @property
-        def force(self) -> float | None: ...
-        def __init__(
-            self,
-            phase: TouchPhase,
-            position: Vec2,
-            id: int,
-            window: Entity,
-            force: float | None = None,
-        ) -> None: ...
-
-    class KeyboardFocusLost(WindowEvent):
-        __match_args__: ClassVar[tuple[()]] = ()
-        def __init__(self) -> None: ...
-
-    class WindowCreated(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"]]] = ("window",)
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, window: Entity) -> None: ...
-
-    class WindowDestroyed(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["window"]]] = ("window",)
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, window: Entity) -> None: ...
-
-    class WindowMoved(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["position"], Literal["window"]]] = ("position", "window")
-        @property
-        def position(self) -> IVec2: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, position: IVec2, window: Entity) -> None: ...
-
-    class WindowOccluded(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["occluded"], Literal["window"]]] = ("occluded", "window")
-        @property
-        def occluded(self) -> bool: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, occluded: bool, window: Entity) -> None: ...
-
-    class WindowScaleFactorChanged(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[Literal["scale_factor"], Literal["window"]]
-        ] = ("scale_factor", "window")
-        @property
-        def scale_factor(self) -> float: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, scale_factor: float, window: Entity) -> None: ...
-
-    class WindowBackendScaleFactorChanged(WindowEvent):
-        __match_args__: ClassVar[
-            tuple[Literal["scale_factor"], Literal["window"]]
-        ] = ("scale_factor", "window")
-        @property
-        def scale_factor(self) -> float: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, scale_factor: float, window: Entity) -> None: ...
-
-    class WindowThemeChanged(WindowEvent):
-        __match_args__: ClassVar[tuple[Literal["theme"], Literal["window"]]] = ("theme", "window")
-        @property
-        def theme(self) -> WindowTheme: ...
-        @property
-        def window(self) -> Entity: ...
-        def __init__(self, theme: WindowTheme, window: Entity) -> None: ...
+        def value(self) -> TouchInput: ...
 
     class KeyboardInput(WindowEvent):
         __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: KeyboardInput) -> None: ...
         @property
         def value(self) -> KeyboardInput: ...
-        def __init__(self, value: KeyboardInput) -> None: ...
+
+    class KeyboardFocusLost(WindowEvent):
+        __match_args__: ClassVar[tuple[Literal["value"]]] = ("value",)
+        def __init__(self, value: KeyboardFocusLost) -> None: ...
+        @property
+        def value(self) -> KeyboardFocusLost: ...

@@ -70,3 +70,9 @@ pub enum PyFileDragAndDrop {
         window: Entity,
     },
 }
+
+impl From<&PyFileDragAndDrop> for FileDragAndDrop {
+    fn from(value: &PyFileDragAndDrop) -> Self {
+        FileDragAndDropValue::from(value.clone()).into()
+    }
+}

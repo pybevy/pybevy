@@ -24,7 +24,6 @@ use pybevy_core::{
     registry::{global_registry, register_native_message},
 };
 use pybevy_ecs::shared::message_resources::ensure_message_resource;
-use pybevy_window::window_event::PyWindowEvent;
 use pybevy_world_serialization::{
     WorldInstanceReadyMessage, world_instance_ready::PyWorldInstanceReady,
 };
@@ -136,16 +135,6 @@ impl PyMessages {
             None => &mut detached,
         };
         match &self.message_type {
-            MessageType::WindowEvent => read_next_message(
-                world.get_resource::<Messages<WindowEvent>>(),
-                state,
-                |event| {
-                    Ok(PyWindowEvent::from_bevy(py, event)?
-                        .into_pyobject(py)?
-                        .into_any()
-                        .unbind())
-                },
-            ),
             MessageType::WorldInstanceReady => read_next_message(
                 world.get_resource::<Messages<WorldInstanceReadyMessage>>(),
                 state,
@@ -194,7 +183,6 @@ impl PyMessages {
             None => &mut detached,
         };
         Ok(match &self.message_type {
-            MessageType::WindowEvent => apply_reader_cursor::<WindowEvent>(world, cursor_state, op),
             MessageType::WorldInstanceReady => {
                 apply_reader_cursor::<WorldInstanceReadyMessage>(world, cursor_state, op)
             }
@@ -239,10 +227,6 @@ impl PyMessages {
         // (EmptyMessages) rather than inserting a resource, which would be a
         // structural world mutation from a possibly-parallel system.
         match &self.message_type {
-            MessageType::WindowEvent => match world.get_resource_mut::<Messages<WindowEvent>>() {
-                Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
-                None => Ok(f(&mut EmptyMessages)),
-            },
             MessageType::WorldInstanceReady => {
                 match world.get_resource_mut::<Messages<WorldInstanceReadyMessage>>() {
                     Some(mut messages) => Ok(f(&mut Wrap(&mut *messages))),
@@ -417,7 +401,6 @@ impl PyMessages {
 #[derive(Debug)]
 pub enum MessageType {
     // Special handling required (no bridge)
-    WindowEvent,
     WorldInstanceReady,
     AssetEvent(*const PyTypeObject),
     AssetLoadFailed(*const PyTypeObject),
@@ -449,7 +432,6 @@ unsafe impl Sync for MessageType {}
 impl PartialEq for MessageType {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (MessageType::WindowEvent, MessageType::WindowEvent) => true,
             (MessageType::WorldInstanceReady, MessageType::WorldInstanceReady) => true,
             (MessageType::AssetEvent(a), MessageType::AssetEvent(b)) => eq(*a, *b),
             (MessageType::AssetLoadFailed(a), MessageType::AssetLoadFailed(b)) => eq(*a, *b),
@@ -463,7 +445,6 @@ impl PartialEq for MessageType {
 impl Clone for MessageType {
     fn clone(&self) -> Self {
         match self {
-            MessageType::WindowEvent => MessageType::WindowEvent,
             MessageType::WorldInstanceReady => MessageType::WorldInstanceReady,
             MessageType::AssetEvent(ptr) => MessageType::AssetEvent(*ptr),
             MessageType::AssetLoadFailed(ptr) => MessageType::AssetLoadFailed(*ptr),
@@ -477,10 +458,6 @@ impl MessageType {
     /// Stable exact channel identity and a user-facing validation label.
     pub(crate) fn validation_identity(&self) -> (String, String) {
         match self {
-            Self::WindowEvent => (
-                "native:WindowEvent".to_string(),
-                "Message<WindowEvent>".to_string(),
-            ),
             Self::WorldInstanceReady => (
                 "native:WorldInstanceReady".to_string(),
                 "Message<WorldInstanceReady>".to_string(),
@@ -539,7 +516,6 @@ impl MessageType {
     /// their shared-store and synthetic channel access in `MainResolver` instead.
     pub(crate) fn register_resource_id(&self, world: &mut World) -> Option<ComponentId> {
         match self {
-            MessageType::WindowEvent => Some(world.register_component::<Messages<WindowEvent>>()),
             MessageType::WorldInstanceReady => {
                 Some(world.register_component::<Messages<WorldInstanceReadyMessage>>())
             }
@@ -625,10 +601,6 @@ impl PyMessageType {
         }
 
         // Special handling types that don't use #[pymessage] (need extra resources/special logic)
-        if message.is(<PyWindowEvent as PyTypeInfo>::type_object(py)) {
-            return Ok(PyMessageType(MessageType::WindowEvent));
-        }
-
         if message.is(<PyWorldInstanceReady as PyTypeInfo>::type_object(py)) {
             return Ok(PyMessageType(MessageType::WorldInstanceReady));
         }
@@ -686,7 +658,6 @@ pub(crate) fn register_message_channel(
                 })?
                 .register_messages(world);
         }
-        MessageType::WindowEvent => register_native_message::<WindowEvent>(world),
         MessageType::WorldInstanceReady => {
             register_native_message::<WorldInstanceReadyMessage>(world)
         }

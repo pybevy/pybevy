@@ -91,6 +91,23 @@ def key_events(reader: MessageReader[KeyboardInput]) -> None:
             print(f"Text: {event.text}")
 ```
 
+As in Bevy, each `WindowEvent` variant wraps the message of the same name:
+
+```python
+from pybevy.ecs import MessageReader, system
+from pybevy.input import KeyboardInput
+from pybevy.window import WindowEvent
+
+@system
+def window_events(reader: MessageReader[WindowEvent]) -> None:
+    for event in reader:
+        match event:
+            case WindowEvent.KeyboardInput(KeyboardInput(key_code=key)):
+                print(f"Key: {key}")
+            case WindowEvent.CursorMoved(moved):
+                print(f"Cursor at: {moved.position}")
+```
+
 ## Mouse Input
 
 Mouse buttons use `Res[ButtonInput[MouseButton]]`, the same generic as the keyboard with a different button type. It resolves to the `MouseInput` class, which remains a valid spelling. **Note:** `MouseButton` variants are constructor calls with parentheses, unlike `KeyCode` enum values.
@@ -264,15 +281,17 @@ Bevy's picking reads the canonical `WindowEvent` stream, not `CursorMoved` or
 
 ```python
 from pybevy.ecs import Entity, MessageWriter, Query, With, system
-from pybevy.input import ButtonState, MouseButton
+from pybevy.input import ButtonState, MouseButton, MouseButtonInput
 from pybevy.math import Vec2
-from pybevy.window import PrimaryWindow, WindowEvent
+from pybevy.window import CursorMoved, PrimaryWindow, WindowEvent
 
 @system
 def click(windows: Query[Entity, With[PrimaryWindow]], events: MessageWriter[WindowEvent]) -> None:
     window = windows.single()
-    events.write(WindowEvent.CursorMoved(Vec2(200.0, 140.0), window))
-    events.write(WindowEvent.MouseButtonInput(MouseButton.Left(), ButtonState.Pressed(), window))
+    events.write(WindowEvent.CursorMoved(CursorMoved(window=window, position=Vec2(200.0, 140.0))))
+    events.write(WindowEvent.MouseButtonInput(
+        MouseButtonInput(button=MouseButton.Left(), state=ButtonState.Pressed(), window=window)
+    ))
 ```
 
 `InputPlugin` processes `TouchInput` in `PreUpdate`; write in `First` for same-frame

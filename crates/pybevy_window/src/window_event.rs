@@ -3,622 +3,249 @@ use bevy::{
         gestures::{DoubleTapGesture, PanGesture, PinchGesture, RotationGesture},
         keyboard::{KeyboardFocusLost, KeyboardInput},
         mouse::{MouseButtonInput, MouseMotion, MouseWheel},
-        touch::{ForceTouch, TouchInput, TouchPhase},
+        touch::TouchInput,
     },
-    math::{IVec2, Vec2},
     window::{
-        CursorEntered, CursorLeft, CursorMoved, FileDragAndDrop, Ime, RequestRedraw,
+        AppLifecycle, CursorEntered, CursorLeft, CursorMoved, FileDragAndDrop, Ime, RequestRedraw,
         WindowBackendScaleFactorChanged, WindowCloseRequested, WindowCreated, WindowDestroyed,
         WindowEvent, WindowFocused, WindowMoved, WindowOccluded, WindowResized,
         WindowScaleFactorChanged, WindowThemeChanged,
     },
 };
-use pybevy_core::{PyEntity, PyMessage};
+use pybevy_core::message_payload;
 use pybevy_input::{
-    button_state::PyButtonState, keyboard_input::PyKeyboardInput, mouse_button::PyMouseButton,
-    mouse_scroll_unit::PyMouseScrollUnit, touch_phase::PyTouchPhase,
+    gesture_events::{PyDoubleTapGesture, PyPanGesture, PyPinchGesture, PyRotationGesture},
+    keyboard_events::PyKeyboardFocusLost,
+    keyboard_input::{PyKeyboardInput, materialize_keyboard_input},
+    mouse_events::{PyMouseButtonInput, PyMouseMotion, PyMouseWheel},
+    touch_input::PyTouchInput,
 };
 use pybevy_macros::pyenum;
-use pybevy_math::snapshot::Snapshot;
-use pyo3::{Borrowed, IntoPyObjectExt, prelude::*};
+use pyo3::prelude::*;
 
 use crate::{
     app_lifecycle::PyAppLifecycle,
-    file_drag_and_drop::{FileDragAndDropValue, PyFileDragAndDrop, materialize_file_drag_and_drop},
+    cursor_events::{PyCursorEntered, PyCursorLeft},
+    cursor_moved::PyCursorMoved,
+    file_drag_and_drop::{PyFileDragAndDrop, materialize_file_drag_and_drop},
     ime::{PyIme, materialize_ime},
-    window_theme::PyWindowTheme,
+    request_redraw::PyRequestRedraw,
+    window_close_requested::PyWindowCloseRequested,
+    window_events::{
+        PyWindowBackendScaleFactorChanged, PyWindowCreated, PyWindowDestroyed, PyWindowMoved,
+        PyWindowOccluded, PyWindowScaleFactorChanged, PyWindowThemeChanged,
+    },
+    window_focused::PyWindowFocused,
+    window_resized::PyWindowResized,
 };
 
-/// Carries bevy's own value so `WindowEvent` keeps the `Clone` and `PartialEq`
-/// its bevy counterpart has, while Python sees the real variant class.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ImePayload(pub Ime);
+message_payload!(CursorEnteredPayload, CursorEntered, PyCursorEntered);
+message_payload!(CursorLeftPayload, CursorLeft, PyCursorLeft);
+message_payload!(CursorMovedPayload, CursorMoved, PyCursorMoved);
+message_payload!(
+    FileDragAndDropPayload,
+    FileDragAndDrop,
+    PyFileDragAndDrop,
+    materialize = materialize_file_drag_and_drop
+);
+message_payload!(ImePayload, Ime, PyIme, materialize = materialize_ime);
+message_payload!(RequestRedrawPayload, RequestRedraw, PyRequestRedraw);
+message_payload!(
+    WindowBackendScaleFactorChangedPayload,
+    WindowBackendScaleFactorChanged,
+    PyWindowBackendScaleFactorChanged
+);
+message_payload!(
+    WindowCloseRequestedPayload,
+    WindowCloseRequested,
+    PyWindowCloseRequested
+);
+message_payload!(WindowCreatedPayload, WindowCreated, PyWindowCreated);
+message_payload!(WindowDestroyedPayload, WindowDestroyed, PyWindowDestroyed);
+message_payload!(WindowFocusedPayload, WindowFocused, PyWindowFocused);
+message_payload!(WindowMovedPayload, WindowMoved, PyWindowMoved);
+message_payload!(WindowOccludedPayload, WindowOccluded, PyWindowOccluded);
+message_payload!(WindowResizedPayload, WindowResized, PyWindowResized);
+message_payload!(
+    WindowScaleFactorChangedPayload,
+    WindowScaleFactorChanged,
+    PyWindowScaleFactorChanged
+);
+message_payload!(
+    WindowThemeChangedPayload,
+    WindowThemeChanged,
+    PyWindowThemeChanged
+);
+message_payload!(
+    MouseButtonInputPayload,
+    MouseButtonInput,
+    PyMouseButtonInput
+);
+message_payload!(MouseMotionPayload, MouseMotion, PyMouseMotion);
+message_payload!(MouseWheelPayload, MouseWheel, PyMouseWheel);
+message_payload!(PinchGesturePayload, PinchGesture, PyPinchGesture);
+message_payload!(RotationGesturePayload, RotationGesture, PyRotationGesture);
+message_payload!(
+    DoubleTapGesturePayload,
+    DoubleTapGesture,
+    PyDoubleTapGesture
+);
+message_payload!(PanGesturePayload, PanGesture, PyPanGesture);
+message_payload!(TouchInputPayload, TouchInput, PyTouchInput);
+message_payload!(
+    KeyboardInputPayload,
+    KeyboardInput,
+    PyKeyboardInput,
+    materialize = materialize_keyboard_input
+);
+message_payload!(
+    KeyboardFocusLostPayload,
+    KeyboardFocusLost,
+    PyKeyboardFocusLost
+);
 
-impl<'py> IntoPyObject<'py> for ImePayload {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        Ok(materialize_ime(py, &self.0)?.into_bound(py))
-    }
-}
-
-impl FromPyObject<'_, '_> for ImePayload {
-    type Error = PyErr;
-
-    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
-        let base = obj.extract::<PyRef<'_, PyIme>>()?;
-        Ok(ImePayload(Ime::from(base.clone())))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FileDragAndDropPayload(pub FileDragAndDrop);
-
-impl<'py> IntoPyObject<'py> for FileDragAndDropPayload {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        Ok(materialize_file_drag_and_drop(py, &self.0)?.into_bound(py))
-    }
-}
-
-impl FromPyObject<'_, '_> for FileDragAndDropPayload {
-    type Error = PyErr;
-
-    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
-        let base = obj.extract::<PyRef<'_, PyFileDragAndDrop>>()?;
-        Ok(FileDragAndDropPayload(FileDragAndDrop::from(
-            FileDragAndDropValue::from(base.clone()),
-        )))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct KeyboardInputPayload(pub PyKeyboardInput);
-
-impl<'py> IntoPyObject<'py> for KeyboardInputPayload {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
-        Ok(Py::new(py, (self.0, PyMessage))?.into_bound(py).into_any())
-    }
-}
-
-impl FromPyObject<'_, '_> for KeyboardInputPayload {
-    type Error = PyErr;
-
-    fn extract(obj: Borrowed<'_, '_, PyAny>) -> PyResult<Self> {
-        Ok(Self(obj.extract::<PyRef<'_, PyKeyboardInput>>()?.clone()))
-    }
-}
-
-#[pyenum(WindowEvent, manual)]
-#[pyclass(
-    name = "WindowEvent",
-    module = "pybevy.window",
-    eq,
-    frozen,
-    skip_from_py_object
-)]
-#[derive(Debug, Clone, PartialEq)]
+#[pyenum(WindowEvent, message, writable)]
+#[pyclass(name = "WindowEvent", module = "pybevy.window")]
 pub enum PyWindowEvent {
-    #[pyo3(constructor = (lifecycle,))]
+    #[py_bevy(tuple)]
     AppLifecycle {
-        lifecycle: PyAppLifecycle,
+        #[py_type(PyAppLifecycle)]
+        value: AppLifecycle,
     },
-    #[pyo3(constructor = (window,))]
+    #[py_bevy(tuple)]
     CursorEntered {
-        window: PyEntity,
+        #[py_type(CursorEnteredPayload)]
+        value: CursorEntered,
     },
-    #[pyo3(constructor = (window,))]
+    #[py_bevy(tuple)]
     CursorLeft {
-        window: PyEntity,
+        #[py_type(CursorLeftPayload)]
+        value: CursorLeft,
     },
-    #[pyo3(constructor = (position, window, delta = None))]
+    #[py_bevy(tuple)]
     CursorMoved {
-        position: Snapshot<Vec2>,
-        window: PyEntity,
-        delta: Option<Snapshot<Vec2>>,
+        #[py_type(CursorMovedPayload)]
+        value: CursorMoved,
     },
-    #[pyo3(constructor = (value,))]
+    #[py_bevy(tuple)]
     FileDragAndDrop {
-        value: FileDragAndDropPayload,
+        #[py_type(FileDragAndDropPayload)]
+        value: FileDragAndDrop,
     },
-    #[pyo3(constructor = (value,))]
+    #[py_bevy(tuple)]
     Ime {
-        value: ImePayload,
+        #[py_type(ImePayload)]
+        value: Ime,
     },
-    RequestRedraw {},
-    #[pyo3(constructor = (window,))]
-    WindowCloseRequested {
-        window: PyEntity,
+    #[py_bevy(tuple)]
+    RequestRedraw {
+        #[py_type(RequestRedrawPayload)]
+        value: RequestRedraw,
     },
-    #[pyo3(constructor = (focused, window))]
-    WindowFocused {
-        focused: bool,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (width, height, window))]
-    WindowResized {
-        width: f32,
-        height: f32,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (button, state, window))]
-    MouseButtonInput {
-        button: PyMouseButton,
-        state: PyButtonState,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (delta,))]
-    MouseMotion {
-        delta: Snapshot<Vec2>,
-    },
-    #[pyo3(constructor = (unit, x, y, window))]
-    MouseWheel {
-        unit: PyMouseScrollUnit,
-        x: f32,
-        y: f32,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (value,))]
-    PinchGesture {
-        value: f32,
-    },
-    #[pyo3(constructor = (value,))]
-    RotationGesture {
-        value: f32,
-    },
-    DoubleTapGesture {},
-    #[pyo3(constructor = (x, y))]
-    PanGesture {
-        x: f32,
-        y: f32,
-    },
-    #[pyo3(constructor = (phase, position, id, window, force = None))]
-    TouchInput {
-        phase: PyTouchPhase,
-        position: Snapshot<Vec2>,
-        id: u64,
-        window: PyEntity,
-        force: Option<f64>,
-    },
-    KeyboardFocusLost {},
-    #[pyo3(constructor = (window,))]
-    WindowCreated {
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (window,))]
-    WindowDestroyed {
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (position, window))]
-    WindowMoved {
-        position: Snapshot<IVec2>,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (occluded, window))]
-    WindowOccluded {
-        occluded: bool,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (scale_factor, window))]
-    WindowScaleFactorChanged {
-        scale_factor: f64,
-        window: PyEntity,
-    },
-    #[pyo3(constructor = (scale_factor, window))]
+    #[py_bevy(tuple)]
     WindowBackendScaleFactorChanged {
-        scale_factor: f64,
-        window: PyEntity,
+        #[py_type(WindowBackendScaleFactorChangedPayload)]
+        value: WindowBackendScaleFactorChanged,
     },
-    #[pyo3(constructor = (theme, window))]
+    #[py_bevy(tuple)]
+    WindowCloseRequested {
+        #[py_type(WindowCloseRequestedPayload)]
+        value: WindowCloseRequested,
+    },
+    #[py_bevy(tuple)]
+    WindowCreated {
+        #[py_type(WindowCreatedPayload)]
+        value: WindowCreated,
+    },
+    #[py_bevy(tuple)]
+    WindowDestroyed {
+        #[py_type(WindowDestroyedPayload)]
+        value: WindowDestroyed,
+    },
+    #[py_bevy(tuple)]
+    WindowFocused {
+        #[py_type(WindowFocusedPayload)]
+        value: WindowFocused,
+    },
+    #[py_bevy(tuple)]
+    WindowMoved {
+        #[py_type(WindowMovedPayload)]
+        value: WindowMoved,
+    },
+    #[py_bevy(tuple)]
+    WindowOccluded {
+        #[py_type(WindowOccludedPayload)]
+        value: WindowOccluded,
+    },
+    #[py_bevy(tuple)]
+    WindowResized {
+        #[py_type(WindowResizedPayload)]
+        value: WindowResized,
+    },
+    #[py_bevy(tuple)]
+    WindowScaleFactorChanged {
+        #[py_type(WindowScaleFactorChangedPayload)]
+        value: WindowScaleFactorChanged,
+    },
+    #[py_bevy(tuple)]
     WindowThemeChanged {
-        theme: PyWindowTheme,
-        window: PyEntity,
+        #[py_type(WindowThemeChangedPayload)]
+        value: WindowThemeChanged,
     },
-    #[pyo3(constructor = (value,))]
+    #[py_bevy(tuple)]
+    MouseButtonInput {
+        #[py_type(MouseButtonInputPayload)]
+        value: MouseButtonInput,
+    },
+    #[py_bevy(tuple)]
+    MouseMotion {
+        #[py_type(MouseMotionPayload)]
+        value: MouseMotion,
+    },
+    #[py_bevy(tuple)]
+    MouseWheel {
+        #[py_type(MouseWheelPayload)]
+        value: MouseWheel,
+    },
+    #[py_bevy(tuple)]
+    PinchGesture {
+        #[py_type(PinchGesturePayload)]
+        value: PinchGesture,
+    },
+    #[py_bevy(tuple)]
+    RotationGesture {
+        #[py_type(RotationGesturePayload)]
+        value: RotationGesture,
+    },
+    #[py_bevy(tuple)]
+    DoubleTapGesture {
+        #[py_type(DoubleTapGesturePayload)]
+        value: DoubleTapGesture,
+    },
+    #[py_bevy(tuple)]
+    PanGesture {
+        #[py_type(PanGesturePayload)]
+        value: PanGesture,
+    },
+    #[py_bevy(tuple)]
+    TouchInput {
+        #[py_type(TouchInputPayload)]
+        value: TouchInput,
+    },
+    #[py_bevy(tuple)]
     KeyboardInput {
-        value: KeyboardInputPayload,
+        #[py_type(KeyboardInputPayload)]
+        value: KeyboardInput,
+    },
+    #[py_bevy(tuple)]
+    KeyboardFocusLost {
+        #[py_type(KeyboardFocusLostPayload)]
+        value: KeyboardFocusLost,
     },
 }
 
-impl PyWindowEvent {
-    pub fn from_bevy(_py: Python, event: &WindowEvent) -> PyResult<Self> {
-        Ok(match event {
-            WindowEvent::AppLifecycle(e) => PyWindowEvent::AppLifecycle {
-                lifecycle: (*e).into(),
-            },
-            WindowEvent::CursorEntered(e) => PyWindowEvent::CursorEntered {
-                window: e.window.into(),
-            },
-            WindowEvent::CursorLeft(e) => PyWindowEvent::CursorLeft {
-                window: e.window.into(),
-            },
-            WindowEvent::CursorMoved(e) => PyWindowEvent::CursorMoved {
-                position: e.position.into(),
-                window: e.window.into(),
-                delta: e.delta.map(Into::into),
-            },
-            WindowEvent::FileDragAndDrop(e) => PyWindowEvent::FileDragAndDrop {
-                value: FileDragAndDropPayload(e.clone()),
-            },
-            WindowEvent::Ime(e) => PyWindowEvent::Ime {
-                value: ImePayload(e.clone()),
-            },
-            WindowEvent::RequestRedraw(_) => PyWindowEvent::RequestRedraw {},
-            WindowEvent::WindowCloseRequested(e) => PyWindowEvent::WindowCloseRequested {
-                window: e.window.into(),
-            },
-            WindowEvent::WindowFocused(e) => PyWindowEvent::WindowFocused {
-                focused: e.focused,
-                window: e.window.into(),
-            },
-            WindowEvent::WindowResized(e) => PyWindowEvent::WindowResized {
-                width: e.width,
-                height: e.height,
-                window: e.window.into(),
-            },
-            WindowEvent::MouseButtonInput(e) => PyWindowEvent::MouseButtonInput {
-                button: e.button.into(),
-                state: e.state.into(),
-                window: e.window.into(),
-            },
-            WindowEvent::MouseMotion(e) => PyWindowEvent::MouseMotion {
-                delta: e.delta.into(),
-            },
-            WindowEvent::MouseWheel(e) => PyWindowEvent::MouseWheel {
-                unit: e.unit.into(),
-                x: e.x,
-                y: e.y,
-                window: e.window.into(),
-            },
-            WindowEvent::PinchGesture(e) => PyWindowEvent::PinchGesture { value: e.0 },
-            WindowEvent::RotationGesture(e) => PyWindowEvent::RotationGesture { value: e.0 },
-            WindowEvent::DoubleTapGesture(_) => PyWindowEvent::DoubleTapGesture {},
-            WindowEvent::PanGesture(e) => PyWindowEvent::PanGesture { x: e.0.x, y: e.0.y },
-            WindowEvent::TouchInput(e) => {
-                let force = e.force.map(|f| match f {
-                    ForceTouch::Calibrated {
-                        force,
-                        max_possible_force,
-                        ..
-                    } => force / max_possible_force,
-                    ForceTouch::Normalized(n) => n,
-                });
-                PyWindowEvent::TouchInput {
-                    phase: e.phase.into(),
-                    position: e.position.into(),
-                    id: e.id,
-                    window: e.window.into(),
-                    force,
-                }
-            }
-            WindowEvent::KeyboardInput(event) => PyWindowEvent::KeyboardInput {
-                value: KeyboardInputPayload(PyKeyboardInput::from_bevy_event(event)?),
-            },
-            WindowEvent::KeyboardFocusLost(_) => PyWindowEvent::KeyboardFocusLost {},
-            WindowEvent::WindowCreated(e) => PyWindowEvent::WindowCreated {
-                window: e.window.into(),
-            },
-            WindowEvent::WindowDestroyed(e) => PyWindowEvent::WindowDestroyed {
-                window: e.window.into(),
-            },
-            WindowEvent::WindowMoved(e) => PyWindowEvent::WindowMoved {
-                position: e.position.into(),
-                window: e.window.into(),
-            },
-            WindowEvent::WindowOccluded(e) => PyWindowEvent::WindowOccluded {
-                occluded: e.occluded,
-                window: e.window.into(),
-            },
-            WindowEvent::WindowScaleFactorChanged(e) => PyWindowEvent::WindowScaleFactorChanged {
-                scale_factor: e.scale_factor,
-                window: e.window.into(),
-            },
-            WindowEvent::WindowBackendScaleFactorChanged(e) => {
-                PyWindowEvent::WindowBackendScaleFactorChanged {
-                    scale_factor: e.scale_factor,
-                    window: e.window.into(),
-                }
-            }
-            WindowEvent::WindowThemeChanged(e) => PyWindowEvent::WindowThemeChanged {
-                theme: e.theme.into(),
-                window: e.window.into(),
-            },
-        })
-    }
-}
-
-impl TryFrom<&PyWindowEvent> for WindowEvent {
-    type Error = PyErr;
-
-    fn try_from(event: &PyWindowEvent) -> PyResult<Self> {
-        Ok(match event.clone() {
-            PyWindowEvent::AppLifecycle { lifecycle } => {
-                WindowEvent::AppLifecycle(lifecycle.into())
-            }
-            PyWindowEvent::CursorEntered { window } => CursorEntered {
-                window: window.into(),
-            }
-            .into(),
-            PyWindowEvent::CursorLeft { window } => CursorLeft {
-                window: window.into(),
-            }
-            .into(),
-            PyWindowEvent::CursorMoved {
-                position,
-                window,
-                delta,
-            } => CursorMoved {
-                window: window.into(),
-                position: position.0,
-                delta: delta.map(|delta| delta.0),
-            }
-            .into(),
-            PyWindowEvent::FileDragAndDrop { value } => value.0.into(),
-            PyWindowEvent::Ime { value } => value.0.into(),
-            PyWindowEvent::RequestRedraw {} => RequestRedraw.into(),
-            PyWindowEvent::WindowCloseRequested { window } => WindowCloseRequested {
-                window: window.into(),
-            }
-            .into(),
-            PyWindowEvent::WindowFocused { focused, window } => WindowFocused {
-                window: window.into(),
-                focused,
-            }
-            .into(),
-            PyWindowEvent::WindowResized {
-                width,
-                height,
-                window,
-            } => WindowResized {
-                window: window.into(),
-                width,
-                height,
-            }
-            .into(),
-            PyWindowEvent::MouseButtonInput {
-                button,
-                state,
-                window,
-            } => MouseButtonInput {
-                button: button.into(),
-                state: state.into(),
-                window: window.into(),
-            }
-            .into(),
-            PyWindowEvent::MouseMotion { delta } => MouseMotion { delta: delta.0 }.into(),
-            // The Python variant carries no phase; a wheel event outside a touchpad gesture is Moved.
-            PyWindowEvent::MouseWheel { unit, x, y, window } => MouseWheel {
-                unit: unit.into(),
-                x,
-                y,
-                window: window.into(),
-                phase: TouchPhase::Moved,
-            }
-            .into(),
-            PyWindowEvent::PinchGesture { value } => PinchGesture(value).into(),
-            PyWindowEvent::RotationGesture { value } => RotationGesture(value).into(),
-            PyWindowEvent::DoubleTapGesture {} => DoubleTapGesture.into(),
-            PyWindowEvent::PanGesture { x, y } => PanGesture(Vec2::new(x, y)).into(),
-            PyWindowEvent::TouchInput {
-                phase,
-                position,
-                id,
-                window,
-                force,
-            } => TouchInput {
-                phase: phase.into(),
-                position: position.0,
-                window: window.into(),
-                force: force.map(ForceTouch::Normalized),
-                id,
-            }
-            .into(),
-            PyWindowEvent::KeyboardFocusLost {} => KeyboardFocusLost.into(),
-            PyWindowEvent::WindowCreated { window } => WindowCreated {
-                window: window.into(),
-            }
-            .into(),
-            PyWindowEvent::WindowDestroyed { window } => WindowDestroyed {
-                window: window.into(),
-            }
-            .into(),
-            PyWindowEvent::WindowMoved { position, window } => WindowMoved {
-                window: window.into(),
-                position: position.0,
-            }
-            .into(),
-            PyWindowEvent::WindowOccluded { occluded, window } => WindowOccluded {
-                window: window.into(),
-                occluded,
-            }
-            .into(),
-            PyWindowEvent::WindowScaleFactorChanged {
-                scale_factor,
-                window,
-            } => WindowScaleFactorChanged {
-                window: window.into(),
-                scale_factor,
-            }
-            .into(),
-            PyWindowEvent::WindowBackendScaleFactorChanged {
-                scale_factor,
-                window,
-            } => WindowBackendScaleFactorChanged {
-                window: window.into(),
-                scale_factor,
-            }
-            .into(),
-            PyWindowEvent::WindowThemeChanged { theme, window } => WindowThemeChanged {
-                window: window.into(),
-                theme: theme.into(),
-            }
-            .into(),
-            PyWindowEvent::KeyboardInput { value } => KeyboardInput::try_from(&value.0)?.into(),
-        })
-    }
-}
-
-// Render every field through Python's exact repr implementation.
-fn field_repr<'py, T: IntoPyObject<'py>>(py: Python<'py>, value: T) -> PyResult<String> {
-    Ok(value.into_bound_py_any(py)?.repr()?.to_string())
-}
-
-#[pymethods]
-impl PyWindowEvent {
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        Ok(match self {
-            PyWindowEvent::AppLifecycle { lifecycle } => format!(
-                "WindowEvent.AppLifecycle(lifecycle={})",
-                field_repr(py, *lifecycle)?
-            ),
-            PyWindowEvent::CursorEntered { window } => format!(
-                "WindowEvent.CursorEntered(window={})",
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::CursorLeft { window } => {
-                format!(
-                    "WindowEvent.CursorLeft(window={})",
-                    field_repr(py, *window)?
-                )
-            }
-            PyWindowEvent::CursorMoved {
-                position,
-                window,
-                delta,
-            } => format!(
-                "WindowEvent.CursorMoved(position={}, window={}, delta={})",
-                field_repr(py, *position)?,
-                field_repr(py, *window)?,
-                field_repr(py, *delta)?
-            ),
-            PyWindowEvent::FileDragAndDrop { value } => format!(
-                "WindowEvent.FileDragAndDrop(value={})",
-                field_repr(py, value.clone())?
-            ),
-            PyWindowEvent::Ime { value } => {
-                format!("WindowEvent.Ime(value={})", field_repr(py, value.clone())?)
-            }
-            PyWindowEvent::RequestRedraw {} => "WindowEvent.RequestRedraw()".to_string(),
-            PyWindowEvent::WindowCloseRequested { window } => format!(
-                "WindowEvent.WindowCloseRequested(window={})",
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowFocused { focused, window } => format!(
-                "WindowEvent.WindowFocused(focused={}, window={})",
-                field_repr(py, *focused)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowResized {
-                width,
-                height,
-                window,
-            } => format!(
-                "WindowEvent.WindowResized(width={}, height={}, window={})",
-                field_repr(py, *width)?,
-                field_repr(py, *height)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::MouseButtonInput {
-                button,
-                state,
-                window,
-            } => format!(
-                "WindowEvent.MouseButtonInput(button={}, state={}, window={})",
-                field_repr(py, *button)?,
-                field_repr(py, *state)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::MouseMotion { delta } => {
-                format!("WindowEvent.MouseMotion(delta={})", field_repr(py, *delta)?)
-            }
-            PyWindowEvent::MouseWheel { unit, x, y, window } => format!(
-                "WindowEvent.MouseWheel(unit={}, x={}, y={}, window={})",
-                field_repr(py, *unit)?,
-                field_repr(py, *x)?,
-                field_repr(py, *y)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::PinchGesture { value } => format!(
-                "WindowEvent.PinchGesture(value={})",
-                field_repr(py, *value)?
-            ),
-            PyWindowEvent::RotationGesture { value } => format!(
-                "WindowEvent.RotationGesture(value={})",
-                field_repr(py, *value)?
-            ),
-            PyWindowEvent::DoubleTapGesture {} => "WindowEvent.DoubleTapGesture()".to_string(),
-            PyWindowEvent::PanGesture { x, y } => format!(
-                "WindowEvent.PanGesture(x={}, y={})",
-                field_repr(py, *x)?,
-                field_repr(py, *y)?
-            ),
-            PyWindowEvent::TouchInput {
-                phase,
-                position,
-                id,
-                window,
-                force,
-            } => format!(
-                "WindowEvent.TouchInput(phase={}, position={}, id={}, window={}, force={})",
-                field_repr(py, *phase)?,
-                field_repr(py, *position)?,
-                field_repr(py, *id)?,
-                field_repr(py, *window)?,
-                field_repr(py, *force)?
-            ),
-            PyWindowEvent::KeyboardFocusLost {} => "WindowEvent.KeyboardFocusLost()".to_string(),
-            PyWindowEvent::WindowCreated { window } => format!(
-                "WindowEvent.WindowCreated(window={})",
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowDestroyed { window } => format!(
-                "WindowEvent.WindowDestroyed(window={})",
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowMoved { position, window } => format!(
-                "WindowEvent.WindowMoved(position={}, window={})",
-                field_repr(py, *position)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowOccluded { occluded, window } => format!(
-                "WindowEvent.WindowOccluded(occluded={}, window={})",
-                field_repr(py, *occluded)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowScaleFactorChanged {
-                scale_factor,
-                window,
-            } => format!(
-                "WindowEvent.WindowScaleFactorChanged(scale_factor={}, window={})",
-                field_repr(py, *scale_factor)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowBackendScaleFactorChanged {
-                scale_factor,
-                window,
-            } => format!(
-                "WindowEvent.WindowBackendScaleFactorChanged(scale_factor={}, window={})",
-                field_repr(py, *scale_factor)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::WindowThemeChanged { theme, window } => format!(
-                "WindowEvent.WindowThemeChanged(theme={}, window={})",
-                field_repr(py, *theme)?,
-                field_repr(py, *window)?
-            ),
-            PyWindowEvent::KeyboardInput { value } => format!(
-                "WindowEvent.KeyboardInput(value={})",
-                field_repr(py, value.clone())?
-            ),
-        })
+impl From<&PyWindowEvent> for WindowEvent {
+    fn from(value: &PyWindowEvent) -> Self {
+        value.clone().into()
     }
 }

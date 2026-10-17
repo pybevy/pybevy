@@ -26,6 +26,14 @@ impl From<&CursorEntered> for PyCursorEntered {
     }
 }
 
+impl From<&PyCursorEntered> for CursorEntered {
+    fn from(value: &PyCursorEntered) -> Self {
+        CursorEntered {
+            window: value.window.into(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyCursorEntered {
     #[new]
@@ -57,6 +65,14 @@ impl From<&CursorLeft> for PyCursorLeft {
     fn from(event: &CursorLeft) -> Self {
         PyCursorLeft {
             window: event.window.into(),
+        }
+    }
+}
+
+impl From<&PyCursorLeft> for CursorLeft {
+    fn from(value: &PyCursorLeft) -> Self {
+        CursorLeft {
+            window: value.window.into(),
         }
     }
 }
